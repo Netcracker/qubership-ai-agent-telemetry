@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterAgentResponse": [
+      { "command": "ai-agent-telemetry ingest --agent=cursor" }
+    ]
+  }
+}

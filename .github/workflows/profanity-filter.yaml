@@ -1,0 +1,34 @@
+---
+# Forked from Netcracker/.github workflow-templates/profanity-filter.yaml.
+# Scans issues and pull requests for profanity and masks offending words.
+name: Profanity filter
+
+on:
+  issue_comment:
+    types: [created, edited]
+  issues:
+    types: [opened, edited, reopened]
+  pull_request:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  apply-filter:
+    name: "Apply Profanity Filter"
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Scan issue or pull request for profanity
+        # Conditionally run the step if the actor isn't a bot
+        if: ${{ github.event.sender.type != 'Bot' }}
+        uses: IEvangelist/profanity-filter@9d95889a67d0935e5af511e7141cb72c3952abaf # 13.3.0
+        id: profanity-filter
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # See https://bit.ly/potty-mouth-replacement-strategies
+          replacement-strategy: middle-asterisk # See Replacement strategy
+          custom-profane-words-url: https://github.com/Hesham-Elbadawi/list-of-banned-words/raw/refs/heads/master/ru

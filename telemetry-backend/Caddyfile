@@ -1,0 +1,22 @@
+{$SITE_ADDRESS} {
+	tls {$CADDY_TLS}
+
+	# VictoriaLogs UI + query API — password-protected
+	@vmui path /select/*
+	handle @vmui {
+		basic_auth {
+			# Replace the hash below with your own.
+			# Generate: docker run --rm caddy:2 caddy hash-password --plaintext '<password>'
+			admin <REPLACE_WITH_BCRYPT_HASH>
+		}
+		reverse_proxy victorialogs:9428
+	}
+
+	# Telemetry ingest — shared bearer token
+	@ok header Authorization "Bearer {$INGEST_TOKEN}"
+	handle @ok {
+		reverse_proxy collector:4318
+	}
+
+	respond "unauthorized" 401
+}

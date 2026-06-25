@@ -1,0 +1,38 @@
+
+# APM dependencies
+apm_modules/
+
+# Local Codex and agent state (all APM `apm compile` output)
+.agents/
+.claude/
+.codex/
+.cursor/
+.kiro/
+.windsurf/
+.github/instructions/
+/AGENTS.md
+/GEMINI.md
+
+# Local APM workbench install (machine-specific paths; never committed)
+/apm.yml
+apm.lock.yaml
+
+# CLI build output
+dist/
+/ai-agent-telemetry
+/ai-agent-telemetry.exe
+
+# Skill eval runs (local only)
+eval-workspace/
+
+# Local backend deploy (test only, not shipped)
+local-deploy-otel/
+
+# Real .env with secrets (the .env.example template is tracked)
+telemetry-backend/.env
+
+# Ready-made telemetry config for install testing (endpoint + token; never committed)
+/test-telemetry.env
+
+# Internal SDD scratch (briefs, reports, review diffs — never shipped)
+/.superpowers/

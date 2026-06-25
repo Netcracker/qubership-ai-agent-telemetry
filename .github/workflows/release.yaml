@@ -1,0 +1,153 @@
+# Build the ai-agent-telemetry CLI for every supported target and publish them to a
+# GitHub Release through the corporate tag -> release -> assets chain. Run it via
+# workflow_dispatch with an explicit version; the chain creates the tag, so do not
+# push the tag by hand. The version is baked in via -X main.version and the asset
+# names match what the configure skill downloads: ai-agent-telemetry-<os>-<arch>.
+
+name: Release
+run-name: ${{ github.repository }} Release ${{ github.event.inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build and release, e.g. v0.1.0"
+        required: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  VERSION: ${{ github.event.inputs.version }}
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: linux, goarch: amd64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          # Disable the build cache on release: a poisoned cache must never
+          # influence a published binary (zizmor cache-poisoning).
+          cache: false
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          name="ai-agent-telemetry-${GOOS}-${GOARCH}"
+          [ "$GOOS" = windows ] && name="${name}.exe"
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "dist/${name}" .
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-agent-telemetry-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Tag and publish release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    # These actions expose no token input. tag-action's create-release shells out
+    # to gh (reads GH_TOKEN); assets-action reads process.env.GITHUB_TOKEN and uses
+    # it for its gh upload. Provide both at the job level so neither falls back to
+    # an empty token (which fails with HTTP 401).
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # tag-action runs with skip-checkout: true and pushes the new tag using the
+      # Git credentials this checkout persists, so persist-credentials must stay on.
+      # The job downloads artifacts (never uploads), so no credentials leak into an
+      # artifact archive.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3 # zizmor: ignore[artipacked]
+
+      - name: Check tag is absent
+        uses: netcracker/qubership-workflow-hub/actions/tag-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
+        with:
+          ref: ${{ github.ref }}
+          tag-name: ${{ env.VERSION }}
+          check-tag: "true"
+          create-tag: "false"
+          skip-checkout: "true"
+
+      - name: Create tag and release
+        uses: netcracker/qubership-workflow-hub/actions/tag-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
+        with:
+          ref: ${{ github.ref }}
+          tag-name: ${{ env.VERSION }}
+          create-tag: "true"
+          create-release: "true"
+          tag-message: "Release ${{ env.VERSION }}"
+          skip-checkout: "true"
+
+      - name: Draft release notes
+        uses: netcracker/release-drafter@86f4276a3894b5af70480e826c32fe3648ac6a70 # v1.0.0
+        with:
+          config-name: release-drafter-config.yml
+          name: ${{ env.VERSION }}
+          tag: ${{ env.VERSION }}
+          version: ${{ env.VERSION }}
+          publish: "true"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Stage bootstrap scripts
+        # The bootstrap scripts are the installer: they detect OS/arch and download the
+        # matching binary, so they must ship as release assets to give the provisioning
+        # one-liner a stable URL (releases/latest/download/bootstrap.sh). Stamp the
+        # release tag into BINARY_VERSION (.sh) and $BinaryVersion (.ps1) so each
+        # release's installer pins its own binary and can never lag behind a hardcoded
+        # value.
+        run: |
+          src=agent-packages/ai-agent-telemetry-configure/.apm/hooks/scripts
+          sed "s|^BINARY_VERSION=.*|BINARY_VERSION=\"${VERSION}\"|" "$src/bootstrap.sh" > dist/bootstrap.sh
+          sed "s|^\$BinaryVersion = .*|\$BinaryVersion = '${VERSION}'|" "$src/bootstrap.ps1" > dist/bootstrap.ps1
+
+      - name: Checksums
+        # The bootstrap scripts fetch SHA256SUMS and hard-fail when it is missing.
+        # sha256sum's default output (hash, two spaces, filename) is the exact format
+        # the .sh ($2 == asset) and .ps1 (filename at end of line) parse.
+        working-directory: dist
+        run: sha256sum ai-agent-telemetry-* > SHA256SUMS
+
+      - name: Upload release assets
+        uses: netcracker/qubership-workflow-hub/actions/assets-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
+        with:
+          tag: ${{ env.VERSION }}
+          item-path: dist/ai-agent-telemetry-*,dist/bootstrap.sh,dist/bootstrap.ps1,dist/SHA256SUMS
