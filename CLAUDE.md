@@ -66,18 +66,18 @@ a repository is the consent boundary.
 
 ## Git workflow
 
-Solo repository, so the path scales to the change:
+`main` is protected by the "Protect main branch" ruleset — the Netcracker standard, matching
+`qubership-logging-operator` and `qubership-workflow-hub`. Force-pushes and branch deletion are
+blocked, and every change lands through a pull request with one approval and resolved review
+threads. CI status checks are not required to merge. Repository admins can bypass for maintenance,
+but the default path is a PR.
 
-- **Minor** (docs, `.gitignore`, small fixes — nothing users see): `commit` → `push`
-  straight to `main`. No branch, no PR.
-- **Significant** (features, user-visible changes): branch → `commit` → `push` → PR
-  (squash) → auto-merge once CI is green → run the `Release` workflow. The PR buys the
-  CI gate and a transparent, revertible history; the `Release` workflow (workflow_dispatch,
-  with a version) creates the tag and publishes the binaries.
+- **Every change** (docs included): branch → `commit` → `push` → open a PR → review and approve →
+  squash-merge.
+- **Release:** after the change is on `main`, run the `Release` workflow (workflow_dispatch, with a
+  version). It creates the tag and publishes the binaries — never push a tag by hand.
 
-Keep history linear (squash merges) and commit messages in Conventional Commits. `main`
-has no strict branch protection on purpose: corporate release automation may push back to
-it, which required reviews would block.
+Keep history linear (squash merges) and commit messages in Conventional Commits.
 
 ## Testing and cleanup
 
