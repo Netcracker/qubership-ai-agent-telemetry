@@ -10,7 +10,7 @@ Supported agents: Claude Code, Codex, and Cursor.
 Each hook runs `ai-agent-telemetry ingest --agent=<harness>` and always exits 0 so it never blocks the agent.
 
 | Harness | Hook event | Detection method |
-|---------|-----------|-----------------|
+| --- | --- | --- |
 | Claude Code | `PreToolUse` on the `Skill` tool | Native hook event |
 | Codex | `Stop` | Session transcript |
 | Cursor | `afterAgentResponse` | Session transcript |
@@ -27,10 +27,11 @@ and token. Install the companion dev package `ai-agent-telemetry-configure` and 
 ## Install
 
 Install the APM CLI first ([uv](https://docs.astral.sh/uv/): `uv tool install apm-cli`), then add the
-package:
+package. `--target` is required — without it APM cannot pick a harness and the install fails. It is
+one of `claude`, `codex`, `cursor`, or `all`; the example targets Claude Code:
 
 ```sh
-apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
+apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
 ```
 
 Or add the dependency to your `apm.yml`, pinned to a tag from the
@@ -42,12 +43,14 @@ dependencies:
     - Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
 ```
 
-Then install and compile for your agent — `--target` is one of `codex`, `claude`, `cursor`, or `all`:
+Then install for your agent:
 
 ```sh
-apm install --target all
-apm compile --target all
+apm install --target claude
 ```
+
+On Claude Code that is enough. Codex and other agents that read `AGENTS.md` additionally need
+`apm compile --target codex` to register the trigger.
 
 Restart your agent. Installing is the consent boundary — nothing is sent until the binary is configured
 with an endpoint and token.
