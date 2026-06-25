@@ -12,10 +12,12 @@ follow-up work.
 Install the APM CLI first ([uv](https://docs.astral.sh/uv/):
 `uv tool install apm-cli`), then add the package one of two ways.
 
-Via the APM command:
+Via the APM command. `--target` is required — without it APM cannot pick a harness and
+the install fails. It is one of `claude`, `codex`, `cursor`, or `all`; the example
+targets Claude Code:
 
 ```sh
-apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure
+apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure --target claude
 ```
 
 Or add the dependency to your `apm.yml`, pinned to a tag from the
@@ -27,11 +29,10 @@ devDependencies:
     - Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure
 ```
 
-Then install for your agent — `--target` is one of `codex`, `claude`, `cursor`, or
-`all`:
+Then install for your agent:
 
 ```sh
-apm install --target all
+apm install --target claude
 ```
 
 `apm install` deploys the skill, the hooks, and the skill trigger. On Claude Code that

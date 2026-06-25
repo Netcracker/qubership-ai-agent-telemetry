@@ -8,11 +8,14 @@ the consent boundary — only that repository's skill calls are tracked.
 
 ```sh
 # hooks (every repository that wants telemetry)
-apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
+apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
 
 # setup skill (once per machine, as a dev dependency)
-apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure
+apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure --target claude
 ```
+
+`--target` is required — without it APM cannot pick a harness and the install fails. The examples
+target Claude Code; for Codex or Cursor, use `--target codex`, `--target cursor`, or `--target all`.
 
 Restart the agent, ask it to "configure AI agent telemetry", and follow the prompts. See
 [Installation](#installation) for the full walkthrough.
@@ -37,7 +40,7 @@ agent.
 The two packages serve different roles:
 
 | Package | Repository | What it carries | How to install |
-|---------|-----------|-----------------|----------------|
+| --- | --- | --- | --- |
 | [`ai-agent-telemetry`](https://github.com/Netcracker/qubership-ai-agent-telemetry/tree/main/agent-packages/ai-agent-telemetry) | `Netcracker/qubership-ai-agent-telemetry` | Three hook files (Claude Code, Codex, Cursor) | `apm install` as a regular dependency |
 | `ai-agent-telemetry-configure` | this repository | Setup skill + bootstrap scripts | `apm install --dev` on a new machine |
 
@@ -94,8 +97,12 @@ uv tool install apm-cli
 
 ### 2. Install the hooks
 
+`--target` is required: it tells APM which harness to deploy to, and the install fails without it.
+The command below targets Claude Code. For Codex or Cursor, use `--target codex`, `--target cursor`,
+or `--target all`.
+
 ```sh
-apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
+apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
 ```
 
 Or add the dependency to `apm.yml` by hand:
@@ -106,16 +113,16 @@ dependencies:
     - Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
 ```
 
-Then install for your agent (`codex`, `claude`, `cursor`, or `all`):
+Then install for your agent:
 
 ```sh
-apm install --target codex
+apm install --target claude
 ```
 
 ### 3. Install the setup skill (first time per machine)
 
 ```sh
-apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure
+apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure --target claude
 ```
 
 ### 4. Configure
