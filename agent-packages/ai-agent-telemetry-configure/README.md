@@ -27,13 +27,16 @@ devDependencies:
     - Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure
 ```
 
-Then install and compile for your agent — `--target` is one of `codex`, `claude`,
-`cursor`, or `all`:
+Then install for your agent — `--target` is one of `codex`, `claude`, `cursor`, or
+`all`:
 
 ```sh
 apm install --target all
-apm compile --target all
 ```
+
+`apm install` deploys the skill, the hooks, and the skill trigger. On Claude Code that
+is enough. Codex and other agents that read `AGENTS.md` additionally need
+`apm compile --target codex` to register the trigger.
 
 Restart your agent and ask it to "set up skills telemetry". The bundled setup
 skill writes the per-machine config and verifies delivery. Installing is the

@@ -57,8 +57,10 @@ a repository is the consent boundary.
   retired terminology — never reintroduce "breadcrumb".
 - **Present design forks via AskUserQuestion**, recommendation first, and expect the
   recommendation to be challenged.
-- **APM gotchas.** Install with `apm install --target <codex|claude|cursor|all>`, then
-  `apm compile`. Cursor needs `.cursor/` to exist before install. APM-generated artifacts
+- **APM gotchas.** `apm install --target <codex|claude|cursor|all>` deploys the skill, hooks, and the
+  trigger to `.claude/rules/` — for Claude Code that is enough, no `apm compile`. Codex and other
+  `AGENTS.md` agents additionally need `apm compile` to register the trigger. Cursor needs `.cursor/`
+  to exist before install. APM-generated artifacts
   (`apm_modules/`, `.agents/`, `.codex/`, `.claude/`, `.cursor/`, `apm.lock.yaml`) are
   gitignored; do not commit them.
 
@@ -79,7 +81,7 @@ it, which required reviews would block.
 
 ## Testing and cleanup
 
-A test run is `apm install` / `apm compile`, exercising the hook, then removing the
+A test run is `apm install` (plus `apm compile` for Codex), exercising the hook, then removing the
 generated files so the next run starts clean. They are all gitignored; preview them with
 `git clean -xdn`.
 
