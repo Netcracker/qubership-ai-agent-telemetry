@@ -85,6 +85,34 @@ func TestApplyConfigureWritesRepoAllow(t *testing.T) {
 	}
 }
 
+func TestApplyConfigureDefaultsRepoAllowWhenUnset(t *testing.T) {
+	t.Setenv(envRepoAllow, "")
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	env := loadEnvFile(filepath.Join(cfg, "env"))
+	if env[envRepoAllow] != defaultRepoAllow {
+		t.Fatalf("repo allow = %q, want %q", env[envRepoAllow], defaultRepoAllow)
+	}
+}
+
+func TestApplyConfigurePreservesExistingRepoAllow(t *testing.T) {
+	t.Setenv(envRepoAllow, "")
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	allow := "github.com/Qubership/*"
+	if err := applyConfigure(cfg, "", "", "", allow); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	env := loadEnvFile(filepath.Join(cfg, "env"))
+	if env[envRepoAllow] != allow {
+		t.Fatalf("repo allow = %q, want preserved %q", env[envRepoAllow], allow)
+	}
+}
+
 func TestApplyConfigureOnlyWritesProvidedFields(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), pkgName)
 	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {

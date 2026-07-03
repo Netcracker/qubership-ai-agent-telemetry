@@ -1,8 +1,9 @@
 # ai-agent-telemetry
 
 Records which skills run inside Codex, Claude Code, and Cursor sessions and ships the
-events to an OpenTelemetry collector. Installing the hooks package into a repository is
-the consent boundary — only that repository's skill calls are tracked.
+events to an OpenTelemetry collector. Collection is bounded by the installed hook and
+the machine repository policy. The default `configure` policy records only repositories
+under the Netcracker GitHub organization unless you set a different repository scope.
 
 ## TL;DR
 
@@ -67,9 +68,14 @@ schema is in [the event-schema decision](docs/superpowers/decisions/2026-06-12-e
 
 ## Repository scope
 
-By default, the CLI keeps the historical behavior and records skill use from every
-repository where the hook runs. To use globally installed hooks without collecting
-personal-project activity, configure an allowlist:
+By default, `ai-agent-telemetry configure` writes a Netcracker organization allowlist:
+
+```sh
+AI_AGENT_TELEMETRY_REPO_ALLOW=github.com/Netcracker/*
+```
+
+To use globally installed hooks without collecting personal-project activity from other
+organizations, keep that default or configure a stricter allowlist:
 
 ```sh
 ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*,gitlab.company.com/qubership/**'
@@ -81,6 +87,12 @@ groups. For forks, the CLI checks every configured git remote in the working tre
 only `origin`. A personal GitHub fork is allowed when it has an `upstream` remote that
 points to an allowed organization repository, and telemetry records the matching
 organization remote instead of the personal fork remote.
+
+The precedence is: `AI_AGENT_TELEMETRY_DISABLED` disables collection globally; local
+`git config --local ai-agent-telemetry.enabled true|false` overrides the repository
+allowlist for that checkout; then `AI_AGENT_TELEMETRY_REPO_ALLOW` decides which remotes
+are collected. If the allowlist is absent because you created the config manually, the
+CLI records every repository where the hook runs.
 
 Per-repository overrides are available when needed:
 

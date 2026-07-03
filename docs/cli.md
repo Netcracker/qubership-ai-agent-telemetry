@@ -25,7 +25,7 @@ The hook calls `ingest`; the setup skill calls the rest, so you rarely run them 
 
 | Command | Purpose |
 | --- | --- |
-| `configure` | Write the per-machine config: collector endpoint, optional repository allowlist (`--repo-allow=<patterns>`), optional CA certificate (`--ca=<path>`), and an optional token read without echo. Idempotent. |
+| `configure` | Write the per-machine config: collector endpoint, repository allowlist (`--repo-allow=<patterns>`, default `github.com/Netcracker/*` when unset), optional CA certificate (`--ca=<path>`), and an optional token read without echo. Idempotent. |
 | `status` | Read-only check: build version, config directory, endpoint, repository scope, whether a CA is present, outbox backlog, last flush attempt, and a configured verdict. Sends nothing. |
 | `selftest` | Send one marked probe event and report whether the collector accepted it and it left the outbox. |
 | `ingest` | The hook path: read an agent hook payload on stdin, detect skill use (on Codex the `SKILL.md` reads in the session rollout; on Claude Code the `Skill` tool name in the `PreToolUse` payload; on Cursor the `SKILL.md` reads in the `afterAgentResponse` transcript), queue the events, and flush opportunistically. Always exits 0 so it never fails an agent turn. |
@@ -65,7 +65,8 @@ and returns; delivery happens opportunistically.
 ## Repository scope
 
 Set `AI_AGENT_TELEMETRY_REPO_ALLOW` in the config file, or write it through
-`configure --repo-allow=`, to collect only from organization repositories:
+`configure --repo-allow=`, to collect only from organization repositories. When the
+setting is absent, `configure` writes `github.com/Netcracker/*` by default:
 
 ```sh
 ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*,gitlab.company.com/qubership/**'
@@ -77,6 +78,12 @@ matches one path segment; `**` matches nested GitLab groups. When the hook runs 
 fork, the CLI checks every git remote in the working tree, so `origin` can be a personal
 fork while `upstream` points to an allowed organization repository. Telemetry records the
 matching organization remote instead of the personal fork remote.
+
+Policy precedence is deliberate: `AI_AGENT_TELEMETRY_DISABLED` stops collection first;
+then local `git config --local ai-agent-telemetry.enabled true|false` opts one checkout
+in or out; then `AI_AGENT_TELEMETRY_REPO_ALLOW` scopes the remaining events. If the
+allowlist is absent because the config was written manually, the CLI records every
+repository where the hook runs.
 
 Use local git config for explicit per-repository overrides:
 

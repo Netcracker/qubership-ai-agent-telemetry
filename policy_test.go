@@ -93,6 +93,25 @@ func TestPolicyGitConfigOverrideWinsOverAllowlist(t *testing.T) {
 	}
 }
 
+func TestPolicyGitConfigOverrideUsesGitRemoteWhenEventRemoteMissing(t *testing.T) {
+	yes := true
+	ev := SkillEvent{RepoDir: "/repo"}
+	got := filterEventsByPolicy([]SkillEvent{ev}, telemetryPolicy{}, func(string) *bool {
+		return &yes
+	}, func(cwd string) []string {
+		if cwd != "/repo" {
+			t.Fatalf("cwd = %q", cwd)
+		}
+		return []string{"git@github.com:Netcracker/project.git"}
+	})
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1", len(got))
+	}
+	if got[0].RepoRemote != "github.com/netcracker/project" {
+		t.Fatalf("repo remote = %q", got[0].RepoRemote)
+	}
+}
+
 func TestPolicyWithAllowlistDropsUnknownRemote(t *testing.T) {
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
 	if eventAllowed(SkillEvent{}, policy, nil, nil) {

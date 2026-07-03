@@ -12,6 +12,7 @@ import (
 const (
 	envTelemetryDisabled = "AI_AGENT_TELEMETRY_DISABLED"
 	envRepoAllow         = "AI_AGENT_TELEMETRY_REPO_ALLOW"
+	defaultRepoAllow     = "github.com/Netcracker/*"
 	gitEnabledKey        = "ai-agent-telemetry.enabled"
 )
 
@@ -66,7 +67,15 @@ func eventAllowedRemote(ev SkillEvent, policy telemetryPolicy, override func(str
 			if !*v {
 				return "", false
 			}
-			return remoteIdentity(ev.RepoRemote), true
+			if origin := remoteIdentity(ev.RepoRemote); origin != "" {
+				return origin, true
+			}
+			if remotes != nil && ev.RepoDir != "" {
+				if remote := firstRemoteIdentity(remotes(ev.RepoDir)); remote != "" {
+					return remote, true
+				}
+			}
+			return "", true
 		}
 	}
 	origin := remoteIdentity(ev.RepoRemote)
@@ -93,6 +102,15 @@ func firstAllowedRemote(remotes, allow []string) string {
 			if repoPatternMatch(pat, id) {
 				return id
 			}
+		}
+	}
+	return ""
+}
+
+func firstRemoteIdentity(remotes []string) string {
+	for _, remote := range remotes {
+		if id := remoteIdentity(remote); id != "" {
+			return id
 		}
 	}
 	return ""

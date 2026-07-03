@@ -17,11 +17,13 @@ write. Never put the token in your own output.
 ## What "working" means
 
 - `ai-agent-telemetry status` — read-only state: binary version, config dir, endpoint, whether a
-  CA file is present, spool backlog, last flush attempt, and a configured/not verdict.
+  CA file is present, repository scope, spool backlog, last flush attempt, and a
+  configured/not verdict.
 - `ai-agent-telemetry selftest` — sends one real, marked probe event and reports whether the
   collector accepted it and the event left the spool.
-- Config lives under the config dir that `status` prints: `env` (endpoint, token) and an
-  optional `ca.crt`. These are the binary's to write — don't hand-edit them.
+- Config lives under the config dir that `status` prints: `env` (endpoint, token,
+  repository allowlist) and an optional `ca.crt`. These are the binary's to write —
+  don't hand-edit them.
 
 ## Calling the binary
 
@@ -151,7 +153,11 @@ enough.
 ## Closing gaps
 
 - **Endpoint missing** — ask the user for the collector URL; their onboarding portal or admin
-  has it. Run `ai-agent-telemetry configure --endpoint=<url>`.
+  has it. Run `ai-agent-telemetry configure --endpoint=<url>`. When no repository allowlist
+  exists yet, this also writes the default `github.com/Netcracker/*` scope.
+- **Repository scope wrong** — `status` prints `repo_scope:`. The default is
+  `github.com/Netcracker/*`. If the user needs a different organization or GitLab group,
+  run `ai-agent-telemetry configure --repo-allow='<patterns>'`.
 - **CA needed** (`selftest` fails with a certificate / TLS error) — only self-signed or
   non-trusted-CA deployments need this; a publicly trusted or MDM-distributed CA needs nothing.
   Obtain the `.crt` (`references/deployment.md` covers a local cluster and a corporate PKI) and

@@ -24,6 +24,9 @@ func applyConfigure(configDir, endpoint, caPath, token, repoAllow string) error 
 	if token != "" {
 		updates["AI_AGENT_TELEMETRY_TOKEN"] = token
 	}
+	if repoAllow == "" && repoAllowUnset(configDir) {
+		repoAllow = defaultRepoAllow
+	}
 	if repoAllow != "" {
 		updates[envRepoAllow] = repoAllow
 	}
@@ -38,6 +41,14 @@ func applyConfigure(configDir, endpoint, caPath, token, repoAllow string) error 
 		}
 	}
 	return nil
+}
+
+func repoAllowUnset(configDir string) bool {
+	if os.Getenv(envRepoAllow) != "" {
+		return false
+	}
+	env := loadEnvFile(filepath.Join(configDir, "env"))
+	return env[envRepoAllow] == ""
 }
 
 // writeEnvFile merges updates into the env file under configDir and writes it
