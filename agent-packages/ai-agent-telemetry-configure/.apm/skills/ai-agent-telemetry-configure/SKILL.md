@@ -157,7 +157,8 @@ enough.
   exists yet, this also writes the default `github.com/Netcracker/*` scope.
 - **Repository scope wrong** — `status` prints `repo_scope:`. The default is
   `github.com/Netcracker/*`. If the user needs a different organization or GitLab group,
-  run `ai-agent-telemetry configure --repo-allow='<patterns>'`.
+  run `ai-agent-telemetry configure --repo-allow '<pattern>'`; repeat the flag for more
+  than one pattern.
 - **CA needed** (`selftest` fails with a certificate / TLS error) — only self-signed or
   non-trusted-CA deployments need this; a publicly trusted or MDM-distributed CA needs nothing.
   Obtain the `.crt` (`references/deployment.md` covers a local cluster and a corporate PKI) and

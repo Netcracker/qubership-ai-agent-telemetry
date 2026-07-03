@@ -137,24 +137,29 @@ func parseFlags(args []string) (agent, endpoint string) {
 }
 
 // parseConfigureFlags reads the configure flags: --endpoint=, --ca=, and
-// --repo-allow=.
+// repeatable --repo-allow values.
 func parseConfigureFlags(args []string) (endpoint, ca, repoAllow string) {
-	for _, a := range args {
+	var repoAllowValues []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
 		case strings.HasPrefix(a, "--endpoint="):
 			endpoint = strings.TrimPrefix(a, "--endpoint=")
 		case strings.HasPrefix(a, "--ca="):
 			ca = strings.TrimPrefix(a, "--ca=")
 		case strings.HasPrefix(a, "--repo-allow="):
-			repoAllow = strings.TrimPrefix(a, "--repo-allow=")
+			repoAllowValues = append(repoAllowValues, strings.TrimPrefix(a, "--repo-allow="))
+		case a == "--repo-allow" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "--"):
+			i++
+			repoAllowValues = append(repoAllowValues, args[i])
 		}
 	}
-	return endpoint, ca, repoAllow
+	return endpoint, ca, strings.Join(repoAllowValues, ",")
 }
 
 // readSecret prompts on stderr and reads a line without echoing it, so the
 // token never lands in a terminal scrollback. It prefers the controlling
-// terminal (/dev/tty) so it still works under `curl | sh`, where stdin is the
+// terminal (/dev/tty) so it also works under `curl | sh`, where stdin is the
 // pipe; it falls back to stdin when stdin is itself a terminal (e.g. the
 // Windows console). Returns "" if no terminal is available.
 func readSecret(prompt string) string {

@@ -25,7 +25,7 @@ The hook calls `ingest`; the setup skill calls the rest, so you rarely run them 
 
 | Command | Purpose |
 | --- | --- |
-| `configure` | Write the per-machine config: collector endpoint, repository allowlist (`--repo-allow=<patterns>`, default `github.com/Netcracker/*` when unset), optional CA certificate (`--ca=<path>`), and an optional token read without echo. Idempotent. |
+| `configure` | Write the per-machine config: collector endpoint, repository allowlist (repeatable `--repo-allow <pattern>`, default `github.com/Netcracker/*` when unset), optional CA certificate (`--ca=<path>`), and an optional token read without echo. Idempotent. |
 | `status` | Read-only check: build version, config directory, endpoint, repository scope, whether a CA is present, outbox backlog, last flush attempt, and a configured verdict. Sends nothing. |
 | `selftest` | Send one marked probe event and report whether the collector accepted it and it left the outbox. |
 | `ingest` | The hook path: read an agent hook payload on stdin, detect skill use (on Codex the `SKILL.md` reads in the session rollout; on Claude Code the `Skill` tool name in the `PreToolUse` payload; on Cursor the `SKILL.md` reads in the `afterAgentResponse` transcript), queue the events, and flush opportunistically. Always exits 0 so it never fails an agent turn. |
@@ -64,12 +64,22 @@ and returns; delivery happens opportunistically.
 
 ## Repository scope
 
-Set `AI_AGENT_TELEMETRY_REPO_ALLOW` in the config file, or write it through
-`configure --repo-allow=`, to collect only from organization repositories. When the
-setting is absent, `configure` writes `github.com/Netcracker/*` by default:
+Set `AI_AGENT_TELEMETRY_REPO_ALLOW` in the config file, or write it through repeatable
+`configure --repo-allow`, to collect only from organization repositories. When the setting
+is absent, `configure` writes `github.com/Netcracker/*` by default:
 
 ```sh
-ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*,gitlab.company.com/qubership/**'
+ai-agent-telemetry configure \
+  --repo-allow 'github.com/Netcracker/*' \
+  --repo-allow 'github.com/Qubership/*' \
+  --repo-allow 'gitlab.company.com/qubership/**'
+```
+
+The comma-separated form is also supported for scripts and environment files:
+
+```sh
+AI_AGENT_TELEMETRY_REPO_ALLOW=github.com/Netcracker/*,github.com/Qubership/*
+ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*'
 ```
 
 Patterns are matched against normalized, lowercase git remote identities such as

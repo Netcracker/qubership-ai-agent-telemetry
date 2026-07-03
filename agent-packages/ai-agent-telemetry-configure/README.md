@@ -70,7 +70,7 @@ The CLI reads its collector settings from the environment or the provisioned
   `Authorization: Bearer`. Without it the request carries no auth header.
 - `AI_AGENT_TELEMETRY_REPO_ALLOW` — repository allowlist. `configure` writes
   `github.com/Netcracker/*` by default when the setting is absent; pass
-  `--repo-allow=<patterns>` to use a different scope.
+  repeatable `--repo-allow <pattern>` values to use a different scope.
 
 A private CA is optional: place `ca.crt` in the config dir and the CLI appends it
 to the system trust pool. The setup skill writes all of this for you.

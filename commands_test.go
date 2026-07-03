@@ -152,6 +152,17 @@ func TestParseConfigureFlags(t *testing.T) {
 	}
 }
 
+func TestParseConfigureFlagsJoinsRepeatableRepoAllow(t *testing.T) {
+	_, _, repoAllow := parseConfigureFlags([]string{
+		"--repo-allow", "github.com/Netcracker/*",
+		"--repo-allow=github.com/Qubership/*,gitlab.example.com/qubership/**",
+	})
+	want := "github.com/Netcracker/*,github.com/Qubership/*,gitlab.example.com/qubership/**"
+	if repoAllow != want {
+		t.Fatalf("repoAllow = %q, want %q", repoAllow, want)
+	}
+}
+
 func TestSelftestDeliversProbeAndClearsIt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

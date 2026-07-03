@@ -78,7 +78,10 @@ To use globally installed hooks without collecting personal-project activity fro
 organizations, keep that default or configure a stricter allowlist:
 
 ```sh
-ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*,gitlab.company.com/qubership/**'
+ai-agent-telemetry configure \
+  --repo-allow 'github.com/Netcracker/*' \
+  --repo-allow 'github.com/Qubership/*' \
+  --repo-allow 'gitlab.company.com/qubership/**'
 ```
 
 The allowlist is matched against normalized, lowercase git remote identities such as
@@ -189,7 +192,10 @@ ai-agent-telemetry configure --endpoint=https://<collector-host>/v1/logs
 **Limit collection to organization repositories** (recommended for global hooks):
 
 ```sh
-ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*,gitlab.company.com/qubership/**'
+ai-agent-telemetry configure \
+  --repo-allow 'github.com/Netcracker/*' \
+  --repo-allow 'github.com/Qubership/*' \
+  --repo-allow 'gitlab.company.com/qubership/**'
 ```
 
 **Add a private CA** (only when the collector's certificate is not publicly trusted):
