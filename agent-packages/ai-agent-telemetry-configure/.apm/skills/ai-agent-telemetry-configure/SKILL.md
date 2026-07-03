@@ -203,7 +203,7 @@ every few sessions) is separate and not wired yet.
 ## Failure → fix
 
 | `status` / `selftest` shows | Cause | Fix |
-|---|---|---|
+| --- | --- | --- |
 | binary not found | not installed yet | run the installer one-liner (also puts `~/.local/bin` on `PATH`) |
 | binary present but stale or broken (`version` wrong, won't run) | the installer only downloads when the file is missing | re-run the installer with `--force` to fetch a fresh copy (see "Updating") |
 | bare name not found on a real skill run | `PATH` not refreshed yet | restart the agent so the hook resolves the binary — a *full* restart (quit the app / close the terminal tab), not a new chat (see "Calling the binary") |
@@ -214,9 +214,9 @@ every few sessions) is separate and not wired yet.
 | spool growing, flush failing | one of the above | fix the reported cause, then `selftest` |
 | `selftest` passes but real skill runs send nothing | the harness hook is not wired (never installed) | confirm and repair the hook (see "Confirm the hook is wired") |
 | **Cursor only:** hook is wired but Cursor silently ignores it | `.cursor/hooks.json` is missing the top-level `"version": 1` (apm < 0.21.0 did not add it automatically) | add `"version": 1` at the top level of `.cursor/hooks.json` next to the `"hooks"` key |
-| **Codex UI shows an old hook command** (for example `.codex\hooks\...\bootstrap.bat ingest --agent=codex`) while the package source expects `ai-agent-telemetry ingest --agent=codex` | stale installed hook or stale Codex hook trust state; often the UI is showing another checkout's `.codex/hooks.json`, not the current worktree | inspect the active hook path and repair it, then clear stale `hooks.state` entries and fully restart Codex (see "Codex stale hook UI / trust cache") |
-| **Codex only:** `status` / `selftest` report `endpoint: (unset)` / `not configured` (or real Codex skill runs send nothing) while Claude Code or a plain shell work, and `update-check` says `latest: unknown` | Codex sandbox hides `~/.config` and blocks egress — not a missing configuration | write the Codex execpolicy rule, then restart Codex (see "Codex sandbox rule (check)" → [references/codex-sandbox.md](references/codex-sandbox.md)) |
-| **Codex false negative:** same `not configured` / `endpoint: (unset)` symptom, but you called the binary by **full path**, via a `&` wrapper, or with a non-allowlisted subcommand (`version`, `update-check`) | that invocation does not match the execpolicy rule, so it ran sandboxed — the rule itself may be perfectly fine | re-test with the bare-name allowlisted form `ai-agent-telemetry status` / `ai-agent-telemetry selftest`; don't diagnose from the unmatched call (see "Codex sandbox rule (check)") |
+| **Codex UI shows an old hook command** while the package source expects `ai-agent-telemetry ingest --agent=codex` | stale installed hook or stale Codex hook trust state; often the UI is showing another checkout's `.codex/hooks.json` | inspect the active hook path, repair it, clear stale `hooks.state` entries, and fully restart Codex |
+| **Codex only:** `status` / `selftest` report `endpoint: (unset)` / `not configured`, and `update-check` says `latest: unknown` | Codex sandbox hides `~/.config` and blocks egress — not a missing configuration | write the Codex execpolicy rule, then restart Codex (see [references/codex-sandbox.md](references/codex-sandbox.md)) |
+| **Codex false negative:** same `not configured` symptom, but you called the binary by full path or wrapper | that invocation does not match the execpolicy rule, so it ran sandboxed | re-test with `ai-agent-telemetry status` / `ai-agent-telemetry selftest`; don't diagnose from the unmatched call |
 
 `selftest` prints the raw send error (for example an `x509` / `tls` message or an HTTP status);
 map it to a cause above. `status` shows the spool backlog and the configured/not verdict but
@@ -236,7 +236,7 @@ bare name, so for every config directory that exists the active hook file must c
 command `ai-agent-telemetry ingest --agent=<harness>`:
 
 | Harness | Active hook file | Must contain |
-|---|---|---|
+| --- | --- | --- |
 | Claude Code | `.claude/settings.json` | a `PreToolUse` hook matched on `Skill` running `ai-agent-telemetry ingest --agent=claude` |
 | Codex | `.codex/hooks.json` | a `Stop` hook running `ai-agent-telemetry ingest --agent=codex` |
 | Cursor | `.cursor/hooks.json` | an `afterAgentResponse` hook running `ai-agent-telemetry ingest --agent=cursor`, plus a numeric top-level `version` |
