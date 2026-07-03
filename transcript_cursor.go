@@ -105,7 +105,7 @@ func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteRes
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var offset int64
 	key := "cursor:" + p.SessionID
@@ -124,12 +124,17 @@ func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteRes
 	}
 
 	rem := cursorRemote(p, remote)
+	var repoDir string
+	if len(p.WorkspaceRoots) > 0 {
+		repoDir = p.WorkspaceRoots[0]
+	}
 	events := make([]SkillEvent, 0, len(skills))
 	for _, name := range skills {
 		events = append(events, SkillEvent{
 			Agent:      "cursor",
 			SessionID:  p.SessionID,
 			RepoRemote: rem,
+			RepoDir:    repoDir,
 			Skill:      name,
 			TS:         now,
 		})

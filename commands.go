@@ -16,13 +16,16 @@ import (
 // the env file (merged, so they can be set in separate runs); a CA path is
 // validated and copied to ca.crt. Empty fields are left untouched, which keeps
 // re-running configure safe.
-func applyConfigure(configDir, endpoint, caPath, token string) error {
+func applyConfigure(configDir, endpoint, caPath, token, repoAllow string) error {
 	updates := map[string]string{}
 	if endpoint != "" {
 		updates["AI_AGENT_TELEMETRY_ENDPOINT"] = endpoint
 	}
 	if token != "" {
 		updates["AI_AGENT_TELEMETRY_TOKEN"] = token
+	}
+	if repoAllow != "" {
+		updates[envRepoAllow] = repoAllow
 	}
 	if len(updates) > 0 {
 		if err := writeEnvFile(configDir, updates); err != nil {
@@ -132,18 +135,20 @@ type statusReport struct {
 	Endpoint   string
 	Configured bool
 	CAFound    bool
+	RepoScope  string
 	Buffered   int
 	LastFlush  string
 }
 
 // gatherStatus inspects the outbox and config dir against an already-resolved
 // endpoint. A machine is configured once it has an endpoint to send to.
-func gatherStatus(s *Outbox, configDir, endpoint string) statusReport {
+func gatherStatus(s *Outbox, configDir, endpoint string, policy telemetryPolicy) statusReport {
 	r := statusReport{
 		Version:    version,
 		ConfigDir:  configDir,
 		Endpoint:   endpoint,
 		Configured: endpoint != "",
+		RepoScope:  policy.repoScope(),
 		LastFlush:  "never",
 	}
 	if configDir != "" {
@@ -171,6 +176,11 @@ func formatStatus(r statusReport) string {
 		endpoint = "(unset)"
 	}
 	fmt.Fprintf(&b, "endpoint: %s\n", endpoint)
+	repoScope := r.RepoScope
+	if repoScope == "" {
+		repoScope = "all"
+	}
+	fmt.Fprintf(&b, "repo_scope: %s\n", repoScope)
 	fmt.Fprintf(&b, "ca: %s\n", caState(r.CAFound))
 	fmt.Fprintf(&b, "buffered: %d\n", r.Buffered)
 	fmt.Fprintf(&b, "last_flush_attempt: %s\n", r.LastFlush)

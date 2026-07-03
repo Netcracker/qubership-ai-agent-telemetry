@@ -65,6 +65,28 @@ No personal data leaves the machine. A repository is identified by its remote UR
 and `machine.id` is never derived from the user or the hardware. The full schema is in
 [the event-schema decision](docs/superpowers/decisions/2026-06-12-event-schema-and-privacy.md).
 
+## Repository scope
+
+By default, the CLI keeps the historical behavior and records skill use from every
+repository where the hook runs. To use globally installed hooks without collecting
+personal-project activity, configure an allowlist:
+
+```sh
+ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*,gitlab.company.com/qubership/**'
+```
+
+The allowlist is matched against normalized git remotes. `*` matches one path segment;
+`**` matches nested GitLab groups. For forks, the CLI checks every configured git remote
+in the working tree, not only `origin`, so a personal GitHub fork is allowed when it has
+an `upstream` remote that points to an allowed organization repository.
+
+Per-repository overrides are available when needed:
+
+```sh
+git config --local ai-agent-telemetry.enabled false  # opt out this repository
+git config --local ai-agent-telemetry.enabled true   # opt in this repository
+```
+
 ## Backend requirements
 
 Any collector that meets these requirements works. A ready-to-deploy reference stack is in
@@ -148,6 +170,12 @@ This puts the binary at `~/.local/bin/ai-agent-telemetry`, verifies the checksum
 ```sh
 ai-agent-telemetry configure --endpoint=https://<collector-host>/v1/logs
 # Token (leave empty if none): <paste token, press Enter — input is hidden>
+```
+
+**Limit collection to organization repositories** (recommended for global hooks):
+
+```sh
+ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*,gitlab.company.com/qubership/**'
 ```
 
 **Add a private CA** (only when the collector's certificate is not publicly trusted):

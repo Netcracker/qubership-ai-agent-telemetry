@@ -29,7 +29,7 @@ func codexTranscriptEvents(stdin []byte, offsets *OffsetStore, now time.Time) []
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var offset int64
 	key := "codex:" + p.SessionID
@@ -53,6 +53,7 @@ func codexTranscriptEvents(stdin []byte, offsets *OffsetStore, now time.Time) []
 			Agent:      "codex",
 			SessionID:  p.SessionID,
 			RepoRemote: scan.repoRemote,
+			RepoDir:    firstNonEmpty(scan.repoDir, p.Cwd),
 			Skill:      name,
 			TS:         now,
 		})
@@ -82,6 +83,7 @@ func codexTranscriptEventsAuto(stdin []byte, now time.Time) []SkillEvent {
 type codexScan struct {
 	skills     []string // skill names read at or beyond the offset, in order, deduped
 	repoRemote string   // session_meta.git.repository_url, read across the whole file
+	repoDir    string   // session_meta.cwd, kept local for repo-scope policy checks
 }
 
 // scanCodexRollout streams a Codex rollout. It always reads session_meta for the
@@ -118,12 +120,16 @@ func processCodexLine(line string, emit bool, out *codexScan, seen map[string]bo
 	switch env.Type {
 	case "session_meta":
 		var m struct {
+			Cwd string `json:"cwd"`
 			Git struct {
 				RepositoryURL string `json:"repository_url"`
 			} `json:"git"`
 		}
-		if json.Unmarshal(env.Payload, &m) == nil && m.Git.RepositoryURL != "" {
-			out.repoRemote = sanitizeRemote(m.Git.RepositoryURL)
+		if json.Unmarshal(env.Payload, &m) == nil {
+			out.repoDir = m.Cwd
+			if m.Git.RepositoryURL != "" {
+				out.repoRemote = sanitizeRemote(m.Git.RepositoryURL)
+			}
 		}
 	case "response_item":
 		if !emit {
@@ -151,6 +157,15 @@ func processCodexLine(line string, emit bool, out *codexScan, seen map[string]bo
 			}
 		}
 	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func codexToolTexts(typ, name, arguments, input string) []string {

@@ -33,7 +33,7 @@ func latestReleaseTag(timeout time.Duration) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("github api status %d", resp.StatusCode)
 	}
