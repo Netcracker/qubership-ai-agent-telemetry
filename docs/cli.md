@@ -71,11 +71,12 @@ Set `AI_AGENT_TELEMETRY_REPO_ALLOW` in the config file, or write it through
 ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*,gitlab.company.com/qubership/**'
 ```
 
-Patterns are matched against normalized git remote identities such as
-`github.com/Netcracker/repo` or `gitlab.company.com/qubership/platform/service`. `*`
+Patterns are matched against normalized, lowercase git remote identities such as
+`github.com/netcracker/repo` or `gitlab.company.com/qubership/platform/service`. `*`
 matches one path segment; `**` matches nested GitLab groups. When the hook runs from a
 fork, the CLI checks every git remote in the working tree, so `origin` can be a personal
-fork while `upstream` points to an allowed organization repository.
+fork while `upstream` points to an allowed organization repository. Telemetry records the
+matching organization remote instead of the personal fork remote.
 
 Use local git config for explicit per-repository overrides:
 

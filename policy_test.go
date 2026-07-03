@@ -4,8 +4,8 @@ import "testing"
 
 func TestRemoteIdentityNormalizesCommonGitURLs(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/Netcracker/qubership-ai-agent-telemetry.git":         "github.com/Netcracker/qubership-ai-agent-telemetry",
-		"git@github.com:Netcracker/qubership-ai-agent-telemetry.git":             "github.com/Netcracker/qubership-ai-agent-telemetry",
+		"https://github.com/Netcracker/qubership-ai-agent-telemetry.git":         "github.com/netcracker/qubership-ai-agent-telemetry",
+		"git@github.com:Netcracker/qubership-ai-agent-telemetry.git":             "github.com/netcracker/qubership-ai-agent-telemetry",
 		"ssh://git@gitlab.example.com/qubership/platform/service.git":            "gitlab.example.com/qubership/platform/service",
 		"https://oauth2:token@gitlab.example.com/qubership/platform/service.git": "gitlab.example.com/qubership/platform/service",
 	}
@@ -20,6 +20,9 @@ func TestRepoAllowedMatchesGithubOrgWithoutAllowingPersonalForksByOrigin(t *test
 	allow := []string{"github.com/Netcracker/*", "github.com/Qubership/*"}
 	if !repoAllowed("git@github.com:Netcracker/qubership-ai-agent-telemetry.git", allow) {
 		t.Fatal("want Netcracker repo allowed")
+	}
+	if !repoAllowed("git@github.com:netcracker/qubership-ai-agent-telemetry.git", allow) {
+		t.Fatal("want GitHub org matching to ignore path case")
 	}
 	if repoAllowed("git@github.com:some-user/qubership-ai-agent-telemetry.git", allow) {
 		t.Fatal("personal fork origin alone must not match an org allow pattern")
@@ -59,6 +62,23 @@ func TestPolicyAllowsPersonalForkWhenAnotherRemoteMatchesAllowlist(t *testing.T)
 	}
 }
 
+func TestFilterEventsUsesMatchingAllowlistedRemoteForForks(t *testing.T) {
+	ev := SkillEvent{RepoRemote: "git@github.com:some-user/project.git", RepoDir: "/repo"}
+	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
+	got := filterEventsByPolicy([]SkillEvent{ev}, policy, nil, func(string) []string {
+		return []string{
+			"git@github.com:some-user/project.git",
+			"git@github.com:Netcracker/project.git",
+		}
+	})
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1", len(got))
+	}
+	if got[0].RepoRemote != "github.com/netcracker/project" {
+		t.Fatalf("repo remote = %q", got[0].RepoRemote)
+	}
+}
+
 func TestPolicyGitConfigOverrideWinsOverAllowlist(t *testing.T) {
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
 	ev := SkillEvent{RepoRemote: "git@github.com:Netcracker/project.git", RepoDir: "/repo"}
@@ -77,5 +97,16 @@ func TestPolicyWithAllowlistDropsUnknownRemote(t *testing.T) {
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
 	if eventAllowed(SkillEvent{}, policy, nil, nil) {
 		t.Fatal("empty remote should be denied when an allowlist is configured")
+	}
+}
+
+func TestFilterEventsNormalizesRepoRemoteForTelemetry(t *testing.T) {
+	events := []SkillEvent{{RepoRemote: "git@github.com:Netcracker/Project.git"}}
+	got := filterEventsByPolicy(events, telemetryPolicy{}, nil, nil)
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1", len(got))
+	}
+	if got[0].RepoRemote != "github.com/netcracker/project" {
+		t.Fatalf("repo remote = %q", got[0].RepoRemote)
 	}
 }

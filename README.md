@@ -55,15 +55,15 @@ One OpenTelemetry log record per skill run:
 
 - `agent` — the harness (`codex`, `claude`, `cursor`).
 - `session.id` — the agent's session identifier.
-- `repo.remote` — the git remote URL. The only repository label.
+- `repo.remote` — the normalized git remote identity. The only repository label.
 - `skill.name` — the skill that ran.
 - `service.name`, `service.version` — the CLI's identity and build.
 - `os.type` — the host OS (`windows`, `linux`, `darwin`).
 - `machine.id` — an anonymous, random UUID minted once per install.
 
-No personal data leaves the machine. A repository is identified by its remote URL alone,
-and `machine.id` is never derived from the user or the hardware. The full schema is in
-[the event-schema decision](docs/superpowers/decisions/2026-06-12-event-schema-and-privacy.md).
+No personal data leaves the machine. A repository is identified by its normalized remote
+identity alone, and `machine.id` is never derived from the user or the hardware. The full
+schema is in [the event-schema decision](docs/superpowers/decisions/2026-06-12-event-schema-and-privacy.md).
 
 ## Repository scope
 
@@ -75,10 +75,12 @@ personal-project activity, configure an allowlist:
 ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*,gitlab.company.com/qubership/**'
 ```
 
-The allowlist is matched against normalized git remotes. `*` matches one path segment;
-`**` matches nested GitLab groups. For forks, the CLI checks every configured git remote
-in the working tree, not only `origin`, so a personal GitHub fork is allowed when it has
-an `upstream` remote that points to an allowed organization repository.
+The allowlist is matched against normalized, lowercase git remote identities such as
+`github.com/netcracker/repo`. `*` matches one path segment; `**` matches nested GitLab
+groups. For forks, the CLI checks every configured git remote in the working tree, not
+only `origin`. A personal GitHub fork is allowed when it has an `upstream` remote that
+points to an allowed organization repository, and telemetry records the matching
+organization remote instead of the personal fork remote.
 
 Per-repository overrides are available when needed:
 

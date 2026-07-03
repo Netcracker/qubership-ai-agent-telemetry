@@ -44,7 +44,8 @@ func filterEventsByPolicy(events []SkillEvent, policy telemetryPolicy, override 
 	}
 	out := events[:0]
 	for _, ev := range events {
-		if eventAllowed(ev, policy, override, remotes) {
+		if allowedRemote, ok := eventAllowedRemote(ev, policy, override, remotes); ok {
+			ev.RepoRemote = allowedRemote
 			out = append(out, ev)
 		}
 	}
@@ -52,44 +53,53 @@ func filterEventsByPolicy(events []SkillEvent, policy telemetryPolicy, override 
 }
 
 func eventAllowed(ev SkillEvent, policy telemetryPolicy, override func(string) *bool, remotes func(string) []string) bool {
+	_, ok := eventAllowedRemote(ev, policy, override, remotes)
+	return ok
+}
+
+func eventAllowedRemote(ev SkillEvent, policy telemetryPolicy, override func(string) *bool, remotes func(string) []string) (string, bool) {
 	if policy.Disabled {
-		return false
+		return "", false
 	}
 	if override != nil {
 		if v := override(ev.RepoDir); v != nil {
-			return *v
+			if !*v {
+				return "", false
+			}
+			return remoteIdentity(ev.RepoRemote), true
 		}
 	}
+	origin := remoteIdentity(ev.RepoRemote)
 	if len(policy.RepoAllowList) == 0 {
-		return true
+		return origin, true
 	}
 	candidates := []string{ev.RepoRemote}
 	if remotes != nil && ev.RepoDir != "" {
 		candidates = append(candidates, remotes(ev.RepoDir)...)
 	}
-	return anyRemoteAllowed(candidates, policy.RepoAllowList)
+	if allowed := firstAllowedRemote(candidates, policy.RepoAllowList); allowed != "" {
+		return allowed, true
+	}
+	return "", false
 }
 
-func anyRemoteAllowed(remotes, allow []string) bool {
+func firstAllowedRemote(remotes, allow []string) string {
 	for _, remote := range remotes {
-		if repoAllowed(remote, allow) {
-			return true
+		id := remoteIdentity(remote)
+		if id == "" {
+			continue
+		}
+		for _, pat := range allow {
+			if repoPatternMatch(pat, id) {
+				return id
+			}
 		}
 	}
-	return false
+	return ""
 }
 
 func repoAllowed(remote string, allow []string) bool {
-	id := remoteIdentity(remote)
-	if id == "" {
-		return false
-	}
-	for _, pat := range allow {
-		if repoPatternMatch(pat, id) {
-			return true
-		}
-	}
-	return false
+	return firstAllowedRemote([]string{remote}, allow) != ""
 }
 
 func remoteIdentity(raw string) string {
@@ -120,7 +130,9 @@ func cleanRemoteIdentity(s string) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	parts[0] = strings.ToLower(parts[0])
+	for i := range parts {
+		parts[i] = strings.ToLower(parts[i])
+	}
 	return strings.Join(parts, "/")
 }
 
