@@ -191,7 +191,8 @@ func ingest(s *Outbox, agent, endpoint string, stdin []byte, remote remoteResolv
 		fmt.Fprintln(os.Stderr, "detect:", err)
 		return 0
 	}
-	events = filterEventsByPolicy(events, resolveTelemetryPolicy(), gitTelemetryOverride, gitRemotes)
+	cache := newRepoRemoteCache(gitRemotes)
+	events = filterEventsByPolicy(events, resolveTelemetryPolicy(), cache.remotesFor)
 	for _, ev := range events {
 		if err := s.Enqueue(ev); err != nil {
 			fmt.Fprintln(os.Stderr, "enqueue:", err)
@@ -211,6 +212,30 @@ func ingest(s *Outbox, agent, endpoint string, stdin []byte, remote remoteResolv
 		}
 	}
 	return 0
+}
+
+type repoRemoteCache struct {
+	remotesFn func(string) []string
+	remotes   map[string][]string
+}
+
+func newRepoRemoteCache(remotesFn func(string) []string) *repoRemoteCache {
+	return &repoRemoteCache{
+		remotesFn: remotesFn,
+		remotes:   map[string][]string{},
+	}
+}
+
+func (c *repoRemoteCache) remotesFor(cwd string) []string {
+	if cwd == "" || c.remotesFn == nil {
+		return nil
+	}
+	if v, ok := c.remotes[cwd]; ok {
+		return v
+	}
+	v := c.remotesFn(cwd)
+	c.remotes[cwd] = v
+	return v
 }
 
 // shouldFlush is true when there is something to send AND either enough has

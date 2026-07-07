@@ -21,9 +21,9 @@ write. Never put the token in your own output.
   configured/not verdict.
 - `ai-agent-telemetry selftest` — sends one real, marked probe event and reports whether the
   collector accepted it and the event left the spool.
-- Config lives under the config dir that `status` prints: `env` (endpoint, token,
-  repository allowlist) and an optional `ca.crt`. These are the binary's to write —
-  don't hand-edit them.
+- Config lives under the config dir that `status` prints: `env` (endpoint, token),
+  `repo-allow` (repository allowlist), and an optional `ca.crt`. These are the binary's
+  to write — don't hand-edit them.
 
 ## Calling the binary
 
@@ -154,7 +154,8 @@ enough.
 
 - **Endpoint missing** — ask the user for the collector URL; their onboarding portal or admin
   has it. Run `ai-agent-telemetry configure --endpoint=<url>`. When no repository allowlist
-  exists yet, this also writes the default `github.com/Netcracker/*` scope.
+  file exists yet, this also writes the default `github.com/Netcracker/*` scope to
+  `repo-allow`.
 - **Repository scope wrong** — `status` prints `repo_scope:`. The default is
   `github.com/Netcracker/*`. If the user needs a different organization or GitLab group,
   run `ai-agent-telemetry configure --repo-allow '<pattern>'`; repeat the flag for more

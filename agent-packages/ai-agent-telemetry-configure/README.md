@@ -61,16 +61,18 @@ is no daemon.
 ## Configuration
 
 The CLI reads its collector settings from the environment or the provisioned
-`env` file under the config dir, delivered per machine out of band (never git):
+`env` and `repo-allow` files under the config dir, delivered per machine out of band
+(never git):
 
 - `AI_AGENT_TELEMETRY_ENDPOINT` — the OTLP/HTTP collector URL, for example
   `https://collector.example/v1/logs`. Without it the flush is a no-op, so events
   stay buffered in the outbox.
 - `AI_AGENT_TELEMETRY_TOKEN` — the optional bearer token, sent as
   `Authorization: Bearer`. Without it the request carries no auth header.
-- `AI_AGENT_TELEMETRY_REPO_ALLOW` — repository allowlist. `configure` writes
-  `github.com/Netcracker/*` by default when the setting is absent; pass
-  repeatable `--repo-allow <pattern>` values to use a different scope.
+- `repo-allow` — repository allowlist, one glob per line. `configure` writes
+  `github.com/Netcracker/*` by default when the file is absent; pass repeatable
+  `--repo-allow <pattern>` values to use a different scope.
+- `AI_AGENT_TELEMETRY_REPO_ALLOW` — optional environment override for scripts and CI.
 
 A private CA is optional: place `ca.crt` in the config dir and the CLI appends it
 to the system trust pool. The setup skill writes all of this for you.

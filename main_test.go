@@ -45,7 +45,7 @@ func TestIngestEnqueuesAndFlushes(t *testing.T) {
 
 	s := &Outbox{Dir: t.TempDir()}
 	tp := filepath.Join(t.TempDir(), "r.jsonl")
-	body := `{"type":"session_meta","payload":{"git":{"repository_url":"git@host:o/r.git"}}}` + "\n" +
+	body := `{"type":"session_meta","payload":{"git":{"repository_url":"git@github.com:Netcracker/r.git"}}}` + "\n" +
 		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/demo/SKILL.md\"}"}}` + "\n"
 	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestIngestCursorFromTranscript(t *testing.T) {
 
 	// Empty endpoint => Flush is a no-op, so events stay in the outbox to inspect.
 	s := &Outbox{Dir: t.TempDir()}
-	if code := ingest(s, "cursor", "", stdin, func(string) string { return "" }); code != 0 {
+	if code := ingest(s, "cursor", "", stdin, func(string) string { return "git@github.com:Netcracker/repo.git" }); code != 0 {
 		t.Fatalf("ingest exit = %d, want 0", code)
 	}
 
@@ -119,5 +119,26 @@ func TestShouldFlushThrottle(t *testing.T) {
 	touchFlushStamp(s)
 	if shouldFlush(s, 10, time.Hour) {
 		t.Fatal("should skip: stamp fresh and count below N")
+	}
+}
+
+func TestRepoRemoteCacheMemoizesByRepoDir(t *testing.T) {
+	var remotes int
+	cache := newRepoRemoteCache(func(cwd string) []string {
+		remotes++
+		return []string{"git@github.com:Netcracker/repo.git"}
+	})
+
+	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
+	events := []SkillEvent{
+		{RepoDir: "/repo"},
+		{RepoDir: "/repo"},
+	}
+	got := filterEventsByPolicy(events, policy, cache.remotesFor)
+	if len(got) != 2 {
+		t.Fatalf("got %d events, want 2", len(got))
+	}
+	if remotes != 1 {
+		t.Fatalf("remote calls = %d, want 1", remotes)
 	}
 }

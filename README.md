@@ -68,10 +68,11 @@ schema is in [the event-schema decision](docs/superpowers/decisions/2026-06-12-e
 
 ## Repository scope
 
-By default, `ai-agent-telemetry configure` writes a Netcracker organization allowlist:
+By default, the CLI applies a Netcracker organization allowlist. `configure` writes it to
+`repo-allow` in the config dir:
 
-```sh
-AI_AGENT_TELEMETRY_REPO_ALLOW=github.com/Netcracker/*
+```text
+github.com/Netcracker/*
 ```
 
 To use globally installed hooks without collecting personal-project activity from other
@@ -91,18 +92,10 @@ only `origin`. A personal GitHub fork is allowed when it has an `upstream` remot
 points to an allowed organization repository, and telemetry records the matching
 organization remote instead of the personal fork remote.
 
-The precedence is: `AI_AGENT_TELEMETRY_DISABLED` disables collection globally; local
-`git config --local ai-agent-telemetry.enabled true|false` overrides the repository
-allowlist for that checkout; then `AI_AGENT_TELEMETRY_REPO_ALLOW` decides which remotes
-are collected. If the allowlist is absent because you created the config manually, the
-CLI records every repository where the hook runs.
-
-Per-repository overrides are available when needed:
-
-```sh
-git config --local ai-agent-telemetry.enabled false  # opt out this repository
-git config --local ai-agent-telemetry.enabled true   # opt in this repository
-```
+The precedence is: `AI_AGENT_TELEMETRY_DISABLED` disables collection globally;
+`AI_AGENT_TELEMETRY_REPO_ALLOW` overrides the configured scope for CI and automation; then
+`repo-allow` decides which remotes are collected. If no repository policy is configured,
+the built-in `github.com/Netcracker/*` default applies.
 
 ## Backend requirements
 

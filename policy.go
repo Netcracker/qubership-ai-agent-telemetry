@@ -12,20 +12,26 @@ import (
 const (
 	envTelemetryDisabled = "AI_AGENT_TELEMETRY_DISABLED"
 	envRepoAllow         = "AI_AGENT_TELEMETRY_REPO_ALLOW"
+	repoAllowFileName    = "repo-allow"
 	defaultRepoAllow     = "github.com/Netcracker/*"
-	gitEnabledKey        = "ai-agent-telemetry.enabled"
 )
 
 type telemetryPolicy struct {
-	Disabled      bool
-	RepoAllowList []string
+	Disabled         bool
+	RepoAllowList    []string
+	RepoAllowDefault bool
 }
 
 func resolveTelemetryPolicy() telemetryPolicy {
 	env := pkgEnv()
+	repoAllow, defaulted := resolveRepoAllowList(
+		os.Getenv(envRepoAllow),
+		loadRepoAllowFile(pkgConfigPath(repoAllowFileName)),
+	)
 	return telemetryPolicy{
-		Disabled:      truthy(firstNonEmpty(os.Getenv(envTelemetryDisabled), env[envTelemetryDisabled])),
-		RepoAllowList: splitList(firstNonEmpty(os.Getenv(envRepoAllow), env[envRepoAllow])),
+		Disabled:         truthy(firstNonEmpty(os.Getenv(envTelemetryDisabled), env[envTelemetryDisabled])),
+		RepoAllowList:    repoAllow,
+		RepoAllowDefault: defaulted,
 	}
 }
 
@@ -36,16 +42,29 @@ func (p telemetryPolicy) repoScope() string {
 	if len(p.RepoAllowList) == 0 {
 		return "all"
 	}
+	if p.RepoAllowDefault {
+		return strings.Join(p.RepoAllowList, ",") + " (default)"
+	}
 	return strings.Join(p.RepoAllowList, ",")
 }
 
-func filterEventsByPolicy(events []SkillEvent, policy telemetryPolicy, override func(string) *bool, remotes func(string) []string) []SkillEvent {
+func resolveRepoAllowList(envValue string, fileValues []string) ([]string, bool) {
+	if allow := splitList(envValue); len(allow) > 0 {
+		return allow, false
+	}
+	if len(fileValues) > 0 {
+		return fileValues, false
+	}
+	return splitList(defaultRepoAllow), true
+}
+
+func filterEventsByPolicy(events []SkillEvent, policy telemetryPolicy, remotes func(string) []string) []SkillEvent {
 	if len(events) == 0 {
 		return events
 	}
 	out := events[:0]
 	for _, ev := range events {
-		if allowedRemote, ok := eventAllowedRemote(ev, policy, override, remotes); ok {
+		if allowedRemote, ok := eventAllowedRemote(ev, policy, remotes); ok {
 			ev.RepoRemote = allowedRemote
 			out = append(out, ev)
 		}
@@ -53,30 +72,14 @@ func filterEventsByPolicy(events []SkillEvent, policy telemetryPolicy, override 
 	return out
 }
 
-func eventAllowed(ev SkillEvent, policy telemetryPolicy, override func(string) *bool, remotes func(string) []string) bool {
-	_, ok := eventAllowedRemote(ev, policy, override, remotes)
+func eventAllowed(ev SkillEvent, policy telemetryPolicy, remotes func(string) []string) bool {
+	_, ok := eventAllowedRemote(ev, policy, remotes)
 	return ok
 }
 
-func eventAllowedRemote(ev SkillEvent, policy telemetryPolicy, override func(string) *bool, remotes func(string) []string) (string, bool) {
+func eventAllowedRemote(ev SkillEvent, policy telemetryPolicy, remotes func(string) []string) (string, bool) {
 	if policy.Disabled {
 		return "", false
-	}
-	if override != nil {
-		if v := override(ev.RepoDir); v != nil {
-			if !*v {
-				return "", false
-			}
-			if origin := remoteIdentity(ev.RepoRemote); origin != "" {
-				return origin, true
-			}
-			if remotes != nil && ev.RepoDir != "" {
-				if remote := firstRemoteIdentity(remotes(ev.RepoDir)); remote != "" {
-					return remote, true
-				}
-			}
-			return "", true
-		}
 	}
 	origin := remoteIdentity(ev.RepoRemote)
 	if len(policy.RepoAllowList) == 0 {
@@ -102,15 +105,6 @@ func firstAllowedRemote(remotes, allow []string) string {
 			if repoPatternMatch(pat, id) {
 				return id
 			}
-		}
-	}
-	return ""
-}
-
-func firstRemoteIdentity(remotes []string) string {
-	for _, remote := range remotes {
-		if id := remoteIdentity(remote); id != "" {
-			return id
 		}
 	}
 	return ""
@@ -197,27 +191,6 @@ func truthy(s string) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func gitTelemetryOverride(cwd string) *bool {
-	if cwd == "" {
-		return nil
-	}
-	cmd := exec.Command("git", "-C", cwd, "config", "--bool", "--get", gitEnabledKey)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-	switch strings.TrimSpace(strings.ToLower(string(out))) {
-	case "true":
-		v := true
-		return &v
-	case "false":
-		v := false
-		return &v
-	default:
-		return nil
 	}
 }
 

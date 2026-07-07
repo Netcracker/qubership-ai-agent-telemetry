@@ -79,9 +79,10 @@ func TestApplyConfigureWritesRepoAllow(t *testing.T) {
 	if err := applyConfigure(cfg, "", "", "", allow); err != nil {
 		t.Fatal(err)
 	}
-	env := loadEnvFile(filepath.Join(cfg, "env"))
-	if env[envRepoAllow] != allow {
-		t.Fatalf("repo allow = %q", env[envRepoAllow])
+	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
+	want := []string{"github.com/Netcracker/*", "gitlab.example.com/qubership/**"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("repo allow = %v, want %v", got, want)
 	}
 }
 
@@ -91,9 +92,9 @@ func TestApplyConfigureDefaultsRepoAllowWhenUnset(t *testing.T) {
 	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	env := loadEnvFile(filepath.Join(cfg, "env"))
-	if env[envRepoAllow] != defaultRepoAllow {
-		t.Fatalf("repo allow = %q, want %q", env[envRepoAllow], defaultRepoAllow)
+	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
+	if strings.Join(got, ",") != defaultRepoAllow {
+		t.Fatalf("repo allow = %v, want %q", got, defaultRepoAllow)
 	}
 }
 
@@ -107,9 +108,9 @@ func TestApplyConfigurePreservesExistingRepoAllow(t *testing.T) {
 	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	env := loadEnvFile(filepath.Join(cfg, "env"))
-	if env[envRepoAllow] != allow {
-		t.Fatalf("repo allow = %q, want preserved %q", env[envRepoAllow], allow)
+	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
+	if strings.Join(got, ",") != allow {
+		t.Fatalf("repo allow = %v, want preserved %q", got, allow)
 	}
 }
 

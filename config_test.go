@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -77,6 +78,20 @@ func TestLoadEnvFileReadsFromDisk(t *testing.T) {
 	got := loadEnvFile(p)
 	if got["AI_AGENT_TELEMETRY_ENDPOINT"] != "https://disk/v1/logs" {
 		t.Fatalf("endpoint = %q", got["AI_AGENT_TELEMETRY_ENDPOINT"])
+	}
+}
+
+func TestParseRepoAllowSkipsBlanksCommentsAndSplitsLists(t *testing.T) {
+	in := []byte(`
+# organization scope
+github.com/Netcracker/*
+
+github.com/Qubership/*, gitlab.example.com/qubership/**
+`)
+	got := parseRepoAllow(in)
+	want := []string{"github.com/Netcracker/*", "github.com/Qubership/*", "gitlab.example.com/qubership/**"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("repo allow = %v, want %v", got, want)
 	}
 }
 

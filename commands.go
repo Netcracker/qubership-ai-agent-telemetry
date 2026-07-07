@@ -13,9 +13,9 @@ import (
 
 // applyConfigure is the deterministic core the skill and the one-liner both
 // call: it writes only the fields it is given. The endpoint and token go into
-// the env file (merged, so they can be set in separate runs); a CA path is
-// validated and copied to ca.crt. Empty fields are left untouched, which keeps
-// re-running configure safe.
+// the env file (merged, so they can be set in separate runs); repository scope
+// goes into repo-allow; a CA path is validated and copied to ca.crt. Empty
+// fields are left untouched, which keeps re-running configure safe.
 func applyConfigure(configDir, endpoint, caPath, token, repoAllow string) error {
 	updates := map[string]string{}
 	if endpoint != "" {
@@ -27,11 +27,13 @@ func applyConfigure(configDir, endpoint, caPath, token, repoAllow string) error 
 	if repoAllow == "" && repoAllowUnset(configDir) {
 		repoAllow = defaultRepoAllow
 	}
-	if repoAllow != "" {
-		updates[envRepoAllow] = repoAllow
-	}
 	if len(updates) > 0 {
 		if err := writeEnvFile(configDir, updates); err != nil {
+			return err
+		}
+	}
+	if repoAllow != "" {
+		if err := writeRepoAllowFile(configDir, repoAllow); err != nil {
 			return err
 		}
 	}
@@ -47,8 +49,30 @@ func repoAllowUnset(configDir string) bool {
 	if os.Getenv(envRepoAllow) != "" {
 		return false
 	}
-	env := loadEnvFile(filepath.Join(configDir, "env"))
-	return env[envRepoAllow] == ""
+	if len(loadRepoAllowFile(filepath.Join(configDir, repoAllowFileName))) > 0 {
+		return false
+	}
+	return true
+}
+
+func writeRepoAllowFile(configDir, repoAllow string) error {
+	allow := splitList(repoAllow)
+	if len(allow) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return err
+	}
+	var b strings.Builder
+	for _, pat := range allow {
+		fmt.Fprintln(&b, pat)
+	}
+	path := filepath.Join(configDir, repoAllowFileName)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // writeEnvFile merges updates into the env file under configDir and writes it

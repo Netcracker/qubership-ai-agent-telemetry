@@ -131,6 +131,31 @@ func loadEnvFile(path string) map[string]string {
 	return parseEnv(b)
 }
 
+// parseRepoAllow reads one repository glob per line. Blank lines and lines
+// starting with '#' are ignored.
+func parseRepoAllow(b []byte) []string {
+	var out []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, splitList(line)...)
+	}
+	return out
+}
+
+func loadRepoAllowFile(path string) []string {
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return parseRepoAllow(b)
+}
+
 // resolveToken returns the collector bearer token. It prefers the
 // AI_AGENT_TELEMETRY_TOKEN environment variable and falls back to a per-user
 // secret file at <configBase>/ai-agent-telemetry/token. Empty when

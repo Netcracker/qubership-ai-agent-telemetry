@@ -64,9 +64,9 @@ and returns; delivery happens opportunistically.
 
 ## Repository scope
 
-Set `AI_AGENT_TELEMETRY_REPO_ALLOW` in the config file, or write it through repeatable
-`configure --repo-allow`, to collect only from organization repositories. When the setting
-is absent, `configure` writes `github.com/Netcracker/*` by default:
+Set repository scope in `repo-allow`, or write it through repeatable `configure --repo-allow`,
+to collect only from organization repositories. When the file is absent, the built-in
+`github.com/Netcracker/*` default applies; `configure` writes that default to `repo-allow`:
 
 ```sh
 ai-agent-telemetry configure \
@@ -75,7 +75,8 @@ ai-agent-telemetry configure \
   --repo-allow 'gitlab.company.com/qubership/**'
 ```
 
-The comma-separated form is also supported for scripts and environment files:
+The comma-separated form is also supported. Use the environment variable as an override for
+scripts and CI:
 
 ```sh
 AI_AGENT_TELEMETRY_REPO_ALLOW=github.com/Netcracker/*,github.com/Qubership/*
@@ -90,17 +91,9 @@ fork while `upstream` points to an allowed organization repository. Telemetry re
 matching organization remote instead of the personal fork remote.
 
 Policy precedence is deliberate: `AI_AGENT_TELEMETRY_DISABLED` stops collection first;
-then local `git config --local ai-agent-telemetry.enabled true|false` opts one checkout
-in or out; then `AI_AGENT_TELEMETRY_REPO_ALLOW` scopes the remaining events. If the
-allowlist is absent because the config was written manually, the CLI records every
-repository where the hook runs.
-
-Use local git config for explicit per-repository overrides:
-
-```sh
-git config --local ai-agent-telemetry.enabled false
-git config --local ai-agent-telemetry.enabled true
-```
+then the `AI_AGENT_TELEMETRY_REPO_ALLOW` environment variable overrides the configured
+scope; then `repo-allow` scopes the remaining events. If no repository policy is configured,
+the built-in `github.com/Netcracker/*` default applies.
 
 ## Transport and security
 
@@ -121,7 +114,7 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 | Location | Path | Holds |
 | --- | --- | --- |
 | **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the setup skill so the hook resolves it by bare name |
-| **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token, repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
+| **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush` and `.flush.lock`), `offsets/` (per-session transcript offsets) |
 
 All three are the same path on every OS, including Windows (`%USERPROFILE%\.config\…`,

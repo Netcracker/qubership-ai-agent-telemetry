@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRemoteIdentityNormalizesCommonGitURLs(t *testing.T) {
 	cases := map[string]string{
@@ -48,7 +51,7 @@ func TestRepoAllowedMatchesGitlabNestedGroups(t *testing.T) {
 func TestPolicyAllowsPersonalForkWhenAnotherRemoteMatchesAllowlist(t *testing.T) {
 	ev := SkillEvent{RepoRemote: "git@github.com:some-user/project.git", RepoDir: "/repo"}
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	allowed := eventAllowed(ev, policy, nil, func(cwd string) []string {
+	allowed := eventAllowed(ev, policy, func(cwd string) []string {
 		if cwd != "/repo" {
 			t.Fatalf("cwd = %q", cwd)
 		}
@@ -65,7 +68,7 @@ func TestPolicyAllowsPersonalForkWhenAnotherRemoteMatchesAllowlist(t *testing.T)
 func TestFilterEventsUsesMatchingAllowlistedRemoteForForks(t *testing.T) {
 	ev := SkillEvent{RepoRemote: "git@github.com:some-user/project.git", RepoDir: "/repo"}
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	got := filterEventsByPolicy([]SkillEvent{ev}, policy, nil, func(string) []string {
+	got := filterEventsByPolicy([]SkillEvent{ev}, policy, func(string) []string {
 		return []string{
 			"git@github.com:some-user/project.git",
 			"git@github.com:Netcracker/project.git",
@@ -79,26 +82,10 @@ func TestFilterEventsUsesMatchingAllowlistedRemoteForForks(t *testing.T) {
 	}
 }
 
-func TestPolicyGitConfigOverrideWinsOverAllowlist(t *testing.T) {
-	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	ev := SkillEvent{RepoRemote: "git@github.com:Netcracker/project.git", RepoDir: "/repo"}
-	no := false
-	if eventAllowed(ev, policy, func(string) *bool { return &no }, nil) {
-		t.Fatal("git config false should deny an otherwise allowed repo")
-	}
-	yes := true
-	ev.RepoRemote = "git@github.com:some-user/project.git"
-	if !eventAllowed(ev, policy, func(string) *bool { return &yes }, nil) {
-		t.Fatal("git config true should allow an otherwise denied repo")
-	}
-}
-
-func TestPolicyGitConfigOverrideUsesGitRemoteWhenEventRemoteMissing(t *testing.T) {
-	yes := true
+func TestPolicyUsesGitRemoteWhenEventRemoteMissing(t *testing.T) {
 	ev := SkillEvent{RepoDir: "/repo"}
-	got := filterEventsByPolicy([]SkillEvent{ev}, telemetryPolicy{}, func(string) *bool {
-		return &yes
-	}, func(cwd string) []string {
+	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
+	got := filterEventsByPolicy([]SkillEvent{ev}, policy, func(cwd string) []string {
 		if cwd != "/repo" {
 			t.Fatalf("cwd = %q", cwd)
 		}
@@ -114,14 +101,44 @@ func TestPolicyGitConfigOverrideUsesGitRemoteWhenEventRemoteMissing(t *testing.T
 
 func TestPolicyWithAllowlistDropsUnknownRemote(t *testing.T) {
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	if eventAllowed(SkillEvent{}, policy, nil, nil) {
+	if eventAllowed(SkillEvent{}, policy, nil) {
 		t.Fatal("empty remote should be denied when an allowlist is configured")
+	}
+}
+
+func TestResolveRepoAllowListUsesEnvOverride(t *testing.T) {
+	got, defaulted := resolveRepoAllowList("github.com/Env/*", []string{"github.com/File/*"})
+	if defaulted {
+		t.Fatal("env override should not be marked as default")
+	}
+	if strings.Join(got, ",") != "github.com/Env/*" {
+		t.Fatalf("repo allow = %v", got)
+	}
+}
+
+func TestResolveRepoAllowListUsesFile(t *testing.T) {
+	got, defaulted := resolveRepoAllowList("", []string{"github.com/File/*"})
+	if defaulted {
+		t.Fatal("file policy should not be marked as default")
+	}
+	if strings.Join(got, ",") != "github.com/File/*" {
+		t.Fatalf("repo allow = %v", got)
+	}
+}
+
+func TestResolveRepoAllowListDefaultsToNetcracker(t *testing.T) {
+	got, defaulted := resolveRepoAllowList("", nil)
+	if !defaulted {
+		t.Fatal("missing policy should be marked as default")
+	}
+	if strings.Join(got, ",") != defaultRepoAllow {
+		t.Fatalf("repo allow = %v, want %q", got, defaultRepoAllow)
 	}
 }
 
 func TestFilterEventsNormalizesRepoRemoteForTelemetry(t *testing.T) {
 	events := []SkillEvent{{RepoRemote: "git@github.com:Netcracker/Project.git"}}
-	got := filterEventsByPolicy(events, telemetryPolicy{}, nil, nil)
+	got := filterEventsByPolicy(events, telemetryPolicy{}, nil)
 	if len(got) != 1 {
 		t.Fatalf("got %d events, want 1", len(got))
 	}
