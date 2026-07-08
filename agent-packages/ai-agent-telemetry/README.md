@@ -20,9 +20,21 @@ opportunistically flushes buffered events to the collector over OTLP/HTTPS. Ther
 
 ## Prerequisites
 
-The binary must be on `PATH` at `~/.local/bin/ai-agent-telemetry` and configured with a collector endpoint
-and token. Install the companion dev package `ai-agent-telemetry-configure` and run the
-`ai-agent-telemetry-configure` skill to complete per-machine setup.
+The binary must be on `PATH` at `~/.local/bin/ai-agent-telemetry` and configured with a
+collector endpoint and token. Install it once per machine:
+
+```sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
+```
+
+On Windows PowerShell:
+
+```powershell
+iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) }"
+```
+
+The optional companion dev package `ai-agent-telemetry-configure` provides an agent-guided
+repair and verification flow.
 
 ## Install
 
@@ -52,5 +64,5 @@ apm install --target claude
 On Claude Code that is enough. Codex and other agents that read `AGENTS.md` additionally need
 `apm compile --target codex` to register the trigger.
 
-Restart your agent. Installing is the consent boundary — nothing is sent until the binary is configured
-with an endpoint and token.
+Restart your agent. Installing is the consent boundary — nothing is sent until the binary is
+configured with an endpoint and token.

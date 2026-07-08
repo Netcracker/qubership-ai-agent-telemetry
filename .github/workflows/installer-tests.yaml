@@ -1,0 +1,166 @@
+# Test release installer scripts against local release assets.
+
+name: Installer Tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+  workflow_dispatch: null
+
+concurrency:
+  group: installer-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  shell:
+    name: install.sh clean and force reinstall
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Build local release assets
+        run: |
+          set -eu
+          mkdir -p test-release/latest/download test-release/download/v0.1.0 test-release/download/v0.2.0
+          cat > test-release/download/v0.1.0/ai-agent-telemetry-linux-amd64 <<'EOF'
+          #!/bin/sh
+          if [ "${1:-}" = configure ]; then
+            printf 'configure\n' >> "$AI_AGENT_TELEMETRY_TEST_LOG"
+            exit 0
+          fi
+          printf '0.1.0\n'
+          EOF
+          cat > test-release/download/v0.2.0/ai-agent-telemetry-linux-amd64 <<'EOF'
+          #!/bin/sh
+          if [ "${1:-}" = configure ]; then
+            printf 'configure\n' >> "$AI_AGENT_TELEMETRY_TEST_LOG"
+            exit 0
+          fi
+          printf '0.2.0\n'
+          EOF
+          chmod +x test-release/download/v0.1.0/ai-agent-telemetry-linux-amd64
+          chmod +x test-release/download/v0.2.0/ai-agent-telemetry-linux-amd64
+          cp test-release/download/v0.2.0/ai-agent-telemetry-linux-amd64 test-release/latest/download/
+          (cd test-release/download/v0.1.0 && sha256sum ai-agent-telemetry-linux-amd64 > SHA256SUMS)
+          (cd test-release/download/v0.2.0 && sha256sum ai-agent-telemetry-linux-amd64 > SHA256SUMS)
+          cp test-release/download/v0.2.0/SHA256SUMS test-release/latest/download/SHA256SUMS
+
+      - name: Serve local release assets
+        run: |
+          python3 -m http.server 8765 --directory test-release &
+          for _ in 1 2 3 4 5; do
+            if curl -fsS http://127.0.0.1:8765/latest/download/SHA256SUMS >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Clean install
+        env:
+          AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
+          AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.1.0
+          AI_AGENT_TELEMETRY_TEST_LOG: ${{ runner.temp }}/shell-configure.log
+          HOME: ${{ runner.temp }}/shell-home
+        run: |
+          set -eu
+          sh scripts/install.sh
+          test -x "$HOME/.local/bin/ai-agent-telemetry"
+          test "$("$HOME/.local/bin/ai-agent-telemetry")" = "0.1.0"
+          test "$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")" = "configure"
+
+      - name: Force reinstall existing binary
+        env:
+          AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
+          AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
+          HOME: ${{ runner.temp }}/shell-home
+        run: |
+          set -eu
+          sh scripts/install.sh --skip-config --force
+          test "$("$HOME/.local/bin/ai-agent-telemetry")" = "0.2.0"
+
+  powershell:
+    name: install.ps1 clean and force reinstall
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Build local release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dirs = @(
+            'test-release/latest/download',
+            'test-release/download/v0.1.0',
+            'test-release/download/v0.2.0'
+          )
+          New-Item -ItemType Directory -Force -Path $dirs | Out-Null
+
+          $asset01 = 'test-release/download/v0.1.0/ai-agent-telemetry-windows-amd64.exe'
+          $asset02 = 'test-release/download/v0.2.0/ai-agent-telemetry-windows-amd64.exe'
+          [System.IO.File]::WriteAllText($asset01, "0.1.0`n", [System.Text.Encoding]::ASCII)
+          [System.IO.File]::WriteAllText($asset02, "0.2.0`n", [System.Text.Encoding]::ASCII)
+          Copy-Item test-release/download/v0.2.0/ai-agent-telemetry-windows-amd64.exe test-release/latest/download/
+
+          foreach ($version in 'v0.1.0', 'v0.2.0') {
+            $asset = "test-release/download/$version/ai-agent-telemetry-windows-amd64.exe"
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $asset).Hash.ToLower()
+            $sums = "test-release/download/$version/SHA256SUMS"
+            $content = "$hash  ai-agent-telemetry-windows-amd64.exe`n"
+            [System.IO.File]::WriteAllText($sums, $content, [System.Text.Encoding]::ASCII)
+          }
+          Copy-Item test-release/download/v0.2.0/SHA256SUMS test-release/latest/download/SHA256SUMS
+
+      - name: Serve local release assets
+        run: |
+          python3 -m http.server 8765 --directory test-release &
+          for _ in 1 2 3 4 5; do
+            if curl -fsS http://127.0.0.1:8765/latest/download/SHA256SUMS >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Clean install
+        shell: pwsh
+        env:
+          AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
+          AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.1.0
+          USERPROFILE: ${{ runner.temp }}/powershell-home
+          PROCESSOR_ARCHITECTURE: AMD64
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/install.ps1 -SkipConfig
+          $binDir = Join-Path $env:USERPROFILE '.local\bin'
+          $bin = Join-Path $binDir 'ai-agent-telemetry.exe'
+          if (-not (Test-Path $bin)) { throw "missing installed binary: $bin" }
+          if ((Get-Content -Raw -LiteralPath $bin).Trim() -ne '0.1.0') { throw "unexpected clean install content" }
+
+      - name: Force reinstall existing binary
+        shell: pwsh
+        env:
+          AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
+          AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
+          USERPROFILE: ${{ runner.temp }}/powershell-home
+          PROCESSOR_ARCHITECTURE: AMD64
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/install.ps1 -SkipConfig -Force
+          $binDir = Join-Path $env:USERPROFILE '.local\bin'
+          $bin = Join-Path $binDir 'ai-agent-telemetry.exe'
+          if ((Get-Content -Raw -LiteralPath $bin).Trim() -ne '0.2.0') { throw "unexpected force reinstall content" }

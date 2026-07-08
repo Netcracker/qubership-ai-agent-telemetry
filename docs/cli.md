@@ -20,7 +20,8 @@ On each hook run the CLI:
 
 ## Subcommands
 
-The hook calls `ingest`; the setup skill calls the rest, so you rarely run them by hand.
+The hook calls `ingest`; the installer can call `configure` on first run, and the setup skill
+uses the diagnostic commands, so you rarely run them by hand.
 `ai-agent-telemetry <command>`:
 
 | Command | Purpose |
@@ -31,21 +32,28 @@ The hook calls `ingest`; the setup skill calls the rest, so you rarely run them 
 | `ingest` | The hook path: read an agent hook payload on stdin, detect skill use (on Codex the `SKILL.md` reads in the session rollout; on Claude Code the `Skill` tool name in the `PreToolUse` payload; on Cursor the `SKILL.md` reads in the `afterAgentResponse` transcript), queue the events, and flush opportunistically. Always exits 0 so it never fails an agent turn. |
 | `flush` | Send queued events to the collector and delete each on success. |
 | `update-check` | Compare the installed version against the latest GitHub release and print `installed:` / `latest:` / `update_available: yes\|no\|unknown`. Network, short timeout, always exits 0 — advisory only. |
+| `self-update` | Download the latest release asset for this OS and architecture, verify it against `SHA256SUMS`, and replace the running binary. |
 | `version` | Print the build version. |
 
 ## Updating
 
 `update-check` reports whether a newer release exists; it does not apply anything. To update,
-re-run the latest installer with `--force` — it always pins the latest binary, so a forced
-reinstall replaces the old one (after the same checksum verification as a first install):
+run:
 
 ```sh
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/bootstrap.sh | sh -s -- --force   # macOS/Linux
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/bootstrap.ps1) } --force"      # Windows
+ai-agent-telemetry self-update
 ```
 
-These are the building blocks for an update prompt; wiring a trigger (for example a periodic
-check that offers the update) is not implemented yet.
+`self-update` fetches the release asset that matches the current `GOOS/GOARCH`, verifies the
+download, and replaces the executable returned by `os.Executable()`. On Windows the replacement
+finishes after the command exits because Windows does not allow overwriting a running `.exe`.
+
+You can also force a reinstall through the installer:
+
+```sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --force
+iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
+```
 
 ## Buffering and delivery
 
@@ -113,7 +121,7 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 
 | Location | Path | Holds |
 | --- | --- | --- |
-| **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the setup skill so the hook resolves it by bare name |
+| **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the installer so the hook resolves it by bare name |
 | **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush` and `.flush.lock`), `offsets/` (per-session transcript offsets) |
 

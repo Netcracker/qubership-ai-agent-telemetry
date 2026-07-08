@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -56,5 +58,64 @@ func TestGatherUpdateCheckFetchErrorIsUnknown(t *testing.T) {
 	out := formatUpdateCheck(r)
 	if !strings.Contains(out, "update_available: unknown") || !strings.Contains(out, "error: offline") {
 		t.Fatalf("output should surface unknown + error:\n%s", out)
+	}
+}
+
+func TestReleaseAssetName(t *testing.T) {
+	cases := []struct {
+		goos, goarch string
+		want         string
+	}{
+		{"linux", "amd64", "ai-agent-telemetry-linux-amd64"},
+		{"darwin", "arm64", "ai-agent-telemetry-darwin-arm64"},
+		{"windows", "amd64", "ai-agent-telemetry-windows-amd64.exe"},
+	}
+	for _, c := range cases {
+		got, err := releaseAssetName(c.goos, c.goarch)
+		if err != nil {
+			t.Fatalf("releaseAssetName(%q,%q): %v", c.goos, c.goarch, err)
+		}
+		if got != c.want {
+			t.Fatalf("releaseAssetName(%q,%q) = %q, want %q", c.goos, c.goarch, got, c.want)
+		}
+	}
+}
+
+func TestReleaseAssetNameRejectsUnsupported(t *testing.T) {
+	if _, err := releaseAssetName("plan9", "amd64"); err == nil {
+		t.Fatal("want unsupported OS error")
+	}
+	if _, err := releaseAssetName("linux", "386"); err == nil {
+		t.Fatal("want unsupported arch error")
+	}
+}
+
+func TestChecksumForAsset(t *testing.T) {
+	sums := "abcd  ai-agent-telemetry-linux-amd64\n1234  other\n"
+	got, err := checksumForAsset(sums, "ai-agent-telemetry-linux-amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "abcd" {
+		t.Fatalf("checksum = %q, want abcd", got)
+	}
+}
+
+func TestChecksumForAssetMissing(t *testing.T) {
+	if _, err := checksumForAsset("abcd  other\n", "missing"); err == nil {
+		t.Fatal("want missing checksum error")
+	}
+}
+
+func TestVerifyFileSHA256(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "asset")
+	if err := os.WriteFile(path, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFileSHA256(path, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"); err != nil {
+		t.Fatalf("verifyFileSHA256: %v", err)
+	}
+	if err := verifyFileSHA256(path, "bad"); err == nil {
+		t.Fatal("want checksum mismatch")
 	}
 }

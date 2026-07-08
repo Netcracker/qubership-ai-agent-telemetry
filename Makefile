@@ -1,7 +1,7 @@
-VERSION ?= 0.1.0
+VERSION ?= 0.2.0
 LDFLAGS := -s -w -X main.version=$(VERSION)
 DIST := dist
-TARGETS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64
+TARGETS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64 windows/arm64
 
 .PHONY: build
 build:
@@ -13,10 +13,14 @@ build:
 		echo "building $$out"; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $$out . ; \
 	done
+	@cp scripts/install.sh $(DIST)/install.sh
+	@cp scripts/install.ps1 $(DIST)/install.ps1
+	@cp scripts/install.sh $(DIST)/bootstrap.sh
+	@cp scripts/install.ps1 $(DIST)/bootstrap.ps1
 
 .PHONY: checksums
 checksums: build
-	@cd $(DIST) && shasum -a 256 ai-agent-telemetry-* > SHA256SUMS && cat SHA256SUMS
+	@cd $(DIST) && shasum -a 256 ai-agent-telemetry-* install.sh install.ps1 bootstrap.sh bootstrap.ps1 > SHA256SUMS && cat SHA256SUMS
 
 .PHONY: test
 test:

@@ -9,10 +9,10 @@ The hooks package
 ([`ai-agent-telemetry`](https://github.com/Netcracker/qubership-ai-agent-telemetry/tree/main/agent-packages/ai-agent-telemetry))
 registers one harness-specific hook. The hook calls the `ai-agent-telemetry` CLI by its
 bare name — `ai-agent-telemetry ingest --agent=<name>` — so the binary must be on `PATH`;
-the setup skill installs it to `~/.local/bin` and puts that directory on `PATH`. A bare command name is
-shell-agnostic, which is what makes one hook work across every harness and OS (Git Bash, PowerShell, and
-`cmd.exe` on Windows; POSIX
-`sh` elsewhere). The CLI reads the agent's payload on stdin, detects any skill that ran,
+the installer puts it in `~/.local/bin` and adds that directory to `PATH`. A bare command
+name is shell-agnostic, which is what makes one hook work across every harness and OS
+(Git Bash, PowerShell, and `cmd.exe` on Windows; POSIX `sh` elsewhere). The CLI reads the
+agent's payload on stdin, detects any skill that ran,
 queues the event to an on-disk outbox, and flushes opportunistically over OTLP/HTTPS. It
 always exits 0, so it never fails an agent turn. For its internals, see
 [the ai-agent-telemetry CLI](cli.md).
@@ -68,7 +68,7 @@ command that opens a `SKILL.md`:
 2. parse the payload's `arguments` (itself a JSON string) and read its `cmd` field;
 3. match `cmd` against the skill path — capture group 1 is the skill name.
 
-```
+```text
 (?:^|[\s"'=/])skills/([^/\s"']+)/SKILL\.md
 ```
 
@@ -92,7 +92,7 @@ array, and two content shapes count as a skill load:
 - a `text` entry that contains a `<manually_attached_skills>` block, where each
   `Skill Name: <name>` line is a manually attached skill.
 
-```
+```text
 (?:^|/)\.cursor/skills/([^/]+)/SKILL\.md      # Read tool_use input.path
 ^Skill Name:\s*(\S+)                          # inside <manually_attached_skills>
 ```

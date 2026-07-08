@@ -13,9 +13,10 @@ a repository is the consent boundary.
 
 - **Two packages.** The hooks that fire the CLI live in
   [`Netcracker/qubership-ai-agent-telemetry`](https://github.com/Netcracker/qubership-ai-agent-telemetry/tree/main/agent-packages/ai-agent-telemetry)
-  as the `ai-agent-telemetry` package. The setup skill and bootstrap scripts live here as
-  `ai-agent-telemetry-configure` (under `agent-packages/`). Consumers add the hooks package
-  to their `apm.yml`; the configure package is a dev dependency for first-time setup.
+  as the `ai-agent-telemetry` package. The setup, repair, and verification skill lives here
+  as `ai-agent-telemetry-configure` (under `agent-packages/`). Consumers add the hooks
+  package to their `apm.yml`; the configure package is an optional dev dependency for
+  agent-guided repair.
 - **Component:** the `ai-agent-telemetry` CLI — a small Go binary at the repository root
   (a flat `package main`, the "Basic command" layout from the Go module-layout guide). It
   detects the skill, buffers events to a local outbox, and flushes over OTLP/HTTPS. No
@@ -24,13 +25,15 @@ a repository is the consent boundary.
   `ai-agent-telemetry-configure` skill run `ai-agent-telemetry` directly — on a dev machine it lives at
   `~/.local/bin/ai-agent-telemetry`. A bare name is shell-agnostic, which is why it replaced the old
   per-turn `bootstrap.{sh,ps1}` hook wrapper (retired; see
-  [docs/adr/0002-bare-binary-on-path.md](docs/adr/0002-bare-binary-on-path.md)). The `bootstrap.sh` and
-  `bootstrap.ps1` scripts are **retained as the one-time installer**: published as release assets, they
-  download the binary, verify its SHA-256 checksum, and place it on `PATH`. Check state with
-  `ai-agent-telemetry status` / `version`, never by running a bootstrap script.
+  [docs/adr/0002-bare-binary-on-path.md](docs/adr/0002-bare-binary-on-path.md)). The
+  `install.sh` and `install.ps1` scripts are the one-time installers: published as release
+  assets, they download the binary, verify its SHA-256 checksum, place it on `PATH`, and run
+  `ai-agent-telemetry configure` when no endpoint is configured yet. Compatibility copies named
+  `bootstrap.sh` and `bootstrap.ps1` may also be published for older docs and automation. Check
+  state with `ai-agent-telemetry status` / `version`, never by running an installer script.
 - **Detection:** a native hook event where the agent emits one (Claude Code), the session
   transcript otherwise (Codex, Cursor). See [docs/agent-integration.md](docs/agent-integration.md).
-- **Harnesses:** Codex, Claude Code, and Cursor are shipped (v0.1.0). OpenCode is planned.
+- **Harnesses:** Codex, Claude Code, and Cursor are shipped (v0.2.0). OpenCode is planned.
 - **Config & cache paths: uniform XDG, not `os.UserConfigDir()`.** Durable config lives at
   `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` and the spool at
   `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` — the same path on every OS,
@@ -100,8 +103,8 @@ untracked files not yet committed. Remove the listed paths explicitly.
 - **OpenCode adapter** — the fourth harness. A native `use_skill` tool call via the
   `.claude/skills/` compatibility extension, the same path as Claude Code.
 - **Outbox housekeeping** — offset-file garbage collection is not implemented.
-- **Automatic updates** — `update-check` runs only when the configure skill is
-  invoked manually. There is no hook or scheduled trigger yet; users must run the
-  skill to discover a newer binary.
+- **Automatic updates** — `self-update` is explicit. There is no hook or scheduled trigger
+  yet; users must run `ai-agent-telemetry update-check` or the configure skill to discover a
+  newer binary.
 - **Dashboards.** The OTLP `service.name` is `ai-agent-telemetry`; update any Grafana
   dashboards that still reference the old `skills-telemetry` or `qubership-skills-telemetry-sender` value.

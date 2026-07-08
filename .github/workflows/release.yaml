@@ -127,27 +127,28 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Stage bootstrap scripts
-        # The bootstrap scripts are the installer: they detect OS/arch and download the
-        # matching binary, so they must ship as release assets to give the provisioning
-        # one-liner a stable URL (releases/latest/download/bootstrap.sh). Stamp the
-        # release tag into BINARY_VERSION (.sh) and $BinaryVersion (.ps1) so each
-        # release's installer pins its own binary and can never lag behind a hardcoded
-        # value.
+      - name: Stage installer scripts
+        # The installer scripts detect OS/arch, download the matching binary, add
+        # the install directory to PATH, and run the binary's configure command
+        # when config is missing. Stamp the release tag into BINARY_VERSION (.sh)
+        # and $BinaryVersion (.ps1) so versioned release assets pin their own
+        # binary. Publish bootstrap.* compatibility copies for older docs and
+        # automation.
         run: |
-          src=agent-packages/ai-agent-telemetry-configure/.apm/hooks/scripts
-          sed "s|^BINARY_VERSION=.*|BINARY_VERSION=\"${VERSION}\"|" "$src/bootstrap.sh" > dist/bootstrap.sh
-          sed "s|^\$BinaryVersion = .*|\$BinaryVersion = '${VERSION}'|" "$src/bootstrap.ps1" > dist/bootstrap.ps1
+          sed "s|^BINARY_VERSION=.*|BINARY_VERSION=\"${VERSION}\"|" scripts/install.sh > dist/install.sh
+          sed "s|^\$BinaryVersion = .*|\$BinaryVersion = '${VERSION}'|" scripts/install.ps1 > dist/install.ps1
+          cp dist/install.sh dist/bootstrap.sh
+          cp dist/install.ps1 dist/bootstrap.ps1
 
       - name: Checksums
-        # The bootstrap scripts fetch SHA256SUMS and hard-fail when it is missing.
+        # The installer scripts fetch SHA256SUMS and hard-fail when it is missing.
         # sha256sum's default output (hash, two spaces, filename) is the exact format
         # the .sh ($2 == asset) and .ps1 (filename at end of line) parse.
         working-directory: dist
-        run: sha256sum ai-agent-telemetry-* > SHA256SUMS
+        run: sha256sum ai-agent-telemetry-* install.sh install.ps1 bootstrap.sh bootstrap.ps1 > SHA256SUMS
 
       - name: Upload release assets
         uses: netcracker/qubership-workflow-hub/actions/assets-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
         with:
           tag: ${{ env.VERSION }}
-          item-path: dist/ai-agent-telemetry-*,dist/bootstrap.sh,dist/bootstrap.ps1,dist/SHA256SUMS
+          item-path: dist/ai-agent-telemetry-*,dist/install.sh,dist/install.ps1,dist/bootstrap.sh,dist/bootstrap.ps1,dist/SHA256SUMS

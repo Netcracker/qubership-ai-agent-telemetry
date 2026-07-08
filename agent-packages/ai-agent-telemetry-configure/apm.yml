@@ -1,4 +1,4 @@
 name: ai-agent-telemetry-configure
-version: 2.0.0
-description: Configure skill and bootstrap scripts for the ai-agent-telemetry CLI (endpoint, token, CA, selftest).
+version: 2.1.0
+description: Setup, repair, and verification skill for the ai-agent-telemetry CLI (endpoint, token, CA, selftest).
 author: Netcracker
