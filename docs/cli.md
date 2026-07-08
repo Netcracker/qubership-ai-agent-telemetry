@@ -24,9 +24,9 @@ The hook calls `ingest`; the setup skill calls the rest, so you rarely run them 
 `ai-agent-telemetry <command>`:
 
 | Command | Purpose |
-|---|---|
-| `configure` | Write the per-machine config: collector endpoint, optional CA certificate (`--ca=<path>`), and an optional token read without echo. Idempotent. |
-| `status` | Read-only check: build version, config directory, endpoint, whether a CA is present, outbox backlog, last flush attempt, and a configured verdict. Sends nothing. |
+| --- | --- |
+| `configure` | Write the per-machine config: collector endpoint, repository allowlist (repeatable `--repo-allow <pattern>`, default `github.com/Netcracker/*` when unset), optional CA certificate (`--ca=<path>`), and an optional token read without echo. Idempotent. |
+| `status` | Read-only check: build version, config directory, endpoint, repository scope, whether a CA is present, outbox backlog, last flush attempt, and a configured verdict. Sends nothing. |
 | `selftest` | Send one marked probe event and report whether the collector accepted it and it left the outbox. |
 | `ingest` | The hook path: read an agent hook payload on stdin, detect skill use (on Codex the `SKILL.md` reads in the session rollout; on Claude Code the `Skill` tool name in the `PreToolUse` payload; on Cursor the `SKILL.md` reads in the `afterAgentResponse` transcript), queue the events, and flush opportunistically. Always exits 0 so it never fails an agent turn. |
 | `flush` | Send queued events to the collector and delete each on success. |
@@ -62,6 +62,39 @@ and returns; delivery happens opportunistically.
   since the previous run. The key is namespaced per harness (`codex:<session>`), so
   different harnesses do not collide and one skill run counts once.
 
+## Repository scope
+
+Set repository scope in `repo-allow`, or write it through repeatable `configure --repo-allow`,
+to collect only from organization repositories. When the file is absent, the built-in
+`github.com/Netcracker/*` default applies; `configure` writes that default to `repo-allow`:
+
+```sh
+ai-agent-telemetry configure \
+  --repo-allow 'github.com/Netcracker/*' \
+  --repo-allow 'github.com/Qubership/*' \
+  --repo-allow 'gitlab.company.com/qubership/**'
+```
+
+The comma-separated form is also supported. Use the environment variable as an override for
+scripts and CI:
+
+```sh
+AI_AGENT_TELEMETRY_REPO_ALLOW=github.com/Netcracker/*,github.com/Qubership/*
+ai-agent-telemetry configure --repo-allow='github.com/Netcracker/*,github.com/Qubership/*'
+```
+
+Patterns are matched against normalized, lowercase git remote identities such as
+`github.com/netcracker/repo` or `gitlab.company.com/qubership/platform/service`. `*`
+matches one path segment; `**` matches nested GitLab groups. When the hook runs from a
+fork, the CLI checks every git remote in the working tree, so `origin` can be a personal
+fork while `upstream` points to an allowed organization repository. Telemetry records the
+matching organization remote instead of the personal fork remote.
+
+Policy precedence is deliberate: `AI_AGENT_TELEMETRY_DISABLED` stops collection first;
+then the `AI_AGENT_TELEMETRY_REPO_ALLOW` environment variable overrides the configured
+scope; then `repo-allow` scopes the remaining events. If no repository policy is configured,
+the built-in `github.com/Netcracker/*` default applies.
+
 ## Transport and security
 
 Delivery is OTLP/HTTP, over HTTPS only. The CLI never falls back to plaintext and never
@@ -79,9 +112,9 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 [the config-dir decision](superpowers/decisions/2026-06-23-config-cache-dir-xdg-msix.md).
 
 | Location | Path | Holds |
-|---|---|---|
+| --- | --- | --- |
 | **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the setup skill so the hook resolves it by bare name |
-| **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
+| **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush` and `.flush.lock`), `offsets/` (per-session transcript offsets) |
 
 All three are the same path on every OS, including Windows (`%USERPROFILE%\.config\…`,

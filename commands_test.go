@@ -58,7 +58,7 @@ func TestApplyConfigureWritesEndpointTokenAndCA(t *testing.T) {
 	if err := os.WriteFile(src, selfSignedPEM(t), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyConfigure(cfg, "https://otel.example/v1/logs", src, "secret"); err != nil {
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", src, "secret", ""); err != nil {
 		t.Fatal(err)
 	}
 	env := loadEnvFile(filepath.Join(cfg, "env"))
@@ -73,9 +73,50 @@ func TestApplyConfigureWritesEndpointTokenAndCA(t *testing.T) {
 	}
 }
 
+func TestApplyConfigureWritesRepoAllow(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	allow := "github.com/Netcracker/*,gitlab.example.com/qubership/**"
+	if err := applyConfigure(cfg, "", "", "", allow); err != nil {
+		t.Fatal(err)
+	}
+	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
+	want := []string{"github.com/Netcracker/*", "gitlab.example.com/qubership/**"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("repo allow = %v, want %v", got, want)
+	}
+}
+
+func TestApplyConfigureDefaultsRepoAllowWhenUnset(t *testing.T) {
+	t.Setenv(envRepoAllow, "")
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
+	if strings.Join(got, ",") != defaultRepoAllow {
+		t.Fatalf("repo allow = %v, want %q", got, defaultRepoAllow)
+	}
+}
+
+func TestApplyConfigurePreservesExistingRepoAllow(t *testing.T) {
+	t.Setenv(envRepoAllow, "")
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	allow := "github.com/Qubership/*"
+	if err := applyConfigure(cfg, "", "", "", allow); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
+	if strings.Join(got, ",") != allow {
+		t.Fatalf("repo allow = %v, want preserved %q", got, allow)
+	}
+}
+
 func TestApplyConfigureOnlyWritesProvidedFields(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), pkgName)
-	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", ""); err != nil {
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	env := loadEnvFile(filepath.Join(cfg, "env"))
@@ -100,12 +141,26 @@ func TestWriteEnvFileIsIdempotent(t *testing.T) {
 }
 
 func TestParseConfigureFlags(t *testing.T) {
-	endpoint, ca := parseConfigureFlags([]string{"--endpoint=https://x/v1/logs", "--ca=/tmp/ca.crt"})
+	endpoint, ca, repoAllow := parseConfigureFlags([]string{"--endpoint=https://x/v1/logs", "--ca=/tmp/ca.crt", "--repo-allow=github.com/Netcracker/*"})
 	if endpoint != "https://x/v1/logs" {
 		t.Fatalf("endpoint = %q", endpoint)
 	}
 	if ca != "/tmp/ca.crt" {
 		t.Fatalf("ca = %q", ca)
+	}
+	if repoAllow != "github.com/Netcracker/*" {
+		t.Fatalf("repoAllow = %q", repoAllow)
+	}
+}
+
+func TestParseConfigureFlagsJoinsRepeatableRepoAllow(t *testing.T) {
+	_, _, repoAllow := parseConfigureFlags([]string{
+		"--repo-allow", "github.com/Netcracker/*",
+		"--repo-allow=github.com/Qubership/*,gitlab.example.com/qubership/**",
+	})
+	want := "github.com/Netcracker/*,github.com/Qubership/*,gitlab.example.com/qubership/**"
+	if repoAllow != want {
+		t.Fatalf("repoAllow = %q, want %q", repoAllow, want)
 	}
 }
 
@@ -170,7 +225,7 @@ func TestGatherStatusReportsConfiguredState(t *testing.T) {
 	s := &Outbox{Dir: t.TempDir()}
 	seed(t, s, 2)
 
-	r := gatherStatus(s, cfg, "https://otel.example/v1/logs")
+	r := gatherStatus(s, cfg, "https://otel.example/v1/logs", telemetryPolicy{})
 	if !r.Configured {
 		t.Fatal("want configured when an endpoint is set")
 	}
@@ -188,7 +243,7 @@ func TestGatherStatusReportsConfiguredState(t *testing.T) {
 func TestGatherStatusNotConfiguredWhenNoEndpoint(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), pkgName)
 	s := &Outbox{Dir: t.TempDir()}
-	r := gatherStatus(s, cfg, "")
+	r := gatherStatus(s, cfg, "", telemetryPolicy{})
 	if r.Configured {
 		t.Fatal("want not configured when endpoint is empty")
 	}

@@ -95,6 +95,7 @@ func claudeAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]SkillE
 		Agent:      "claude",
 		SessionID:  p.SessionID,
 		RepoRemote: rem,
+		RepoDir:    p.Cwd,
 		Skill:      p.ToolInput.Skill,
 		TS:         now,
 	}}, nil

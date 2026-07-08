@@ -44,14 +44,14 @@ func run(args []string, stdout func(string)) int {
 		})))
 		return 0
 	case "configure":
-		endpoint, caPath := parseConfigureFlags(args[1:])
+		endpoint, caPath, repoAllow := parseConfigureFlags(args[1:])
 		cfg := pkgConfigDir()
 		if cfg == "" {
 			fmt.Fprintln(os.Stderr, "configure: no user config directory available")
 			return 1
 		}
 		token := readSecret("Collector token (leave blank to skip): ")
-		if err := applyConfigure(cfg, endpoint, caPath, token); err != nil {
+		if err := applyConfigure(cfg, endpoint, caPath, token, repoAllow); err != nil {
 			fmt.Fprintln(os.Stderr, "configure:", err)
 			return 1
 		}
@@ -60,7 +60,7 @@ func run(args []string, stdout func(string)) int {
 			fmt.Fprintln(os.Stderr, "outbox:", err)
 			return 1
 		}
-		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""))))
+		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy())))
 		return 0
 	case "selftest":
 		s, err := DefaultOutbox()
@@ -115,7 +115,7 @@ func run(args []string, stdout func(string)) int {
 			fmt.Fprintln(os.Stderr, "outbox:", err)
 			return 0
 		}
-		stdout(formatStatus(gatherStatus(s, pkgConfigDir(), resolveEndpoint(""))))
+		stdout(formatStatus(gatherStatus(s, pkgConfigDir(), resolveEndpoint(""), resolveTelemetryPolicy())))
 		return 0
 	default:
 		stdout("unknown command: " + args[0] + "\n")
@@ -136,28 +136,36 @@ func parseFlags(args []string) (agent, endpoint string) {
 	return agent, endpoint
 }
 
-// parseConfigureFlags reads the configure flags: --endpoint= and --ca=.
-func parseConfigureFlags(args []string) (endpoint, ca string) {
-	for _, a := range args {
+// parseConfigureFlags reads the configure flags: --endpoint=, --ca=, and
+// repeatable --repo-allow values.
+func parseConfigureFlags(args []string) (endpoint, ca, repoAllow string) {
+	var repoAllowValues []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
 		case strings.HasPrefix(a, "--endpoint="):
 			endpoint = strings.TrimPrefix(a, "--endpoint=")
 		case strings.HasPrefix(a, "--ca="):
 			ca = strings.TrimPrefix(a, "--ca=")
+		case strings.HasPrefix(a, "--repo-allow="):
+			repoAllowValues = append(repoAllowValues, strings.TrimPrefix(a, "--repo-allow="))
+		case a == "--repo-allow" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "--"):
+			i++
+			repoAllowValues = append(repoAllowValues, args[i])
 		}
 	}
-	return endpoint, ca
+	return endpoint, ca, strings.Join(repoAllowValues, ",")
 }
 
 // readSecret prompts on stderr and reads a line without echoing it, so the
 // token never lands in a terminal scrollback. It prefers the controlling
-// terminal (/dev/tty) so it still works under `curl | sh`, where stdin is the
+// terminal (/dev/tty) so it also works under `curl | sh`, where stdin is the
 // pipe; it falls back to stdin when stdin is itself a terminal (e.g. the
 // Windows console). Returns "" if no terminal is available.
 func readSecret(prompt string) string {
 	fmt.Fprint(os.Stderr, prompt)
 	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
-		defer tty.Close()
+		defer func() { _ = tty.Close() }()
 		b, rerr := term.ReadPassword(int(tty.Fd()))
 		fmt.Fprintln(os.Stderr)
 		if rerr == nil {
@@ -183,6 +191,8 @@ func ingest(s *Outbox, agent, endpoint string, stdin []byte, remote remoteResolv
 		fmt.Fprintln(os.Stderr, "detect:", err)
 		return 0
 	}
+	cache := newRepoRemoteCache(gitRemotes)
+	events = filterEventsByPolicy(events, resolveTelemetryPolicy(), cache.remotesFor)
 	for _, ev := range events {
 		if err := s.Enqueue(ev); err != nil {
 			fmt.Fprintln(os.Stderr, "enqueue:", err)
@@ -202,6 +212,30 @@ func ingest(s *Outbox, agent, endpoint string, stdin []byte, remote remoteResolv
 		}
 	}
 	return 0
+}
+
+type repoRemoteCache struct {
+	remotesFn func(string) []string
+	remotes   map[string][]string
+}
+
+func newRepoRemoteCache(remotesFn func(string) []string) *repoRemoteCache {
+	return &repoRemoteCache{
+		remotesFn: remotesFn,
+		remotes:   map[string][]string{},
+	}
+}
+
+func (c *repoRemoteCache) remotesFor(cwd string) []string {
+	if cwd == "" || c.remotesFn == nil {
+		return nil
+	}
+	if v, ok := c.remotes[cwd]; ok {
+		return v
+	}
+	v := c.remotesFn(cwd)
+	c.remotes[cwd] = v
+	return v
 }
 
 // shouldFlush is true when there is something to send AND either enough has

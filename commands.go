@@ -13,10 +13,10 @@ import (
 
 // applyConfigure is the deterministic core the skill and the one-liner both
 // call: it writes only the fields it is given. The endpoint and token go into
-// the env file (merged, so they can be set in separate runs); a CA path is
-// validated and copied to ca.crt. Empty fields are left untouched, which keeps
-// re-running configure safe.
-func applyConfigure(configDir, endpoint, caPath, token string) error {
+// the env file (merged, so they can be set in separate runs); repository scope
+// goes into repo-allow; a CA path is validated and copied to ca.crt. Empty
+// fields are left untouched, which keeps re-running configure safe.
+func applyConfigure(configDir, endpoint, caPath, token, repoAllow string) error {
 	updates := map[string]string{}
 	if endpoint != "" {
 		updates["AI_AGENT_TELEMETRY_ENDPOINT"] = endpoint
@@ -24,8 +24,16 @@ func applyConfigure(configDir, endpoint, caPath, token string) error {
 	if token != "" {
 		updates["AI_AGENT_TELEMETRY_TOKEN"] = token
 	}
+	if repoAllow == "" && repoAllowUnset(configDir) {
+		repoAllow = defaultRepoAllow
+	}
 	if len(updates) > 0 {
 		if err := writeEnvFile(configDir, updates); err != nil {
+			return err
+		}
+	}
+	if repoAllow != "" {
+		if err := writeRepoAllowFile(configDir, repoAllow); err != nil {
 			return err
 		}
 	}
@@ -35,6 +43,36 @@ func applyConfigure(configDir, endpoint, caPath, token string) error {
 		}
 	}
 	return nil
+}
+
+func repoAllowUnset(configDir string) bool {
+	if os.Getenv(envRepoAllow) != "" {
+		return false
+	}
+	if len(loadRepoAllowFile(filepath.Join(configDir, repoAllowFileName))) > 0 {
+		return false
+	}
+	return true
+}
+
+func writeRepoAllowFile(configDir, repoAllow string) error {
+	allow := splitList(repoAllow)
+	if len(allow) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return err
+	}
+	var b strings.Builder
+	for _, pat := range allow {
+		fmt.Fprintln(&b, pat)
+	}
+	path := filepath.Join(configDir, repoAllowFileName)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // writeEnvFile merges updates into the env file under configDir and writes it
@@ -132,18 +170,20 @@ type statusReport struct {
 	Endpoint   string
 	Configured bool
 	CAFound    bool
+	RepoScope  string
 	Buffered   int
 	LastFlush  string
 }
 
 // gatherStatus inspects the outbox and config dir against an already-resolved
 // endpoint. A machine is configured once it has an endpoint to send to.
-func gatherStatus(s *Outbox, configDir, endpoint string) statusReport {
+func gatherStatus(s *Outbox, configDir, endpoint string, policy telemetryPolicy) statusReport {
 	r := statusReport{
 		Version:    version,
 		ConfigDir:  configDir,
 		Endpoint:   endpoint,
 		Configured: endpoint != "",
+		RepoScope:  policy.repoScope(),
 		LastFlush:  "never",
 	}
 	if configDir != "" {
@@ -171,6 +211,11 @@ func formatStatus(r statusReport) string {
 		endpoint = "(unset)"
 	}
 	fmt.Fprintf(&b, "endpoint: %s\n", endpoint)
+	repoScope := r.RepoScope
+	if repoScope == "" {
+		repoScope = "all"
+	}
+	fmt.Fprintf(&b, "repo_scope: %s\n", repoScope)
 	fmt.Fprintf(&b, "ca: %s\n", caState(r.CAFound))
 	fmt.Fprintf(&b, "buffered: %d\n", r.Buffered)
 	fmt.Fprintf(&b, "last_flush_attempt: %s\n", r.LastFlush)

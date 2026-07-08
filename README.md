@@ -1,8 +1,9 @@
 # ai-agent-telemetry
 
 Records which skills run inside Codex, Claude Code, and Cursor sessions and ships the
-events to an OpenTelemetry collector. Installing the hooks package into a repository is
-the consent boundary — only that repository's skill calls are tracked.
+events to an OpenTelemetry collector. Collection is bounded by the installed hook and
+the machine repository policy. The default `configure` policy records only repositories
+under the Netcracker GitHub organization unless you set a different repository scope.
 
 ## TL;DR
 
@@ -55,15 +56,46 @@ One OpenTelemetry log record per skill run:
 
 - `agent` — the harness (`codex`, `claude`, `cursor`).
 - `session.id` — the agent's session identifier.
-- `repo.remote` — the git remote URL. The only repository label.
+- `repo.remote` — the normalized git remote identity. The only repository label.
 - `skill.name` — the skill that ran.
 - `service.name`, `service.version` — the CLI's identity and build.
 - `os.type` — the host OS (`windows`, `linux`, `darwin`).
 - `machine.id` — an anonymous, random UUID minted once per install.
 
-No personal data leaves the machine. A repository is identified by its remote URL alone,
-and `machine.id` is never derived from the user or the hardware. The full schema is in
-[the event-schema decision](docs/superpowers/decisions/2026-06-12-event-schema-and-privacy.md).
+No personal data leaves the machine. A repository is identified by its normalized remote
+identity alone, and `machine.id` is never derived from the user or the hardware. The full
+schema is in [the event-schema decision](docs/superpowers/decisions/2026-06-12-event-schema-and-privacy.md).
+
+## Repository scope
+
+By default, the CLI applies a Netcracker organization allowlist. `configure` writes it to
+`repo-allow` in the config dir:
+
+```text
+github.com/Netcracker/*
+```
+
+To use globally installed hooks without collecting personal-project activity from other
+organizations, keep that default or configure a stricter allowlist:
+
+```sh
+ai-agent-telemetry configure \
+  --repo-allow 'github.com/Netcracker/*' \
+  --repo-allow 'github.com/Qubership/*' \
+  --repo-allow 'gitlab.company.com/qubership/**'
+```
+
+The allowlist is matched against normalized, lowercase git remote identities such as
+`github.com/netcracker/repo`. `*` matches one path segment; `**` matches nested GitLab
+groups. For forks, the CLI checks every configured git remote in the working tree, not
+only `origin`. A personal GitHub fork is allowed when it has an `upstream` remote that
+points to an allowed organization repository, and telemetry records the matching
+organization remote instead of the personal fork remote.
+
+The precedence is: `AI_AGENT_TELEMETRY_DISABLED` disables collection globally;
+`AI_AGENT_TELEMETRY_REPO_ALLOW` overrides the configured scope for CI and automation; then
+`repo-allow` decides which remotes are collected. If no repository policy is configured,
+the built-in `github.com/Netcracker/*` default applies.
 
 ## Backend requirements
 
@@ -148,6 +180,15 @@ This puts the binary at `~/.local/bin/ai-agent-telemetry`, verifies the checksum
 ```sh
 ai-agent-telemetry configure --endpoint=https://<collector-host>/v1/logs
 # Token (leave empty if none): <paste token, press Enter — input is hidden>
+```
+
+**Limit collection to organization repositories** (recommended for global hooks):
+
+```sh
+ai-agent-telemetry configure \
+  --repo-allow 'github.com/Netcracker/*' \
+  --repo-allow 'github.com/Qubership/*' \
+  --repo-allow 'gitlab.company.com/qubership/**'
 ```
 
 **Add a private CA** (only when the collector's certificate is not publicly trusted):

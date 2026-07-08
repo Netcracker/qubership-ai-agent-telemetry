@@ -19,6 +19,7 @@ type SkillEvent struct {
 	Agent      string    `json:"agent"`
 	SessionID  string    `json:"session_id"`
 	RepoRemote string    `json:"repo_remote,omitempty"`
+	RepoDir    string    `json:"-"`
 	Skill      string    `json:"skill"`
 	TS         time.Time `json:"ts"`
 }

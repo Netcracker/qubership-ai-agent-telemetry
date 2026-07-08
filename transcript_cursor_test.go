@@ -132,9 +132,16 @@ func TestCursorTranscriptEventsHonorsOffset(t *testing.T) {
 	if again := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime); len(again) != 0 {
 		t.Fatalf("second pass = %v, want 0", again)
 	}
-	f, _ := os.OpenFile(tp, os.O_APPEND|os.O_WRONLY, 0o600)
-	f.WriteString(`{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/new/SKILL.md"}}]}}` + "\n")
-	f.Close()
+	f, err := os.OpenFile(tp, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/new/SKILL.md"}}]}}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	third := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime)
 	if len(third) != 1 || third[0].Skill != "new" {
 		t.Fatalf("third pass = %v", third)
