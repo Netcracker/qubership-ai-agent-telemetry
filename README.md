@@ -8,11 +8,11 @@ under the Netcracker GitHub organization unless you set a different repository s
 ## TL;DR
 
 ```sh
-# macOS / Linux: install the CLI and run configure if needed
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
+# macOS / Linux: install or update the CLI and run configure if needed
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --force
 
-# Windows PowerShell
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) }"
+# Windows PowerShell: install or update the CLI and run configure if needed
+iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
 
 # hooks (every repository that wants telemetry)
 apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
@@ -125,21 +125,22 @@ Any collector that meets these requirements works. A ready-to-deploy reference s
 These steps assume no prior APM setup. Have the collector endpoint, an optional CA
 certificate, and an optional access token on hand.
 
-### 1. Install the CLI and configure if needed
+### 1. Install or update the CLI and configure if needed
 
 The installer downloads the right release asset, verifies it against `SHA256SUMS`, installs it
-to `~/.local/bin`, and adds that directory to the user `PATH`. If no endpoint is configured
-yet, it runs `ai-agent-telemetry configure`; the binary prompts for the collector endpoint
+to `~/.local/bin`, and adds that directory to the user `PATH`. The `--force` and `-Force`
+options replace an existing binary with the latest release. If no endpoint is configured yet,
+the installer runs `ai-agent-telemetry configure`; the binary prompts for the collector endpoint
 and optional token and writes the config.
 
 ```sh
 # macOS / Linux
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --force
 ```
 
 ```powershell
 # Windows PowerShell
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) }"
+iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
 ```
 
 ### 2. Install APM
