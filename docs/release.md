@@ -15,6 +15,18 @@ vMAJOR.MINOR.PATCH
 
 For example, the first release after `v0.1.0` is `v0.2.0`.
 
+The workflow input is the source of truth for the release version. Do not bump
+`VERSION` in `Makefile` as a release step. The release workflow does not call
+`make`; it passes the workflow input directly to `go build` with
+`-X main.version=<version>` and stamps the same version into the installer
+scripts.
+
+For local release-like builds, pass the version explicitly:
+
+```bash
+make build VERSION=vX.Y.Z
+```
+
 ## Pre-release checks
 
 Run the same checks locally before dispatching the workflow:

@@ -1,4 +1,4 @@
-VERSION ?= 0.2.0
+VERSION ?= v0.0.0-local
 LDFLAGS := -s -w -X main.version=$(VERSION)
 DIST := dist
 TARGETS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64 windows/arm64
