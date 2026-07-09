@@ -181,18 +181,17 @@ status check — not only when the user asks. It prints `installed:`, `latest:`,
 - `update_available: yes` — tell the user the installed and latest versions and **ask whether to
   update**. Don't update without consent.
 
-On a yes, apply it by re-running the latest installer with `--force` (it pins the latest binary
-and reinstalls after the same checksum check):
+On a yes, apply it with the CLI's updater:
 
 ```sh
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/bootstrap.sh | sh -s -- --force   # macOS/Linux
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/bootstrap.ps1) } --force"      # Windows
+ai-agent-telemetry self-update
 ```
 
 Then re-run `update-check` to confirm `installed:` matches `latest:`. No agent restart is
-needed — the installer replaces the binary in place at `~/.local/bin/ai-agent-telemetry`, and
-the bare name already resolves from a previous install, so the hook picks up the new version
-immediately.
+needed on macOS or Linux because the binary is replaced in place at
+`~/.local/bin/ai-agent-telemetry`, and the bare name already resolves from a previous install.
+On Windows, `self-update` schedules the replacement after the command exits because a running
+`.exe` cannot be overwritten.
 
 In a sandboxed environment (Codex) the command reports `latest: unknown` because the execpolicy
 allowlist excludes `update-check` by design. Don't treat that as "no update" — ask the user to

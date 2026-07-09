@@ -2,13 +2,13 @@
 
 ## Status
 Accepted
-#### Date
+### Date
 2026-06-22
-#### Owner
+### Owner
 denifilatoff
-#### Participants and approvers
+### Participants and approvers
 Denis Filatov (@denifilatoff)
-#### Related ADRs
+### Related ADRs
 - [0001-skill-detection-via-hooks-and-transcripts.md](0001-skill-detection-via-hooks-and-transcripts.md) —
   the hooks that call the binary
 - [0003-config-cache-dirs-xdg.md](0003-config-cache-dirs-xdg.md) — where the binary's config lives
@@ -58,12 +58,15 @@ We will install the CLI binary to `~/.local/bin/ai-agent-telemetry` (`.exe` on W
 is on `PATH`. The hook command becomes `ai-agent-telemetry ingest --agent=<name>` — a bare binary name with no
 shell-specific wrapper, no fallback operator, and no per-harness script to deploy.
 
-A configure skill (`ai-agent-telemetry-configure`) guides the user through the one-time install by running the
-existing release scripts (`bootstrap.sh` / `bootstrap.ps1`) and CLI commands (`configure`, `status`,
-`selftest`). The scripts download the release binary, verify its SHA-256 checksum against the published
-`SHA256SUMS`, place it in `~/.local/bin`, and add that directory to `PATH`. An `update-check` subcommand
-compares the installed version against the latest GitHub release and prints an advisory verdict; applying the
-update is a separate, explicit re-run of the installer script with `--force`.
+Standalone release installers (`install.sh` / `install.ps1`) handle the one-time binary install. They download
+the release binary, verify its SHA-256 checksum against the published `SHA256SUMS`, place it in
+`~/.local/bin`, add that directory to `PATH`, and run `ai-agent-telemetry configure` when config is missing. A configure
+skill (`ai-agent-telemetry-configure`) remains available for diagnosis, repair, and verification through
+`status` and `selftest`.
+
+An `update-check` subcommand compares the installed version against the latest GitHub release and prints an
+advisory verdict. A separate `self-update` subcommand applies the update by downloading the matching release
+asset, verifying it, and replacing the current binary.
 
 ### Justification
 
@@ -75,11 +78,9 @@ same way — through `PATH`. This eliminates every Windows shell trap at once:
 - No `commandWindows` field that APM does not deploy.
 - No per-OS script to bundle, deploy, and maintain.
 
-The bootstrap scripts' auto-download capability is replaced by a one-time setup step. The tradeoff is
-that the binary no longer self-updates on every hook call. The `update-check` subcommand and the configure
-skill cover this gap: the skill calls `update-check` and offers the update with consent, but auto-updating on
-the hot hook path is deliberately avoided — a network fetch and binary swap on every agent turn risks failing
-the turn.
+The bootstrap scripts' auto-download capability is replaced by a one-time setup step and an explicit
+`self-update` command. Auto-updating on the hot hook path is deliberately avoided: a network fetch and binary
+swap on every agent turn risks failing the turn.
 
 The old bootstrap scripts pinned a release tag (e.g., `v0.1.0`) and downloaded into a per-version cache under
 `LOCALAPPDATA` or `~/Library/Caches`. Running `status` through them reports a stale binary and a misleading
@@ -91,13 +92,13 @@ The follow-up decisions (SHA-256 verification, `update-check`, `os.type` attribu
 ## Consequences
 
 - **Positive.** One hook command works across every harness and OS. The APM `commandWindows` bug is no longer a
-  blocker for telemetry. The configure skill handles install and updates in a single, auditable flow.
-- **Negative.** The binary does not self-update. A machine can run an old build until the user invokes the
-  configure skill or manually re-runs the installer. There is no scheduled or hook-triggered update check
-  yet.
-- **Neutral.** The bootstrap scripts (`bootstrap.sh`, `bootstrap.ps1`) are retained as the installer mechanism
-  (download, verify, place on `PATH`), but they are no longer called from hooks. They run once at setup
-  time, not on every agent turn. The old locate-or-download-per-turn model is retired.
+  blocker for telemetry. Install, configuration, and updates have explicit commands instead of being hidden in
+  hook execution.
+- **Negative.** There is no scheduled or hook-triggered update check yet. A machine can run an old build until
+  the user invokes `self-update` or re-runs the installer.
+- **Neutral.** Compatibility assets named `bootstrap.sh` and `bootstrap.ps1` may still be published, but the
+  primary installer names are `install.sh` and `install.ps1`. They run once at setup time, not on every agent
+  turn. The old locate-or-download-per-turn model is retired.
 - **Supply-chain hardening.** The installer verifies SHA-256 checksums before placing the binary on `PATH`. On
   hosts without a SHA-256 tool, the POSIX installer warns and proceeds — integrity is best-effort, availability
   is not sacrificed.

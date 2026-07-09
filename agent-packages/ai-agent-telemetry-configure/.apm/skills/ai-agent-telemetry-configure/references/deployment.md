@@ -7,25 +7,27 @@ rather than hardcoding any one deployment.
 
 Run once per machine to install the binary onto `PATH`. The installer downloads the release
 binary to `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows), verifies its checksum against the
-published `SHA256SUMS`, and adds `~/.local/bin` to `PATH`. It is idempotent and **install-only**
-— it never runs the binary.
+published `SHA256SUMS`, and adds `~/.local/bin` to `PATH`. If no endpoint is configured yet,
+it runs `ai-agent-telemetry configure`; the binary asks for the collector endpoint and optional
+token and writes the config.
 
 ```sh
 # macOS / Linux
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/bootstrap.sh | sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
 # Windows (PowerShell)
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/bootstrap.ps1) }"
+iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) }"
 ```
 
-Then configure with the binary itself. Prefer the bare name (`ai-agent-telemetry configure`); right
-after install `~/.local/bin` is not on this process's `PATH` yet, so until a restart refreshes it
-the bare name will not resolve and you fall back to the full path:
+Use `--skip-config` / `-SkipConfig` only when you need to install the binary without prompting.
+Then configure with the binary itself. Prefer the bare name (`ai-agent-telemetry configure`);
+right after install `~/.local/bin` may not be on this process's `PATH` yet, so until a restart
+refreshes it the bare name may not resolve and you fall back to the full path:
 
 ```sh
 ~/.local/bin/ai-agent-telemetry configure
 ```
 
-The bootstrap scripts are published as release assets, so `releases/latest/download` always
+The installer scripts are published as release assets, so `releases/latest/download` always
 resolves to the current installer.
 
 The `PATH` change reaches only new processes: the bare-name hook resolves after the agent is

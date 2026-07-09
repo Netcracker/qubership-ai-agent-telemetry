@@ -164,6 +164,26 @@ func TestParseConfigureFlagsJoinsRepeatableRepoAllow(t *testing.T) {
 	}
 }
 
+func TestConfigureEndpointUsesFlag(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AI_AGENT_TELEMETRY_ENDPOINT", "https://env/v1/logs")
+
+	if got := configureEndpoint("https://flag/v1/logs"); got != "https://flag/v1/logs" {
+		t.Fatalf("endpoint = %q, want flag value", got)
+	}
+}
+
+func TestConfigureEndpointUsesEnvironment(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AI_AGENT_TELEMETRY_ENDPOINT", "https://env/v1/logs")
+
+	if got := configureEndpoint(""); got != "https://env/v1/logs" {
+		t.Fatalf("endpoint = %q, want env value", got)
+	}
+}
+
 func TestSelftestDeliversProbeAndClearsIt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

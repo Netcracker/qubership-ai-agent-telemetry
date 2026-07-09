@@ -29,7 +29,7 @@ func main() {
 
 func run(args []string, stdout func(string)) int {
 	if len(args) == 0 {
-		stdout("usage: ai-agent-telemetry <ingest|flush|status|selftest|configure|update-check|version>\n")
+		stdout("usage: ai-agent-telemetry <ingest|flush|status|selftest|configure|update-check|self-update|version>\n")
 		return 2
 	}
 	switch args[0] {
@@ -43,6 +43,12 @@ func run(args []string, stdout func(string)) int {
 			return latestReleaseTag(updateCheckTimeout)
 		})))
 		return 0
+	case "self-update":
+		if err := runSelfUpdate(version, stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "self-update:", err)
+			return 1
+		}
+		return 0
 	case "configure":
 		endpoint, caPath, repoAllow := parseConfigureFlags(args[1:])
 		cfg := pkgConfigDir()
@@ -50,6 +56,7 @@ func run(args []string, stdout func(string)) int {
 			fmt.Fprintln(os.Stderr, "configure: no user config directory available")
 			return 1
 		}
+		endpoint = configureEndpoint(endpoint)
 		token := readSecret("Collector token (leave blank to skip): ")
 		if err := applyConfigure(cfg, endpoint, caPath, token, repoAllow); err != nil {
 			fmt.Fprintln(os.Stderr, "configure:", err)
@@ -155,6 +162,38 @@ func parseConfigureFlags(args []string) (endpoint, ca, repoAllow string) {
 		}
 	}
 	return endpoint, ca, strings.Join(repoAllowValues, ",")
+}
+
+func configureEndpoint(flag string) string {
+	if flag != "" {
+		return flag
+	}
+	if endpoint := resolveEndpoint(""); endpoint != "" {
+		return endpoint
+	}
+	return readLine("Collector endpoint (leave blank to skip): ")
+}
+
+// readLine prompts on stderr and reads one line from the controlling terminal.
+// It mirrors readSecret's /dev/tty preference so `curl | sh` installers can
+// still hand interactive configuration to the downloaded binary.
+func readLine(prompt string) string {
+	fmt.Fprint(os.Stderr, prompt)
+	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err == nil {
+		defer func() { _ = tty.Close() }()
+		var value string
+		if _, err := fmt.Fscanln(tty, &value); err == nil {
+			return strings.TrimSpace(value)
+		}
+		return ""
+	}
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		var value string
+		if _, err := fmt.Fscanln(os.Stdin, &value); err == nil {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // readSecret prompts on stderr and reads a line without echoing it, so the

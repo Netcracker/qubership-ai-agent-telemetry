@@ -8,18 +8,21 @@ under the Netcracker GitHub organization unless you set a different repository s
 ## TL;DR
 
 ```sh
+# macOS / Linux: install the CLI and run configure if needed
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
+
+# Windows PowerShell
+iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) }"
+
 # hooks (every repository that wants telemetry)
 apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
-
-# setup skill (once per machine, as a dev dependency)
-apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure --target claude
 ```
 
 `--target` is required — without it APM cannot pick a harness and the install fails. The examples
 target Claude Code; for Codex or Cursor, use `--target codex`, `--target cursor`, or `--target all`.
 
-Restart the agent, ask it to "configure AI agent telemetry", and follow the prompts. See
-[Installation](#installation) for the full walkthrough.
+Restart the agent after installing the CLI so the hook can resolve `ai-agent-telemetry` on
+`PATH`. See [Installation](#installation) for the full walkthrough.
 
 ## Architecture
 
@@ -43,12 +46,13 @@ The two packages serve different roles:
 | Package | Repository | What it carries | How to install |
 | --- | --- | --- | --- |
 | [`ai-agent-telemetry`](https://github.com/Netcracker/qubership-ai-agent-telemetry/tree/main/agent-packages/ai-agent-telemetry) | `Netcracker/qubership-ai-agent-telemetry` | Three hook files (Claude Code, Codex, Cursor) | `apm install` as a regular dependency |
-| `ai-agent-telemetry-configure` | this repository | Setup skill + bootstrap scripts | `apm install --dev` on a new machine |
+| `ai-agent-telemetry-configure` | this repository | Setup, repair, and verification skill | Optional `apm install --dev` |
 
 The hooks call the CLI by its bare name on `PATH` (`~/.local/bin/ai-agent-telemetry`), so
 one command works across every harness and OS. The endpoint, optional CA certificate, and
-token are written once per machine by the setup skill. For the CLI internals and file
-layout, see [the ai-agent-telemetry CLI](docs/cli.md).
+token are written once per machine by `ai-agent-telemetry configure`. The installer runs
+that command after installing the binary when no endpoint is configured yet. For the CLI
+internals and file layout, see [the ai-agent-telemetry CLI](docs/cli.md).
 
 ## Data
 
@@ -121,13 +125,30 @@ Any collector that meets these requirements works. A ready-to-deploy reference s
 These steps assume no prior APM setup. Have the collector endpoint, an optional CA
 certificate, and an optional access token on hand.
 
-### 1. Install APM
+### 1. Install the CLI and configure if needed
+
+The installer downloads the right release asset, verifies it against `SHA256SUMS`, installs it
+to `~/.local/bin`, and adds that directory to the user `PATH`. If no endpoint is configured
+yet, it runs `ai-agent-telemetry configure`; the binary prompts for the collector endpoint
+and optional token and writes the config.
+
+```sh
+# macOS / Linux
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
+```
+
+```powershell
+# Windows PowerShell
+iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) }"
+```
+
+### 2. Install APM
 
 ```sh
 uv tool install apm-cli
 ```
 
-### 2. Install the hooks
+### 3. Install the hooks
 
 `--target` is required: it tells APM which harness to deploy to, and the install fails without it.
 The command below targets Claude Code. For Codex or Cursor, use `--target codex`, `--target cursor`,
@@ -151,29 +172,39 @@ Then install for your agent:
 apm install --target claude
 ```
 
-### 3. Install the setup skill (first time per machine)
+### 4. Verify
+
+```sh
+ai-agent-telemetry status    # config, endpoint, outbox backlog
+ai-agent-telemetry selftest  # send a probe event and confirm delivery
+```
+
+Both must pass before telemetry is live. After configuring, restart the agent (fully quit
+the app or close the terminal tab; a new chat is not enough) so the hook resolves the
+binary by its bare name.
+
+### Optional setup skill
+
+Install the setup skill when you want an agent-guided repair flow, Codex sandbox checks, or
+collector CA help:
 
 ```sh
 apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure --target claude
 ```
 
-### 4. Configure
-
-Restart the agent, then ask it to "configure AI agent telemetry". The skill installs the CLI
-binary, writes the endpoint and token, and verifies delivery with a live probe.
+Restart the agent, then ask it to "configure AI agent telemetry". The skill reads `status`,
+closes missing setup gaps, and verifies delivery with `selftest`.
 
 ### Manual configuration
-
-You can skip the setup skill and configure the CLI by hand.
 
 **Install the binary:**
 
 ```sh
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/bootstrap.sh | sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --skip-config
 ```
 
 This puts the binary at `~/.local/bin/ai-agent-telemetry`, verifies the checksum, and adds
-`~/.local/bin` to `PATH`. On Windows, run in Git Bash.
+`~/.local/bin` to `PATH`. On Windows, use `install.ps1` with `-SkipConfig`.
 
 **Configure the endpoint and token:**
 
