@@ -5,6 +5,8 @@ import (
 	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,6 +142,50 @@ func TestFlushKeepsBufferOnServerError(t *testing.T) {
 	files, _ := s.List()
 	if len(files) != 2 {
 		t.Fatalf("buffer should be intact: %d files remain, want 2", len(files))
+	}
+}
+
+func TestFlushRecordsLastDeliveryError(t *testing.T) {
+	isolateConfigCache(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	seed(t, s, 1)
+
+	_, err := Flush(s, srv.URL, "", nil, 2*time.Second)
+	if err == nil {
+		t.Fatal("want error on server 500")
+	}
+	got, ok := readLastDeliveryError(s)
+	if !ok {
+		t.Fatal("want last delivery error recorded")
+	}
+	if !strings.Contains(got, err.Error()) {
+		t.Fatalf("last delivery error = %q, want it to contain %q", got, err.Error())
+	}
+}
+
+func TestFlushClearsLastDeliveryErrorAfterSuccess(t *testing.T) {
+	isolateConfigCache(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	if err := os.WriteFile(lastDeliveryErrorPath(s), []byte("old failure"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	seed(t, s, 1)
+
+	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got, ok := readLastDeliveryError(s); ok {
+		t.Fatalf("last delivery error should be cleared after success, got %q", got)
 	}
 }
 
