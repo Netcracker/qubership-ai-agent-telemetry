@@ -24,8 +24,78 @@ env:
   VERSION: ${{ github.event.inputs.version }}
 
 jobs:
+  preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    # tag-action checks the remote tag through gh. Provide both token variable
+    # names for consistency with the publishing job below.
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REF_NAME: ${{ github.ref_name }}
+    steps:
+      - name: Validate release input
+        run: |
+          if [ "$REF_NAME" != "main" ]; then
+            echo "Release workflow must run from main, got $REF_NAME" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Release version must match vMAJOR.MINOR.PATCH, got $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Check tag is absent
+        uses: netcracker/qubership-workflow-hub/actions/tag-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
+        with:
+          ref: ${{ github.ref }}
+          tag-name: ${{ env.VERSION }}
+          check-tag: "true"
+          create-tag: "false"
+          skip-checkout: "true"
+
+  checks:
+    name: Release checks
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Race test
+        run: go test -race ./...
+
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: [preflight, checks]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -92,15 +162,6 @@ jobs:
       # artifact archive.
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3 # zizmor: ignore[artipacked]
 
-      - name: Check tag is absent
-        uses: netcracker/qubership-workflow-hub/actions/tag-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
-        with:
-          ref: ${{ github.ref }}
-          tag-name: ${{ env.VERSION }}
-          check-tag: "true"
-          create-tag: "false"
-          skip-checkout: "true"
-
       - name: Create tag and release
         uses: netcracker/qubership-workflow-hub/actions/tag-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
         with:
@@ -146,6 +207,38 @@ jobs:
         # the .sh ($2 == asset) and .ps1 (filename at end of line) parse.
         working-directory: dist
         run: sha256sum ai-agent-telemetry-* install.sh install.ps1 bootstrap.sh bootstrap.ps1 > SHA256SUMS
+
+      - name: Verify staged release payload
+        working-directory: dist
+        run: |
+          cat > ../expected-assets.txt <<'EOF'
+          SHA256SUMS
+          ai-agent-telemetry-darwin-amd64
+          ai-agent-telemetry-darwin-arm64
+          ai-agent-telemetry-linux-amd64
+          ai-agent-telemetry-linux-arm64
+          ai-agent-telemetry-windows-amd64.exe
+          ai-agent-telemetry-windows-arm64.exe
+          bootstrap.ps1
+          bootstrap.sh
+          install.ps1
+          install.sh
+          EOF
+          sed -i 's/^ *//' ../expected-assets.txt
+          sort -o ../expected-assets.txt ../expected-assets.txt
+          grep -v '^SHA256SUMS$' ../expected-assets.txt > ../expected-checksum-assets.txt
+
+          find . -maxdepth 1 -type f -printf '%f\n' | sort > ../actual-assets.txt
+          if ! diff -u ../expected-assets.txt ../actual-assets.txt; then
+            echo "Staged release payload does not match the expected asset set" >&2
+            exit 1
+          fi
+
+          awk '{print $2}' SHA256SUMS | sort > ../checksum-assets.txt
+          if ! diff -u ../expected-checksum-assets.txt ../checksum-assets.txt; then
+            echo "SHA256SUMS does not cover every staged binary and installer asset exactly once" >&2
+            exit 1
+          fi
 
       - name: Upload release assets
         uses: netcracker/qubership-workflow-hub/actions/assets-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
