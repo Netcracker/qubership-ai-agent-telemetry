@@ -87,7 +87,7 @@ a local machine. Run it from the Actions tab (or with the GitHub CLI) and pass t
 version; the corporate chain creates the tag, so do not push the tag by hand:
 
 ```bash
-gh workflow run release.yaml -f version=vX.Y.Z
+gh workflow run release.yaml --ref main -f version=vX.Y.Z
 ```
 
 The workflow cross-compiles six targets (darwin, linux, and windows, each for

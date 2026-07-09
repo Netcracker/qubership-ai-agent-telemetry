@@ -1,14 +1,17 @@
 # Event schema: minimum data and no personal information
 
 ## Status
-Proposed
-#### Date
 
-#### Owner
-denifilatoff
-#### Participants and approvers
-Denis Filatov (@denifilatoff)
-#### Related ADRs
+Accepted
+
+**Date:** 2026-07-09
+
+**Owner:** denifilatoff
+
+**Participants and approvers:** Denis Filatov (@denifilatoff)
+
+**Related ADRs:**
+
 - [0001-skill-detection-via-hooks-and-transcripts.md](0001-skill-detection-via-hooks-and-transcripts.md) —
   `skill.source` was retired along with the marker
 
@@ -26,17 +29,43 @@ Separately, Cursor's hook payload offers a `user_email` field. The question was 
 ## Decision
 
 We will send the minimum set of fields needed for skill-usage analytics and deliberately exclude anything that
-identifies the user or the machine. The full field list is in the README "Data" section; this ADR records only
-the exclusions and the design choices behind them.
+identifies the user or the hardware. The full field list is in the README "Data" section; this ADR records the
+privacy boundaries and the design choices behind them.
+
+Each delivered OpenTelemetry log record has body `skill_executed` and these log attributes:
+
+- `agent`
+- `session.id`
+- `repo.remote`
+- `skill.name`
+
+The process also emits these resource attributes:
+
+- `service.name`
+- `service.version`
+- `os.type`
+- `machine.id`, when the CLI can read or create the anonymous install ID
+
+The outbox persists the same event content in local JSON files before flush. Local-only helper fields, such as the
+working directory used for repository policy checks, are never serialized.
 
 ### Fields excluded
 
 | Field | Why excluded |
-|---|---|
-| `repo.path` | The local working directory leaks the username. Repositories are identified by `repo.remote` alone. A non-git checkout has no repo label — accepted as a rare edge case not worth leaking a path for. |
+| --- | --- |
+| `repo.path` | The local working directory leaks the username. Repositories are identified by `repo.remote` alone. A non-git checkout has no repo label unless policy can resolve an allowed remote from the working tree. |
 | `turn.id` | Finer than `session.id` with no analytic value. The only theoretical use (server-side dedup of duplicate hook fires) was not needed. |
 | `user_email` | Cursor's hook payload carries it. We do not read it — skill-usage counts do not require user identity, and collecting email would cross the "no personal data" line. |
 | `skill.source` | Originally carried by the `[skill-called]` marker; retired when the marker was removed (see [ADR 0001](0001-skill-detection-via-hooks-and-transcripts.md)). |
+
+### `repo.remote`: normalized repository identity
+
+`repo.remote` is the only repository label that leaves the machine. Before an event is sent, the CLI normalizes git
+remote URLs into lowercase identities such as `github.com/netcracker/project`, strips a trailing `.git`, and removes
+URL userinfo such as usernames, passwords, or OAuth tokens.
+
+When the hook runs in a personal fork, repository policy checks every configured git remote in the working tree. If an
+allowed upstream remote matches, the event records the allowed organization remote instead of the personal fork remote.
 
 ### `machine.id`: anonymous install identity
 
@@ -53,19 +82,20 @@ identifier must not fingerprint the user or the hardware.
 
 ### Justification
 
-The guiding principle is **no personal data leaves the machine**. A repository is identified by its remote
-URL (public information for public repos; for private repos, the URL alone does not grant access). The
-install is identified by a random UUID that cannot be traced back to a person or a device. Everything else
-the CLI processes (local paths, transcript content, user email) stays in-process and is never serialized
-into the outbox.
+The guiding principle is **no personal data leaves the machine**. A repository is identified by its normalized remote
+identity (public information for public repos; for private repos, the URL alone does not grant access). The install is
+identified by a random UUID that cannot be traced back to a person or a device. Everything else the CLI processes
+(local paths, transcript content, user email) stays in-process and is never serialized into the outbox.
 
 This is a deliberate minimum, not a starting point to extend. Adding a field that crosses the personal-data
 line requires a new ADR.
 
 ## Consequences
 
-- **Repos without a remote are invisible.** A non-git checkout or one with no `origin` produces an event
-  with an empty `repo.remote`. This is accepted — the alternative is leaking the local path.
+- **Repos without an allowed remote are dropped by the default policy.** A non-git checkout or one with no matching
+  remote produces an empty repository identity and is filtered when the default `github.com/Netcracker/*` allowlist is
+  active. A deliberately unscoped policy can still send an event with an empty `repo.remote`; this is accepted because
+  the alternative is leaking the local path.
 - **No per-user analytics.** Without `user_email` or any user identifier, the backend cannot break down
   usage by person. This is intentional: the metric is "which skills are used, where," not "who uses them."
 - **`machine.id` resets on re-configure.** Deleting the config directory (or reconfiguring onto a new

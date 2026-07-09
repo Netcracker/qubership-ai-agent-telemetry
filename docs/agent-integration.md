@@ -69,15 +69,14 @@ command that opens a `SKILL.md`:
 3. match `cmd` against the skill path — capture group 1 is the skill name.
 
 ```text
-(?:^|[\s"'=/])skills/([^/\s"']+)/SKILL\.md
+(?i)(?:^|[\s"'=/\\])skills[\\/]+([^\\/\s"']+)[\\/]+SKILL\.md
 ```
 
 The match is on the path, not the reading command: Codex opens the file with `sed`,
 `cat`, `head`, or `rg`, and the path is absolute in the desktop app but relative under
 `codex exec`. The leading separator stops a directory such as `my-skills/` from matching.
 The repository remote comes from the first line, `session_meta`, field
-`git.repository_url`, which is read regardless of the offset. The full record is in
-[the Codex session-parsing spec](superpowers/specs/2026-06-16-codex-session-parsing.md).
+`git.repository_url`, which is read regardless of the offset.
 
 ## Cursor
 
@@ -87,14 +86,14 @@ Like Codex, Cursor has no skill-activation event. The `afterAgentResponse` hook 
 the transcript in `transcript_path`. Each line is a message with a `message.content`
 array, and two content shapes count as a skill load:
 
-- a `tool_use` entry named `Read` whose `input.path` ends in `.cursor/skills/<name>/SKILL.md`
-  — an automatic skill load;
+- a `tool_use` entry named `Read` whose `input.path` matches a `skills/<name>/SKILL.md`
+  path — an automatic skill load;
 - a `text` entry that contains a `<manually_attached_skills>` block, where each
   `Skill Name: <name>` line is a manually attached skill.
 
 ```text
-(?:^|/)\.cursor/skills/([^/]+)/SKILL\.md      # Read tool_use input.path
-^Skill Name:\s*(\S+)                          # inside <manually_attached_skills>
+(?i)(?:^|[\s"'=/\\])skills[\\/]+([^\\/\s"']+)[\\/]+SKILL\.md  # Read tool_use input.path
+^Skill Name:\s*(\S+)                                           # inside <manually_attached_skills>
 ```
 
 Unlike Codex, the transcript carries no git data, so the repository remote is resolved
@@ -103,9 +102,8 @@ present, not bounded to it, so a stray `Skill Name:` line elsewhere in the same 
 would also match — the cost is a spurious name, never a missed turn.
 
 Cursor requires a numeric top-level `version` in `.cursor/hooks.json`. Early APM releases dropped it on
-install, which silently disabled every project hook; APM ≥ 0.21.0 writes it automatically and the hooks
-package ships it explicitly, so no manual step is needed. The full record is in
-[the Cursor hooks workaround](superpowers/decisions/2026-06-17-cursor-hooks-version-workaround.md).
+install, which silently disabled every project hook; APM >= 0.21.0 writes it automatically and the hooks
+package ships it explicitly, so no manual step is needed.
 
 ```json
 {
