@@ -74,9 +74,10 @@ command that opens a `SKILL.md`:
 
 The match is on the path, not the reading command: Codex opens the file with `sed`,
 `cat`, `head`, or `rg`, and the path is absolute in the desktop app but relative under
-`codex exec`. The leading separator stops a directory such as `my-skills/` from matching.
-The repository remote comes from the first line, `session_meta`, field
-`git.repository_url`, which is read regardless of the offset.
+`codex exec`. The leading separator stops a directory such as `my-skills/` from
+matching. The repository remote comes from the first line, `session_meta`, field
+`git.repository_url`, which is read regardless of the offset. See the [Codex spec]
+for the full record.
 
 ## Cursor
 
@@ -103,7 +104,8 @@ would also match — the cost is a spurious name, never a missed turn.
 
 Cursor requires a numeric top-level `version` in `.cursor/hooks.json`. Early APM releases dropped it on
 install, which silently disabled every project hook; APM >= 0.21.0 writes it automatically and the hooks
-package ships it explicitly, so no manual step is needed.
+package ships it explicitly, so no manual step is needed. The full record is in
+the [Cursor workaround].
 
 ```json
 {
@@ -122,3 +124,6 @@ OpenCode is not shipped yet. It emits a native event: when skills are managed th
 the `.claude/skills/` compatibility extension, activation is a `use_skill` tool call
 caught by the pre-tool-call hook, with the skill name in its arguments — the same
 native-event path as Claude Code.
+
+[Codex spec]: superpowers/specs/2026-06-16-codex-session-parsing.md
+[Cursor workaround]: superpowers/decisions/2026-06-17-cursor-hooks-version-workaround.md
