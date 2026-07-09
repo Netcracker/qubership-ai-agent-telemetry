@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 SCRIPT="$SCRIPT_DIR/has-relevant-changes.sh"
 
 test_dir=$(mktemp -d)
