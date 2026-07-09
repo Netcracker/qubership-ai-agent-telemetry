@@ -5,24 +5,8 @@ name: Installer Tests
 on:
   push:
     branches: [ "main" ]
-    paths-ignore:
-      - ".github/**"
-      - "docs/**"
-      - "CODE-OF-CONDUCT.md"
-      - "CONTRIBUTING.md"
-      - "LICENSE"
-      - "README.md"
-      - "SECURITY.md"
   pull_request:
     types: [ opened, synchronize, reopened ]
-    paths-ignore:
-      - ".github/**"
-      - "docs/**"
-      - "CODE-OF-CONDUCT.md"
-      - "CONTRIBUTING.md"
-      - "LICENSE"
-      - "README.md"
-      - "SECURITY.md"
   workflow_dispatch: null
 
 concurrency:
@@ -41,9 +25,50 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Check relevant file changes
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            changed_files=$(git diff --name-only "$BASE_SHA" HEAD)
+          elif [ "$EVENT_NAME" = "push" ]; then
+            if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              changed_files=$(git diff-tree --no-commit-id --name-only -r "$AFTER_SHA")
+            else
+              changed_files=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")
+            fi
+          else
+            changed_files="force-run"
+          fi
+
+          run_build=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$file" in
+              .github/*|docs/*|CODE-OF-CONDUCT.md|CONTRIBUTING.md|LICENSE|README.md|SECURITY.md)
+                ;;
+              *)
+                run_build=true
+                break
+                ;;
+            esac
+          done <<EOF
+          $changed_files
+          EOF
+
+          echo "run-build=$run_build" >> "$GITHUB_OUTPUT"
+
       - name: Build local release assets
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         run: |
           set -eu
           mkdir -p test-release/latest/download test-release/download/v0.1.0 test-release/download/v0.2.0
@@ -71,6 +96,7 @@ jobs:
           cp test-release/download/v0.2.0/SHA256SUMS test-release/latest/download/SHA256SUMS
 
       - name: Serve local release assets
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         run: |
           python3 -m http.server 8765 --directory test-release &
           for _ in 1 2 3 4 5; do
@@ -82,6 +108,7 @@ jobs:
           exit 1
 
       - name: Clean install
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         env:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.1.0
@@ -95,6 +122,7 @@ jobs:
           test "$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")" = "configure"
 
       - name: Force reinstall existing binary
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         env:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
@@ -113,9 +141,50 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Check relevant file changes
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            changed_files=$(git diff --name-only "$BASE_SHA" HEAD)
+          elif [ "$EVENT_NAME" = "push" ]; then
+            if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              changed_files=$(git diff-tree --no-commit-id --name-only -r "$AFTER_SHA")
+            else
+              changed_files=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")
+            fi
+          else
+            changed_files="force-run"
+          fi
+
+          run_build=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$file" in
+              .github/*|docs/*|CODE-OF-CONDUCT.md|CONTRIBUTING.md|LICENSE|README.md|SECURITY.md)
+                ;;
+              *)
+                run_build=true
+                break
+                ;;
+            esac
+          done <<EOF
+          $changed_files
+          EOF
+
+          echo "run-build=$run_build" >> "$GITHUB_OUTPUT"
+
       - name: Build local release assets
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -142,6 +211,7 @@ jobs:
           Copy-Item test-release/download/v0.2.0/SHA256SUMS test-release/latest/download/SHA256SUMS
 
       - name: Serve local release assets
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         run: |
           python3 -m http.server 8765 --directory test-release &
           for _ in 1 2 3 4 5; do
@@ -153,6 +223,7 @@ jobs:
           exit 1
 
       - name: Clean install
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         shell: pwsh
         env:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
@@ -168,6 +239,7 @@ jobs:
           if ((Get-Content -Raw -LiteralPath $bin).Trim() -ne '0.1.0') { throw "unexpected clean install content" }
 
       - name: Force reinstall existing binary
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         shell: pwsh
         env:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765

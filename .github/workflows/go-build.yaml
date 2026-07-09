@@ -10,24 +10,8 @@ name: Build Go Project
 on:
   push:
     branches: [ "main" ]
-    paths-ignore:
-      - ".github/**"
-      - "docs/**"
-      - "CODE-OF-CONDUCT.md"
-      - "CONTRIBUTING.md"
-      - "LICENSE"
-      - "README.md"
-      - "SECURITY.md"
   pull_request:
     types: [ opened, synchronize, reopened ]
-    paths-ignore:
-      - ".github/**"
-      - "docs/**"
-      - "CODE-OF-CONDUCT.md"
-      - "CONTRIBUTING.md"
-      - "LICENSE"
-      - "README.md"
-      - "SECURITY.md"
 
 concurrency:
   group: go-build-${{ github.workflow }}-${{ github.ref }}
@@ -40,20 +24,63 @@ jobs:
   build:
     name: "Build and Test Go Project"
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Check relevant file changes
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            changed_files=$(git diff --name-only "$BASE_SHA" HEAD)
+          elif [ "$EVENT_NAME" = "push" ]; then
+            if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+              changed_files=$(git diff-tree --no-commit-id --name-only -r "$AFTER_SHA")
+            else
+              changed_files=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")
+            fi
+          else
+            changed_files="force-run"
+          fi
+
+          run_build=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$file" in
+              .github/*|docs/*|CODE-OF-CONDUCT.md|CONTRIBUTING.md|LICENSE|README.md|SECURITY.md)
+                ;;
+              *)
+                run_build=true
+                break
+                ;;
+            esac
+          done <<EOF
+          $changed_files
+          EOF
+
+          echo "run-build=$run_build" >> "$GITHUB_OUTPUT"
+
       - name: "Set up Go"
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
       - name: "Check formatting"
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
@@ -63,10 +90,13 @@ jobs:
           fi
 
       - name: "Vet"
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         run: go vet ./...
 
       - name: "Build"
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         run: go build -v ./...
 
       - name: "Test"
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
         run: go test ./...
