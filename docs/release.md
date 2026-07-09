@@ -67,8 +67,8 @@ After the workflow succeeds, install the published version on one Unix-like mach
 ```bash
 INSTALLER_URL=https://github.com/Netcracker/qubership-ai-agent-telemetry
 INSTALLER_URL=$INSTALLER_URL/releases/latest/download/install.sh
-AI_AGENT_TELEMETRY_INSTALL_VERSION=vX.Y.Z \
-  curl -fsSL "$INSTALLER_URL" | sh -s -- --skip-config --force
+export AI_AGENT_TELEMETRY_INSTALL_VERSION=vX.Y.Z
+curl -fsSL "$INSTALLER_URL" | sh -s -- --skip-config --force
 ai-agent-telemetry version
 ```
 
