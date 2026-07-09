@@ -67,7 +67,7 @@ func run(args []string, stdout func(string)) int {
 			fmt.Fprintln(os.Stderr, "outbox:", err)
 			return 1
 		}
-		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy())))
+		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy()), false))
 		return 0
 	case "selftest":
 		s, err := DefaultOutbox()
@@ -117,17 +117,27 @@ func run(args []string, stdout func(string)) int {
 		}
 		return 0
 	case "status":
+		verbose := parseStatusFlags(args[1:])
 		s, err := DefaultOutbox()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "outbox:", err)
 			return 0
 		}
-		stdout(formatStatus(gatherStatus(s, pkgConfigDir(), resolveEndpoint(""), resolveTelemetryPolicy())))
+		stdout(formatStatus(gatherStatus(s, pkgConfigDir(), resolveEndpoint(""), resolveTelemetryPolicy()), verbose))
 		return 0
 	default:
 		stdout("unknown command: " + args[0] + "\n")
 		return 2
 	}
+}
+
+func parseStatusFlags(args []string) bool {
+	for _, a := range args {
+		if a == "--verbose" || a == "-v" {
+			return true
+		}
+	}
+	return false
 }
 
 // parseFlags reads --agent= and --endpoint= without a flag framework (minimal).

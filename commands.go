@@ -165,14 +165,15 @@ func probesRemaining(s *Outbox) int {
 // what, if anything, is missing. It never sends anything (see selftest for the
 // live check).
 type statusReport struct {
-	Version    string
-	ConfigDir  string
-	Endpoint   string
-	Configured bool
-	CAFound    bool
-	RepoScope  string
-	Buffered   int
-	LastFlush  string
+	Version           string
+	ConfigDir         string
+	Endpoint          string
+	Configured        bool
+	CAFound           bool
+	RepoScope         string
+	Buffered          int
+	LastFlush         string
+	LastDeliveryError string
 }
 
 // gatherStatus inspects the outbox and config dir against an already-resolved
@@ -197,12 +198,15 @@ func gatherStatus(s *Outbox, configDir, endpoint string, policy telemetryPolicy)
 	if fi, err := os.Stat(filepath.Join(s.Dir, flushStampName)); err == nil {
 		r.LastFlush = fi.ModTime().UTC().Format(time.RFC3339)
 	}
+	if msg, ok := readLastDeliveryError(s); ok {
+		r.LastDeliveryError = msg
+	}
 	return r
 }
 
 // formatStatus renders the report for a human and, when the machine is not yet
 // configured, says so plainly so the next step is obvious.
-func formatStatus(r statusReport) string {
+func formatStatus(r statusReport, verbose bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "version: %s\n", r.Version)
 	fmt.Fprintf(&b, "config_dir: %s\n", r.ConfigDir)
@@ -223,6 +227,16 @@ func formatStatus(r statusReport) string {
 		fmt.Fprint(&b, "state: configured\n")
 	} else {
 		fmt.Fprint(&b, "state: not configured — run `ai-agent-telemetry configure` to set the endpoint\n")
+	}
+	if verbose {
+		fmt.Fprint(&b, "diagnostics:\n")
+		if r.LastDeliveryError != "" {
+			fmt.Fprintf(&b, "  last_delivery_error: %s\n", r.LastDeliveryError)
+		} else {
+			fmt.Fprint(&b, "  last_delivery_error: none recorded\n")
+		}
+	} else if r.Buffered > 0 && r.LastDeliveryError != "" {
+		fmt.Fprint(&b, "diagnostics: delivery errors found; run `ai-agent-telemetry status --verbose`\n")
 	}
 	return b.String()
 }

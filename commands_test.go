@@ -260,6 +260,20 @@ func TestGatherStatusReportsConfiguredState(t *testing.T) {
 	}
 }
 
+func TestGatherStatusReadsLastDeliveryError(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	s := &Outbox{Dir: t.TempDir()}
+	if err := os.WriteFile(lastDeliveryErrorPath(s), []byte("proxyconnect tcp: operation not permitted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	seed(t, s, 1)
+
+	r := gatherStatus(s, cfg, "https://otel.example/v1/logs", telemetryPolicy{})
+	if r.LastDeliveryError != "proxyconnect tcp: operation not permitted" {
+		t.Fatalf("last delivery error = %q", r.LastDeliveryError)
+	}
+}
+
 func TestGatherStatusNotConfiguredWhenNoEndpoint(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), pkgName)
 	s := &Outbox{Dir: t.TempDir()}
@@ -273,8 +287,46 @@ func TestGatherStatusNotConfiguredWhenNoEndpoint(t *testing.T) {
 }
 
 func TestFormatStatusFlagsNextStepWhenNotConfigured(t *testing.T) {
-	out := formatStatus(statusReport{Configured: false, ConfigDir: "/cfg"})
+	out := formatStatus(statusReport{Configured: false, ConfigDir: "/cfg"}, false)
 	if !strings.Contains(strings.ToLower(out), "not configured") {
 		t.Fatalf("output should flag the not-configured state, got:\n%s", out)
+	}
+}
+
+func TestFormatStatusSuggestsVerboseWhenBufferedEventsHaveError(t *testing.T) {
+	out := formatStatus(statusReport{
+		Configured:        true,
+		Buffered:          2,
+		LastDeliveryError: "proxyconnect tcp: operation not permitted",
+	}, false)
+
+	if !strings.Contains(out, "diagnostics: delivery errors found; run `ai-agent-telemetry status --verbose`") {
+		t.Fatalf("output should suggest verbose diagnostics, got:\n%s", out)
+	}
+	if strings.Contains(out, "proxyconnect tcp") {
+		t.Fatalf("non-verbose output should not include the raw delivery error, got:\n%s", out)
+	}
+}
+
+func TestFormatStatusVerboseIncludesLastDeliveryError(t *testing.T) {
+	out := formatStatus(statusReport{
+		Configured:        true,
+		Buffered:          2,
+		LastDeliveryError: "proxyconnect tcp: operation not permitted",
+	}, true)
+
+	if !strings.Contains(out, "diagnostics:\n") {
+		t.Fatalf("verbose output should include diagnostics block, got:\n%s", out)
+	}
+	if !strings.Contains(out, "last_delivery_error: proxyconnect tcp: operation not permitted") {
+		t.Fatalf("verbose output should include last delivery error, got:\n%s", out)
+	}
+}
+
+func TestFormatStatusVerboseReportsNoRecordedError(t *testing.T) {
+	out := formatStatus(statusReport{Configured: true, Buffered: 2}, true)
+
+	if !strings.Contains(out, "last_delivery_error: none recorded") {
+		t.Fatalf("verbose output should report no recorded delivery error, got:\n%s", out)
 	}
 }

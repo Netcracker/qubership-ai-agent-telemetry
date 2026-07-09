@@ -39,7 +39,10 @@ func (e *SkillEvent) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-const flushStampName = ".lastflush"
+const (
+	flushStampName        = ".lastflush"
+	lastDeliveryErrorName = ".last_delivery_error"
+)
 
 // Outbox is a machine-global directory holding one JSON file per buffered event.
 type Outbox struct {
@@ -122,6 +125,31 @@ func (s *Outbox) Read(name string) (SkillEvent, error) {
 // Remove deletes one event file by name.
 func (s *Outbox) Remove(name string) error {
 	return os.Remove(filepath.Join(s.Dir, name))
+}
+
+func lastDeliveryErrorPath(s *Outbox) string {
+	return filepath.Join(s.Dir, lastDeliveryErrorName)
+}
+
+func recordLastDeliveryError(s *Outbox, err error) {
+	if err == nil {
+		return
+	}
+	msg := strings.ReplaceAll(err.Error(), "\n", " ")
+	_ = os.WriteFile(lastDeliveryErrorPath(s), []byte(msg), 0o600)
+}
+
+func readLastDeliveryError(s *Outbox) (string, bool) {
+	b, err := os.ReadFile(lastDeliveryErrorPath(s))
+	if err != nil {
+		return "", false
+	}
+	msg := strings.TrimSpace(string(b))
+	return msg, msg != ""
+}
+
+func clearLastDeliveryError(s *Outbox) {
+	_ = os.Remove(lastDeliveryErrorPath(s))
 }
 
 // Rotate deletes the oldest event files until at most limit remain.

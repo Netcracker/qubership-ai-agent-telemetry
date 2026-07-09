@@ -35,6 +35,9 @@ uses the diagnostic commands, so you rarely run them by hand.
 | `self-update` | Download the latest release asset for this OS and architecture, verify it against `SHA256SUMS`, and replace the running binary. |
 | `version` | Print the build version. |
 
+When buffered events remain after a failed delivery attempt, `status` points to
+`status --verbose`. The verbose output includes the last recorded delivery error.
+
 ## Updating
 
 `update-check` reports whether a newer release exists; it does not apply anything. To update,
@@ -61,7 +64,8 @@ The CLI never blocks an agent turn on the network. `ingest` writes events to the
 and returns; delivery happens opportunistically.
 
 - **Outbox.** One JSON file per buffered event in a per-machine outbox directory. A failed
-  send leaves the file in place to retry on a later run.
+  send leaves the file in place to retry on a later run. The last delivery error is kept
+  beside the outbox and appears in `status --verbose`.
 - **Flush lock.** `flush` takes a non-blocking advisory lock (`.flush.lock`) on the
   outbox, so two concurrent runs never send the same event twice. A run that finds the
   lock held skips quietly.
@@ -123,7 +127,7 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 | --- | --- | --- |
 | **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the installer so the hook resolves it by bare name |
 | **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
-| **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush` and `.flush.lock`), `offsets/` (per-session transcript offsets) |
+| **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush`, `.last_delivery_error`, and `.flush.lock`), `offsets/` (per-session transcript offsets) |
 
 All three are the same path on every OS, including Windows (`%USERPROFILE%\.config\…`,
 `%USERPROFILE%\.cache\…`). This is deliberate: `os.UserConfigDir()` returns `%AppData%` on

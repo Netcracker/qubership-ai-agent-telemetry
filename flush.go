@@ -103,6 +103,7 @@ func Flush(s *Outbox, endpoint, token string, tlsConfig *tls.Config, timeout tim
 	}
 	exp, err := otlploghttp.New(ctx, opts...)
 	if err != nil {
+		recordLastDeliveryError(s, err)
 		return 0, err
 	}
 	res := resource.NewSchemaless(resourceAttrs(version, runtime.GOOS, resolveMachineID())...)
@@ -140,11 +141,13 @@ func Flush(s *Outbox, endpoint, token string, tlsConfig *tls.Config, timeout tim
 	// Shutdown flushes the exporter; export errors surface via exportErr.
 	_ = provider.Shutdown(ctx)
 	if exportErr != nil {
+		recordLastDeliveryError(s, exportErr)
 		return 0, exportErr
 	}
 
 	for _, n := range sentNames {
 		_ = s.Remove(n)
 	}
+	clearLastDeliveryError(s)
 	return len(sentNames), nil
 }
