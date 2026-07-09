@@ -68,7 +68,7 @@ One OpenTelemetry log record per skill run:
 
 No personal data leaves the machine. A repository is identified by its normalized remote
 identity alone, and `machine.id` is never derived from the user or the hardware. The full
-schema is in [the event-schema decision](docs/superpowers/decisions/2026-06-12-event-schema-and-privacy.md).
+schema is in [the event-schema decision](docs/adr/0004-event-schema-and-privacy.md).
 
 ## Repository scope
 

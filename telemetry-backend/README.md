@@ -9,7 +9,7 @@ A self-contained observability backend that receives skill-usage telemetry from 
   to VictoriaLogs.
 - **VictoriaLogs** — log storage and the built-in query UI (VMUI).
 
-```
+```text
 CLI ──OTLP/HTTPS──▸ Caddy ──▸ OTel Collector ──▸ VictoriaLogs
                       │
                       └──▸ /select/*  (VMUI, basic-auth)
@@ -34,7 +34,7 @@ cp .env.example .env
 Edit `.env` and fill in every value. The fields:
 
 | Variable | Purpose |
-|---|---|
+| --- | --- |
 | `SITE_ADDRESS` | Domain Caddy serves. VPS: `<ip-with-dashes>.sslip.io`. Local: `localhost`. |
 | `CADDY_TLS` | TLS mode. VPS: an ACME email (Let's Encrypt). Local: `internal`. |
 | `INGEST_TOKEN` | Shared bearer token the CLI sends with each request. Generate a strong random value (see the comment in `.env.example`). |
@@ -74,17 +74,22 @@ Check that all three containers are healthy:
 docker compose ps
 ```
 
-Confirm TLS and ingest auth:
+Confirm ingest auth:
 
-```sh
+```bash
+source .env
+curl_flags=(-sS -o /dev/null -w '%{http_code}\n')
+if [ "$CADDY_TLS" = "internal" ]; then
+  curl_flags=(-sk -o /dev/null -w '%{http_code}\n')
+fi
+
 # Should return 401 (no token):
-curl -s -o /dev/null -w '%{http_code}' https://$SITE_ADDRESS:$HTTPS_PORT/v1/logs
+curl "${curl_flags[@]}" "https://$SITE_ADDRESS:$HTTPS_PORT/v1/logs"
 
 # Should return 200 or 400 (token accepted, no body):
-source .env
-curl -sk -o /dev/null -w '%{http_code}' \
+curl "${curl_flags[@]}" \
   -H "Authorization: Bearer $INGEST_TOKEN" \
-  https://$SITE_ADDRESS:$HTTPS_PORT/v1/logs
+  "https://$SITE_ADDRESS:$HTTPS_PORT/v1/logs"
 ```
 
 Open the VMUI in a browser at `https://<SITE_ADDRESS>/select/vmui/` and log in
@@ -93,7 +98,7 @@ with the username and password you set in step 2.
 ## Operations
 
 | Task | Command |
-|---|---|
+| --- | --- |
 | Stop the stack (data preserved) | `docker compose down` |
 | Stop and delete all data | `docker compose down -v` |
 | View Caddy logs (TLS, auth) | `docker compose logs -f caddy` |
@@ -106,7 +111,7 @@ Caddy is the single entry point. All other services are on an internal Docker
 network with no published ports.
 
 | Path | Backend | Auth |
-|---|---|---|
+| --- | --- | --- |
 | `/v1/logs` | OTel Collector `:4318` | `Authorization: Bearer <INGEST_TOKEN>` |
 | `/select/*` | VictoriaLogs `:9428` | Basic auth (VMUI + query API) |
 | everything else | — | `401 unauthorized` |

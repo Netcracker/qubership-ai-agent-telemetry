@@ -117,7 +117,7 @@ as an `Authorization: Bearer` header; without one, the request carries no auth h
 The CLI splits durable state from disposable state. Both roots are **uniform XDG-style
 paths on every OS** — the same philosophy as the binary's `~/.local/bin` — rather than the
 per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
-[the config-dir decision](superpowers/decisions/2026-06-23-config-cache-dir-xdg-msix.md).
+[the config-dir decision](adr/0003-config-cache-dirs-xdg.md).
 
 | Location | Path | Holds |
 | --- | --- | --- |
