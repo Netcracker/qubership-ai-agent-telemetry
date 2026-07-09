@@ -5,8 +5,24 @@ name: Installer Tests
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - ".github/**"
+      - "docs/**"
+      - "CODE-OF-CONDUCT.md"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "README.md"
+      - "SECURITY.md"
   pull_request:
     types: [ opened, synchronize, reopened ]
+    paths-ignore:
+      - ".github/**"
+      - "docs/**"
+      - "CODE-OF-CONDUCT.md"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "README.md"
+      - "SECURITY.md"
   workflow_dispatch: null
 
 concurrency:

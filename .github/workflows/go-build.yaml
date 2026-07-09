@@ -10,8 +10,24 @@ name: Build Go Project
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - ".github/**"
+      - "docs/**"
+      - "CODE-OF-CONDUCT.md"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "README.md"
+      - "SECURITY.md"
   pull_request:
     types: [ opened, synchronize, reopened ]
+    paths-ignore:
+      - ".github/**"
+      - "docs/**"
+      - "CODE-OF-CONDUCT.md"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "README.md"
+      - "SECURITY.md"
 
 concurrency:
   group: go-build-${{ github.workflow }}-${{ github.ref }}
