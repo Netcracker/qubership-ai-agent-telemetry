@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -141,26 +142,75 @@ func TestWriteEnvFileIsIdempotent(t *testing.T) {
 }
 
 func TestParseConfigureFlags(t *testing.T) {
-	endpoint, ca, repoAllow := parseConfigureFlags([]string{"--endpoint=https://x/v1/logs", "--ca=/tmp/ca.crt", "--repo-allow=github.com/Netcracker/*"})
-	if endpoint != "https://x/v1/logs" {
-		t.Fatalf("endpoint = %q", endpoint)
+	opts, err := parseConfigureFlags([]string{
+		"--endpoint=https://x/v1/logs",
+		"--ca=/tmp/ca.crt",
+		"--repo-allow=github.com/Netcracker/*",
+		"--hooks=cursor,claude",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if ca != "/tmp/ca.crt" {
-		t.Fatalf("ca = %q", ca)
+	if opts.Endpoint != "https://x/v1/logs" {
+		t.Fatalf("endpoint = %q", opts.Endpoint)
 	}
-	if repoAllow != "github.com/Netcracker/*" {
-		t.Fatalf("repoAllow = %q", repoAllow)
+	if opts.CAPath != "/tmp/ca.crt" {
+		t.Fatalf("ca = %q", opts.CAPath)
+	}
+	if opts.RepoAllow != "github.com/Netcracker/*" {
+		t.Fatalf("repoAllow = %q", opts.RepoAllow)
+	}
+	wantHooks := []hookTarget{hookClaude, hookCursor}
+	if !reflect.DeepEqual(opts.Hooks, wantHooks) {
+		t.Fatalf("hooks = %v, want %v", opts.Hooks, wantHooks)
 	}
 }
 
 func TestParseConfigureFlagsJoinsRepeatableRepoAllow(t *testing.T) {
-	_, _, repoAllow := parseConfigureFlags([]string{
+	opts, err := parseConfigureFlags([]string{
 		"--repo-allow", "github.com/Netcracker/*",
 		"--repo-allow=github.com/Qubership/*,gitlab.example.com/qubership/**",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := "github.com/Netcracker/*,github.com/Qubership/*,gitlab.example.com/qubership/**"
-	if repoAllow != want {
-		t.Fatalf("repoAllow = %q, want %q", repoAllow, want)
+	if opts.RepoAllow != want {
+		t.Fatalf("repoAllow = %q, want %q", opts.RepoAllow, want)
+	}
+}
+
+func TestParseConfigureFlagsDefaultsHooks(t *testing.T) {
+	opts, err := parseConfigureFlags(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(opts.Hooks, allHookTargets) {
+		t.Fatalf("hooks = %v, want %v", opts.Hooks, allHookTargets)
+	}
+}
+
+func TestParseConfigureFlagsAcceptsSeparateHooksValue(t *testing.T) {
+	opts, err := parseConfigureFlags([]string{"--hooks", "none"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(opts.Hooks, []hookTarget{}) {
+		t.Fatalf("hooks = %v, want empty", opts.Hooks)
+	}
+}
+
+func TestParseConfigureFlagsRejectsUnknownFlag(t *testing.T) {
+	_, err := parseConfigureFlags([]string{"--bogus"})
+	if err == nil || !strings.Contains(err.Error(), "--bogus") {
+		t.Fatalf("error = %v, want unknown flag", err)
+	}
+}
+
+func TestParseConfigureFlagsRejectsMissingValue(t *testing.T) {
+	_, err := parseConfigureFlags([]string{"--hooks"})
+	if err == nil || !strings.Contains(err.Error(), "--hooks") {
+		t.Fatalf("error = %v, want missing --hooks value", err)
 	}
 }
 

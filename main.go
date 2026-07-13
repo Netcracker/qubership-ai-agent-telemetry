@@ -29,7 +29,7 @@ func main() {
 
 func run(args []string, stdout func(string)) int {
 	if len(args) == 0 {
-		stdout("usage: ai-agent-telemetry <ingest|flush|status|selftest|configure|update-check|self-update|version>\n")
+		stdout("usage: ai-agent-telemetry <ingest|flush|status|selftest|configure|hooks|update-check|self-update|version>\n")
 		return 2
 	}
 	switch args[0] {
@@ -50,15 +50,19 @@ func run(args []string, stdout func(string)) int {
 		}
 		return 0
 	case "configure":
-		endpoint, caPath, repoAllow := parseConfigureFlags(args[1:])
+		opts, err := parseConfigureFlags(args[1:])
+		if err != nil {
+			stdout("configure: " + err.Error() + "\n")
+			return 2
+		}
 		cfg := pkgConfigDir()
 		if cfg == "" {
 			fmt.Fprintln(os.Stderr, "configure: no user config directory available")
 			return 1
 		}
-		endpoint = configureEndpoint(endpoint)
+		endpoint := configureEndpoint(opts.Endpoint)
 		token := readSecret("Collector token (leave blank to skip): ")
-		if err := applyConfigure(cfg, endpoint, caPath, token, repoAllow); err != nil {
+		if err := applyConfigure(cfg, endpoint, opts.CAPath, token, opts.RepoAllow); err != nil {
 			fmt.Fprintln(os.Stderr, "configure:", err)
 			return 1
 		}
@@ -68,6 +72,12 @@ func run(args []string, stdout func(string)) int {
 			return 1
 		}
 		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy()), false))
+		return 0
+	case "hooks":
+		if _, err := parseHooksCommand(args[1:]); err != nil {
+			stdout("hooks: " + err.Error() + "\n")
+			return 2
+		}
 		return 0
 	case "selftest":
 		s, err := DefaultOutbox()
@@ -153,25 +163,47 @@ func parseFlags(args []string) (agent, endpoint string) {
 	return agent, endpoint
 }
 
-// parseConfigureFlags reads the configure flags: --endpoint=, --ca=, and
-// repeatable --repo-allow values.
-func parseConfigureFlags(args []string) (endpoint, ca, repoAllow string) {
+// parseConfigureFlags reads configure options and rejects unsupported input.
+func parseConfigureFlags(args []string) (configureOptions, error) {
+	opts := configureOptions{Hooks: append([]hookTarget(nil), allHookTargets...)}
 	var repoAllowValues []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case strings.HasPrefix(a, "--endpoint="):
-			endpoint = strings.TrimPrefix(a, "--endpoint=")
+			opts.Endpoint = strings.TrimPrefix(a, "--endpoint=")
 		case strings.HasPrefix(a, "--ca="):
-			ca = strings.TrimPrefix(a, "--ca=")
+			opts.CAPath = strings.TrimPrefix(a, "--ca=")
 		case strings.HasPrefix(a, "--repo-allow="):
 			repoAllowValues = append(repoAllowValues, strings.TrimPrefix(a, "--repo-allow="))
-		case a == "--repo-allow" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "--"):
+		case a == "--repo-allow":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+				return configureOptions{}, fmt.Errorf("missing value for %q", a)
+			}
 			i++
 			repoAllowValues = append(repoAllowValues, args[i])
+		case strings.HasPrefix(a, "--hooks="):
+			hooks, err := parseHookTargets(strings.TrimPrefix(a, "--hooks="))
+			if err != nil {
+				return configureOptions{}, err
+			}
+			opts.Hooks = hooks
+		case a == "--hooks":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+				return configureOptions{}, fmt.Errorf("missing value for %q", a)
+			}
+			i++
+			hooks, err := parseHookTargets(args[i])
+			if err != nil {
+				return configureOptions{}, err
+			}
+			opts.Hooks = hooks
+		default:
+			return configureOptions{}, fmt.Errorf("unknown configure flag %q", a)
 		}
 	}
-	return endpoint, ca, strings.Join(repoAllowValues, ",")
+	opts.RepoAllow = strings.Join(repoAllowValues, ",")
+	return opts, nil
 }
 
 func configureEndpoint(flag string) string {

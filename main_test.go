@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,6 +27,47 @@ func TestRunUnknownCommand(t *testing.T) {
 	code := run([]string{"bogus"}, func(string) {})
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
+	}
+}
+
+func TestRunHooksInstallAcceptsTargets(t *testing.T) {
+	var out string
+	code := run([]string{"hooks", "install", "--target=codex,claude"}, func(s string) { out += s })
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+	}
+}
+
+func TestRunHooksRejectsMissingAction(t *testing.T) {
+	var out string
+	code := run([]string{"hooks"}, func(s string) { out += s })
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(out, "action") {
+		t.Fatalf("output = %q, want missing action error", out)
+	}
+}
+
+func TestRunHooksRejectsUnknownAction(t *testing.T) {
+	var out string
+	code := run([]string{"hooks", "remove"}, func(s string) { out += s })
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(out, "remove") {
+		t.Fatalf("output = %q, want unknown action", out)
+	}
+}
+
+func TestRunHooksRejectsUnknownTarget(t *testing.T) {
+	var out string
+	code := run([]string{"hooks", "install", "--target=windsurf"}, func(s string) { out += s })
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(out, "windsurf") {
+		t.Fatalf("output = %q, want invalid target", out)
 	}
 }
 
