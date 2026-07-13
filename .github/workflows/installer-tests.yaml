@@ -105,8 +105,11 @@ jobs:
           printf 'AI_AGENT_TELEMETRY_ENDPOINT=https://otel.example/v1/logs\n' > \
             "$HOME/.config/ai-agent-telemetry/env"
           sh scripts/install.sh --force
-          test "$("$HOME/.local/bin/ai-agent-telemetry")" = "0.2.0"
-          test "$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")" = "$(printf 'configure\nhooks install')"
+          actual_version="$("$HOME/.local/bin/ai-agent-telemetry")"
+          actual_calls="$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")"
+          printf 'installed version: %s\ninstaller calls:\n%s\n' "$actual_version" "$actual_calls"
+          test "$actual_version" = "0.2.0"
+          test "$actual_calls" = "$(printf 'configure\nhooks install')"
 
       - name: Skip config leaves hook log unchanged
         if: ${{ steps.filter.outputs.run-build == 'true' }}
