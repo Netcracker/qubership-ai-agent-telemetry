@@ -32,7 +32,12 @@ type hookInstallResult struct {
 	Err     error
 }
 
+var errUserHomeUnavailable = errors.New("user home directory unavailable; set HOME or USERPROFILE")
+
 func hookPath(home string, target hookTarget) string {
+	if strings.TrimSpace(home) == "" {
+		return ""
+	}
 	switch target {
 	case hookClaude:
 		return filepath.Join(home, ".claude", "settings.json")
@@ -56,6 +61,10 @@ func installHooks(home string, targets []hookTarget) []hookInstallResult {
 			continue
 		}
 		path := hookPath(home, target)
+		if path == "" {
+			results = append(results, hookInstallResult{Target: target, Err: errUserHomeUnavailable})
+			continue
+		}
 		merge := mergeClaudeHook
 		switch target {
 		case hookCodex:
@@ -81,6 +90,16 @@ func hookInstallError(results []hookInstallResult) error {
 
 func gatherHookStatus(home string) []hookStatus {
 	statuses := make([]hookStatus, 0, len(allHookTargets))
+	if strings.TrimSpace(home) == "" {
+		for _, target := range allHookTargets {
+			statuses = append(statuses, hookStatus{
+				Target: target,
+				State:  hookInvalid,
+				Detail: errUserHomeUnavailable.Error(),
+			})
+		}
+		return statuses
+	}
 	for _, target := range allHookTargets {
 		path := hookPath(home, target)
 		status := hookStatus{Target: target, Path: path, State: hookMissing}

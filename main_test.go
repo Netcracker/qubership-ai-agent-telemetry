@@ -126,6 +126,36 @@ func TestRunConfigureInstallsHooksContinuesAfterMalformedClaudeFile(t *testing.T
 	}
 }
 
+func TestRunConfigureRejectsUnavailableHomeWithoutRelativeHooks(t *testing.T) {
+	workingDir := t.TempDir()
+	t.Chdir(workingDir)
+	configHome := t.TempDir()
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("AI_AGENT_TELEMETRY_ENDPOINT", "")
+	t.Setenv("AI_AGENT_TELEMETRY_TOKEN", "")
+	t.Setenv(envRepoAllow, "")
+
+	var out string
+	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; output = %q", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(configHome, pkgName, "env")); err != nil {
+		t.Fatalf("telemetry env not written: %v", err)
+	}
+	for _, relativeDir := range []string{".claude", ".codex", ".cursor"} {
+		if _, err := os.Stat(filepath.Join(workingDir, relativeDir)); !os.IsNotExist(err) {
+			t.Fatalf("configure created relative hook directory %s: %v", relativeDir, err)
+		}
+	}
+	if !strings.Contains(out, "claude: invalid") || !strings.Contains(out, "codex: invalid") || !strings.Contains(out, "cursor: invalid") {
+		t.Fatalf("output = %q, want unavailable-home hook status", out)
+	}
+}
+
 func isolateRunConfigure(t *testing.T) (string, string) {
 	t.Helper()
 	home := t.TempDir()

@@ -83,6 +83,31 @@ func TestGatherHookStatusDoesNotCreateFiles(t *testing.T) {
 	}
 }
 
+func TestGatherHookStatusUnavailableHomeIgnoresRelativeHooks(t *testing.T) {
+	workingDir := t.TempDir()
+	results := installHooks(workingDir, allHookTargets)
+	if err := hookInstallError(results); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workingDir)
+
+	got := gatherHookStatus("")
+	if len(got) != len(allHookTargets) {
+		t.Fatalf("statuses = %#v, want %d", got, len(allHookTargets))
+	}
+	for i, status := range got {
+		if status.Target != allHookTargets[i] || status.Path != "" || status.State != hookInvalid {
+			t.Fatalf("status[%d] = %#v, want unavailable-home invalid status", i, status)
+		}
+		if !strings.Contains(status.Detail, "user home directory") {
+			t.Fatalf("status[%d] detail = %q, want actionable unavailable-home error", i, status.Detail)
+		}
+	}
+	if err := hookInstallError(installHooks("", allHookTargets)); err == nil || !strings.Contains(err.Error(), "user home directory") {
+		t.Fatalf("install error = %v, want actionable unavailable-home error", err)
+	}
+}
+
 func assertInstalledHook(t *testing.T, path string, inspect func(map[string]any) bool) {
 	t.Helper()
 	data, err := os.ReadFile(path)
