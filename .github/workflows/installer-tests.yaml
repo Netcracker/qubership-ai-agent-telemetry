@@ -85,6 +85,7 @@ jobs:
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.1.0
           AI_AGENT_TELEMETRY_TEST_LOG: ${{ runner.temp }}/shell-configure.log
           HOME: ${{ runner.temp }}/shell-home
+          XDG_CONFIG_HOME: ${{ runner.temp }}/shell-config
         run: |
           set -eu
           sh scripts/install.sh
@@ -99,11 +100,12 @@ jobs:
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
           AI_AGENT_TELEMETRY_TEST_LOG: ${{ runner.temp }}/shell-configure.log
           HOME: ${{ runner.temp }}/shell-home
+          XDG_CONFIG_HOME: ${{ runner.temp }}/shell-config
         run: |
           set -eu
-          mkdir -p "$HOME/.config/ai-agent-telemetry"
+          mkdir -p "$XDG_CONFIG_HOME/ai-agent-telemetry"
           printf 'AI_AGENT_TELEMETRY_ENDPOINT=https://otel.example/v1/logs\n' > \
-            "$HOME/.config/ai-agent-telemetry/env"
+            "$XDG_CONFIG_HOME/ai-agent-telemetry/env"
           sh scripts/install.sh --force
           actual_version="$("$HOME/.local/bin/ai-agent-telemetry")"
           actual_calls="$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")"
@@ -118,6 +120,7 @@ jobs:
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
           AI_AGENT_TELEMETRY_TEST_LOG: ${{ runner.temp }}/shell-configure.log
           HOME: ${{ runner.temp }}/shell-home
+          XDG_CONFIG_HOME: ${{ runner.temp }}/shell-config
         run: |
           set -eu
           before="$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")"
