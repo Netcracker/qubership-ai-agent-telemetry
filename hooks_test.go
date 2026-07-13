@@ -225,6 +225,8 @@ func TestParseHooksCommand(t *testing.T) {
 		{name: "unknown action", args: []string{"remove"}, wantErr: true},
 		{name: "unknown flag", args: []string{"install", "--bogus"}, wantErr: true},
 		{name: "unknown target", args: []string{"install", "--target=windsurf"}, wantErr: true},
+		{name: "explicit all target", args: []string{"install", "--target=all"}, wantErr: true},
+		{name: "explicit no targets", args: []string{"install", "--target=none"}, wantErr: true},
 		{name: "empty explicit target", args: []string{"install", "--target="}, wantErr: true},
 		{name: "empty target before valid target", args: []string{"install", "--target=", "--target=codex"}, wantErr: true},
 		{name: "duplicate target flag", args: []string{"install", "--target=codex", "--target=claude"}, wantErr: true},

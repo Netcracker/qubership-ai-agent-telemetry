@@ -276,5 +276,8 @@ func parseHooksCommand(args []string) ([]hookTarget, error) {
 		}
 		return nil, fmt.Errorf("unknown hooks install flag %q", arg)
 	}
+	if targetFlagSet && (rawTargets == "all" || rawTargets == "none") {
+		return nil, fmt.Errorf("hook target %q is not valid here; omit --target to install all hooks", rawTargets)
+	}
 	return parseHookTargets(rawTargets)
 }

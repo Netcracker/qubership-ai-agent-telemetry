@@ -237,7 +237,11 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 			i++
 			repoAllowValues = append(repoAllowValues, args[i])
 		case strings.HasPrefix(a, "--hooks="):
-			hooks, err := parseHookTargets(strings.TrimPrefix(a, "--hooks="))
+			value := strings.TrimPrefix(a, "--hooks=")
+			if value == "" {
+				return configureOptions{}, fmt.Errorf("hook target value must not be empty")
+			}
+			hooks, err := parseHookTargets(value)
 			if err != nil {
 				return configureOptions{}, err
 			}
@@ -247,6 +251,9 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 				return configureOptions{}, fmt.Errorf("missing value for %q", a)
 			}
 			i++
+			if strings.TrimSpace(args[i]) == "" {
+				return configureOptions{}, fmt.Errorf("hook target value must not be empty")
+			}
 			hooks, err := parseHookTargets(args[i])
 			if err != nil {
 				return configureOptions{}, err

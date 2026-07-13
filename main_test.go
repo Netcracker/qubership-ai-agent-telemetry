@@ -51,6 +51,50 @@ func TestRunHelp(t *testing.T) {
 	}
 }
 
+func TestRunConfigureHelpShowsAcceptedValueForms(t *testing.T) {
+	var out string
+	if code := run([]string{"configure", "--help"}, func(s string) { out += s }); code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+	}
+	for _, want := range []string{"--repo-allow <pattern>", "--hooks <targets>"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestRunConfigureRejectsExplicitEmptyHooksWithoutWritingFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "equals form", args: []string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks="}},
+		{name: "separate form", args: []string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks", ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home, configHome := isolateRunConfigure(t)
+			var out string
+			if code := run(tt.args, func(s string) { out += s }); code != 2 {
+				t.Fatalf("exit code = %d, want 2; output = %q", code, out)
+			}
+			if !strings.Contains(out, "must not be empty") {
+				t.Fatalf("output = %q, want empty-value error", out)
+			}
+			for _, path := range []string{
+				filepath.Join(configHome, pkgName, "env"),
+				hookPath(home, hookClaude),
+				hookPath(home, hookCodex),
+				hookPath(home, hookCursor),
+			} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("configuration exists after invalid command at %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
 func TestRunHelpTopicCoversEveryPublicCommandWithoutSideEffects(t *testing.T) {
 	home := t.TempDir()
 	configHome := t.TempDir()
@@ -60,18 +104,8 @@ func TestRunHelpTopicCoversEveryPublicCommandWithoutSideEffects(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv("XDG_CACHE_HOME", cacheHome)
 
-	commands := []string{
-		"configure",
-		"hooks",
-		"status",
-		"selftest",
-		"ingest",
-		"flush",
-		"update-check",
-		"self-update",
-		"version",
-	}
-	for _, command := range commands {
+	for _, entry := range commandHelpEntries {
+		command := entry.Name
 		forms := [][]string{
 			{"help", command},
 			{command, "help"},

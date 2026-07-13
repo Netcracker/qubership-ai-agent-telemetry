@@ -26,7 +26,9 @@ var commandHelpEntries = []commandHelpEntry{
 			{Syntax: "--endpoint=<url>", Description: "Set the OTLP/HTTP collector endpoint."},
 			{Syntax: "--ca=<path>", Description: "Install a private CA certificate."},
 			{Syntax: "--repo-allow=<pattern>", Description: "Allow a repository pattern; may be repeated."},
+			{Syntax: "--repo-allow <pattern>", Description: "Use the equivalent space-separated form."},
 			{Syntax: "--hooks=<targets>", Description: "Install all, none, or a comma-separated subset of claude,codex,cursor (default: all)."},
+			{Syntax: "--hooks <targets>", Description: "Use the equivalent space-separated form."},
 		},
 	},
 	{
