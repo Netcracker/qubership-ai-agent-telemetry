@@ -4,11 +4,11 @@ Date: July 13, 2026
 
 Status: approved for implementation
 
-## Goal
+## Installation outcome
 
-Install machine-wide telemetry hooks without requiring APM. A clean installation must configure telemetry and register
-hooks for Claude Code, Codex, and Cursor. Updating an already configured installation must refresh those hooks without
-prompting for the collector endpoint or token again.
+A user runs one platform installer. On a new machine it collects the missing collector details and registers Claude
+Code, Codex, and Cursor; on an already configured machine it refreshes those hooks without asking for the endpoint or
+token again.
 
 The installation must work on Linux, macOS, and Windows, preserve unrelated harness settings, and remain safe to run
 more than once.
@@ -180,5 +180,5 @@ Before the pull request is created, a separate subagent reviews the complete dif
 behavior, configuration preservation, documentation accuracy, and missing tests. Confirmed findings are fixed and the
 relevant verification is rerun.
 
-The pull request description stays concise and uses three sections: why APM-free global installation is needed, what
-changed in the CLI and installers, and how the change was verified.
+The pull request description stays concise and explains how the machine-wide setup reduces manual steps, what changed
+in the CLI and installers, and how the change was verified.

@@ -17,9 +17,9 @@ Accepted
 
 ## Context
 
-The original installation flow used APM to deploy a hook into every repository. That made hook
-registration depend on a project package manager even though the binary, endpoint, token, outbox,
-and repository policy were already machine-level resources.
+The original installation flow set up the binary and machine configuration first, then required a
+separate project-level hook step for each repository and harness. A user could finish the machine
+setup and still have no telemetry until those additional steps were complete.
 
 Project-level installation also left existing machines behind during upgrades. The installers
 skipped `configure` when an endpoint existed, so they had no operation that could migrate or
@@ -65,15 +65,15 @@ after hook changes. The CLI does not modify Codex's private trust state. Codex u
 approve `ai-agent-telemetry ingest --agent=codex` when prompted.
 
 The `agent-packages/ai-agent-telemetry` APM hook package remains as a legacy compatibility surface
-for existing consumers. New installations do not depend on it. A parity test keeps its three
-command strings aligned with the CLI.
+for existing consumers. New setups use the machine-wide hooks installed with the CLI. A parity
+test keeps the package's three command strings aligned with the CLI.
 
 This ADR supersedes the APM-first installation assumptions in earlier design and decision records.
 Those historical records remain unchanged because they document the constraints that led here.
 
 ## Consequences
 
-- One installation registers telemetry across repositories for Claude Code, Codex, and Cursor.
+- One installer run configures telemetry across repositories for Claude Code, Codex, and Cursor.
 - Updating an already configured binary refreshes hooks without collector prompts.
 - Native user configuration remains under user control; malformed files require explicit repair.
 - Hook status and collector delivery remain separate checks.

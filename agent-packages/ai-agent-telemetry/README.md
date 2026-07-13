@@ -1,14 +1,8 @@
 # ai-agent-telemetry
 
-This legacy compatibility package delivers project-level lifecycle hooks for existing APM
-consumers. New installations use the CLI-managed global hooks instead:
-
-```sh
-ai-agent-telemetry hooks install
-```
-
-Do not add this package to a new repository solely to enable telemetry. The global CLI setup
-applies to every repository on the machine and preserves unrelated harness configuration.
+This package is only for repositories that already install telemetry hooks through APM. For a new
+machine, use the platform installer in the [root README](../../README.md#installation). It installs
+the CLI and registers Claude Code, Codex, and Cursor for every repository on that machine.
 
 Supported agents: Claude Code, Codex, and Cursor.
 
@@ -48,6 +42,6 @@ same APM target already selected by that repository, for example:
 apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
 ```
 
-After migration, run `ai-agent-telemetry hooks install`, remove the package dependency through the
-repository's normal APM workflow, and fully restart the harness. The CLI canonicalizes recognized
-APM telemetry entries without removing unrelated hooks.
+After the platform installer has refreshed the machine-wide hooks, verify the setup, remove the
+package dependency through the repository's normal APM workflow, and fully restart the harness.
+The CLI canonicalizes recognized APM telemetry entries without removing unrelated hooks.

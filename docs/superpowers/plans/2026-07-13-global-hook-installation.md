@@ -3,8 +3,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Install and maintain global Claude Code, Codex, and Cursor telemetry hooks through the CLI without requiring
-APM in the normal installation flow.
+**Installation outcome:** One platform-installer run configures and maintains Claude Code, Codex, and Cursor telemetry
+hooks, prompting for collector details only when they are missing.
 
 **Architecture:** Add a Go hook-management layer with one adapter per harness and a shared atomic JSON file writer.
 `configure` calls the layer by default, while a noninteractive `hooks install` command lets both installers refresh
@@ -699,7 +699,7 @@ Expected: no whitespace errors.
 ```bash
 git add README.md docs/cli.md docs/agent-integration.md docs/adr/0005-cli-managed-global-hooks.md \
   agent-packages/ai-agent-telemetry agent-packages/ai-agent-telemetry-configure hooks_package_test.go
-git commit -m "docs: document APM-free global hook setup"
+git commit -m "docs: document machine-wide hook setup"
 ```
 
 ### Task 7: Add native macOS and Windows CI coverage
@@ -846,7 +846,8 @@ Use a concise description:
 ```markdown
 ## Why
 
-Global telemetry setup required APM even though the CLI already owns machine configuration.
+Global telemetry setup required separate machine and project-level steps, so installing and configuring the CLI did not
+leave every supported harness ready to use.
 
 ## What
 

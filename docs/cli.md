@@ -7,6 +7,10 @@ from the agent hook on each turn — there is no daemon and no background proces
 To install it, see [Installation in the README](../README.md#installation). This document
 covers the command reference, how it works inside, and where it keeps its files.
 
+For the usual setup, run the platform installer and enter collector details only if prompted.
+It registers Claude Code, Codex, and Cursor automatically. The commands below are primarily for
+customization, diagnostics, and repair.
+
 ## What it does
 
 On each hook run the CLI:
@@ -20,8 +24,8 @@ On each hook run the CLI:
 
 ## Subcommands
 
-The hook calls `ingest`; the installer calls `configure` on first run or `hooks install` during
-an update. The setup skill uses the diagnostic commands, so you rarely run them by hand.
+The hook calls `ingest`. The installer configures a new machine and refreshes hooks during
+upgrades, so these commands rarely need to be run by hand.
 `ai-agent-telemetry <command>`:
 
 | Command | Purpose |
@@ -49,9 +53,9 @@ The CLI manages one user-level native file per harness on every supported operat
 | Codex | `~/.codex/hooks.json` | `Stop` |
 | Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, with numeric top-level `version` |
 
-`configure` installs hooks after writing configuration. The optional `--hooks` value accepts
-`all`, `none`, or a comma-separated subset of `claude`, `codex`, and `cursor`. The repair command
-uses `--target` instead:
+Normal installation registers all three hooks; no separate hook command is required. For a custom
+target list, `configure` accepts `--hooks=all`, `--hooks=none`, or a comma-separated subset. The
+repair command uses `--target` instead:
 
 ```sh
 ai-agent-telemetry configure --hooks=claude,codex
@@ -93,9 +97,8 @@ curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/l
 iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
 ```
 
-The installers run `configure` when no endpoint exists. When an endpoint is already configured,
-they run `hooks install` so upgrades migrate or refresh global hooks without prompting. Their
-skip-config options skip both operations.
+Re-running the installer updates the binary and refreshes the global hooks without asking for
+collector settings again. The skip-config options leave both machine settings and hooks unchanged.
 
 ## Buffering and delivery
 

@@ -13,21 +13,16 @@ The CLI registers one global harness-specific hook in each native user configura
 | Codex | `~/.codex/hooks.json` |
 | Cursor | `~/.cursor/hooks.json` |
 
-Each hook calls the CLI by its bare name, `ai-agent-telemetry ingest --agent=<name>`, so the
-binary must be on `PATH`. The installer puts it in `~/.local/bin` and adds that directory to
-`PATH`. A bare command name works across Git Bash, PowerShell, `cmd.exe`, and POSIX `sh`.
+One platform-installer run puts the binary on `PATH` and registers all three hooks, even when a
+harness is not installed yet. Each hook calls the CLI by its bare name,
+`ai-agent-telemetry ingest --agent=<name>`, which works across Git Bash, PowerShell, `cmd.exe`,
+and POSIX `sh`.
 
 The CLI reads the agent's payload on stdin, detects any skill that ran, queues the event to an
 on-disk outbox, and flushes opportunistically over OTLP/HTTPS. It always exits 0, so it never
 fails an agent turn. For its internals, see [the ai-agent-telemetry CLI](cli.md).
 
-`ai-agent-telemetry configure` installs all three hooks by default. Use
-`ai-agent-telemetry hooks install` for noninteractive repair. The merge preserves unrelated
-native settings and leaves malformed files unchanged while continuing with other harnesses.
-Fully restart each harness after a hook update.
-
-Hook registration is separate from harness trust. The CLI does not edit Codex's private trust
-state. If Codex prompts, inspect and approve `ai-agent-telemetry ingest --agent=codex`.
+After installation, follow the README's [verification, restart, and trust steps](../README.md#installation).
 
 Detection uses one of two signals, depending on what the agent exposes:
 
@@ -139,8 +134,9 @@ native-event path as Claude Code.
 ## Legacy APM compatibility
 
 The retained `ai-agent-telemetry` APM hook package remains compatible with repositories that
-already consume it. New installations use the CLI-managed global files above. A parity test keeps
-the package's three command strings aligned with the CLI while existing consumers migrate.
+already consume it. New setups use the machine-wide files created by the platform installer. A
+parity test keeps the package's three command strings aligned with the CLI while existing
+consumers migrate.
 
 [Codex spec]: superpowers/specs/2026-06-16-codex-session-parsing.md
 [Cursor workaround]: superpowers/decisions/2026-06-17-cursor-hooks-version-workaround.md
