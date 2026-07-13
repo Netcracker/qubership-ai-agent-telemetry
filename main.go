@@ -29,8 +29,12 @@ func main() {
 
 func run(args []string, stdout func(string)) int {
 	if len(args) == 0 {
-		stdout("usage: ai-agent-telemetry <ingest|flush|status|selftest|configure|hooks|update-check|self-update|version>\n")
+		stdout(rootHelp())
 		return 2
+	}
+	if output, code, handled := routeHelp(args); handled {
+		stdout(output)
+		return code
 	}
 	switch args[0] {
 	case "version":
@@ -52,7 +56,8 @@ func run(args []string, stdout func(string)) int {
 	case "configure":
 		opts, err := parseConfigureFlags(args[1:])
 		if err != nil {
-			stdout("configure: " + err.Error() + "\n")
+			help, _ := commandHelp("configure")
+			stdout("configure: " + err.Error() + "\n\n" + help)
 			return 2
 		}
 		cfg := pkgConfigDir()
@@ -84,7 +89,8 @@ func run(args []string, stdout func(string)) int {
 	case "hooks":
 		targets, err := parseHooksCommand(args[1:])
 		if err != nil {
-			stdout("hooks: " + err.Error() + "\n")
+			help, _ := commandHelp("hooks")
+			stdout("hooks: " + err.Error() + "\n\n" + help)
 			return 2
 		}
 		home := userHomeDir()
@@ -173,7 +179,7 @@ func run(args []string, stdout func(string)) int {
 		stdout(formatStatus(gatherStatus(s, pkgConfigDir(), resolveEndpoint(""), resolveTelemetryPolicy()), verbose))
 		return 0
 	default:
-		stdout("unknown command: " + args[0] + "\n")
+		stdout("unknown command: " + args[0] + "\n\n" + rootHelp())
 		return 2
 	}
 }

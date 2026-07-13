@@ -23,10 +23,126 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
+func TestRunHelp(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "help", args: []string{"help"}, want: "Commands:"},
+		{name: "short flag", args: []string{"-h"}, want: "Commands:"},
+		{name: "long flag", args: []string{"--help"}, want: "Commands:"},
+		{name: "help topic", args: []string{"help", "hooks"}, want: "ai-agent-telemetry hooks install"},
+		{name: "command help", args: []string{"hooks", "help"}, want: "--target=<list>"},
+		{name: "command short flag", args: []string{"configure", "-h"}, want: "--hooks=<targets>"},
+		{name: "command long flag", args: []string{"status", "--help"}, want: "--verbose"},
+		{name: "nested action help", args: []string{"hooks", "install", "--help"}, want: "--target=<list>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out string
+			if code := run(tt.args, func(s string) { out += s }); code != 0 {
+				t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+			}
+			if !strings.Contains(out, tt.want) {
+				t.Fatalf("output = %q, want %q", out, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunHelpTopicCoversEveryPublicCommandWithoutSideEffects(t *testing.T) {
+	home := t.TempDir()
+	configHome := t.TempDir()
+	cacheHome := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+
+	commands := []string{
+		"configure",
+		"hooks",
+		"status",
+		"selftest",
+		"ingest",
+		"flush",
+		"update-check",
+		"self-update",
+		"version",
+	}
+	for _, command := range commands {
+		forms := [][]string{
+			{"help", command},
+			{command, "help"},
+			{command, "-h"},
+			{command, "--help"},
+		}
+		for _, args := range forms {
+			t.Run(strings.Join(args, "_"), func(t *testing.T) {
+				var out string
+				if code := run(args, func(s string) { out += s }); code != 0 {
+					t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+				}
+				if !strings.Contains(out, "Usage:") || !strings.Contains(out, "ai-agent-telemetry "+command) {
+					t.Fatalf("output = %q, want command usage", out)
+				}
+			})
+		}
+	}
+
+	for _, dir := range []string{home, configHome, cacheHome} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("help created files in %s: %v", dir, entries)
+		}
+	}
+}
+
+func TestRunHelpRejectsInvalidTopics(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "unknown topic", args: []string{"help", "unknown"}, want: "unknown help topic"},
+		{name: "extra topic argument", args: []string{"help", "hooks", "extra"}, want: "help accepts at most one command"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out string
+			if code := run(tt.args, func(s string) { out += s }); code != 2 {
+				t.Fatalf("exit code = %d, want 2; output = %q", code, out)
+			}
+			if !strings.Contains(out, tt.want) || !strings.Contains(out, "Commands:") {
+				t.Fatalf("output = %q, want error %q and root help", out, tt.want)
+			}
+		})
+	}
+}
+
 func TestRunUnknownCommand(t *testing.T) {
-	code := run([]string{"bogus"}, func(string) {})
+	var out string
+	code := run([]string{"bogus"}, func(s string) { out += s })
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(out, "unknown command") || !strings.Contains(out, "Commands:") {
+		t.Fatalf("output = %q, want error and root help", out)
+	}
+}
+
+func TestRunWithoutCommandPrintsRootHelp(t *testing.T) {
+	var out string
+	code := run(nil, func(s string) { out += s })
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(out, "Usage:") || !strings.Contains(out, "Commands:") {
+		t.Fatalf("output = %q, want root help", out)
 	}
 }
 
@@ -242,8 +358,8 @@ func TestRunHooksRejectsMissingAction(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(out, "action") {
-		t.Fatalf("output = %q, want missing action error", out)
+	if !strings.Contains(out, "action") || !strings.Contains(out, "ai-agent-telemetry hooks install") {
+		t.Fatalf("output = %q, want missing action error and hooks help", out)
 	}
 }
 
