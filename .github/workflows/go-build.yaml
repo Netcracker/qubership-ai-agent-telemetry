@@ -76,6 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Linux hook coverage is part of the full build job above.
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
