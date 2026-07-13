@@ -74,31 +74,31 @@ members:
 
 ```go
 func TestParseHookTargets(t *testing.T) {
-	tests := []struct {
-		name    string
-		raw     string
-		want    []hookTarget
-		wantErr bool
-	}{
-		{name: "default", want: allHookTargets},
-		{name: "all", raw: "all", want: allHookTargets},
-		{name: "none", raw: "none", want: []hookTarget{}},
-		{name: "subset", raw: "codex,claude", want: []hookTarget{hookClaude, hookCodex}},
-		{name: "deduplicate", raw: "cursor,cursor", want: []hookTarget{hookCursor}},
-		{name: "unknown", raw: "windsurf", wantErr: true},
-		{name: "empty member", raw: "claude,,codex", wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseHookTargets(tt.raw)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
-			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("targets = %v, want %v", got, tt.want)
-			}
-		})
-	}
+    tests := []struct {
+        name    string
+        raw     string
+        want    []hookTarget
+        wantErr bool
+    }{
+        {name: "default", want: allHookTargets},
+        {name: "all", raw: "all", want: allHookTargets},
+        {name: "none", raw: "none", want: []hookTarget{}},
+        {name: "subset", raw: "codex,claude", want: []hookTarget{hookClaude, hookCodex}},
+        {name: "deduplicate", raw: "cursor,cursor", want: []hookTarget{hookCursor}},
+        {name: "unknown", raw: "windsurf", wantErr: true},
+        {name: "empty member", raw: "claude,,codex", wantErr: true},
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got, err := parseHookTargets(tt.raw)
+            if (err != nil) != tt.wantErr {
+                t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
+            }
+            if !reflect.DeepEqual(got, tt.want) {
+                t.Fatalf("targets = %v, want %v", got, tt.want)
+            }
+        })
+    }
 }
 ```
 
@@ -116,44 +116,44 @@ Add the canonical target order and return errors that name the invalid value:
 type hookTarget string
 
 const (
-	hookClaude hookTarget = "claude"
-	hookCodex  hookTarget = "codex"
-	hookCursor hookTarget = "cursor"
+    hookClaude hookTarget = "claude"
+    hookCodex  hookTarget = "codex"
+    hookCursor hookTarget = "cursor"
 )
 
 var allHookTargets = []hookTarget{hookClaude, hookCodex, hookCursor}
 
 type configureOptions struct {
-	Endpoint  string
-	CAPath    string
-	RepoAllow string
-	Hooks     []hookTarget
+    Endpoint  string
+    CAPath    string
+    RepoAllow string
+    Hooks     []hookTarget
 }
 
 func parseHookTargets(raw string) ([]hookTarget, error) {
-	if raw == "" || raw == "all" {
-		return append([]hookTarget(nil), allHookTargets...), nil
-	}
-	if raw == "none" {
-		return []hookTarget{}, nil
-	}
-	requested := map[hookTarget]bool{}
-	for _, value := range strings.Split(raw, ",") {
-		target := hookTarget(strings.TrimSpace(value))
-		switch target {
-		case hookClaude, hookCodex, hookCursor:
-			requested[target] = true
-		default:
-			return nil, fmt.Errorf("unknown hook target %q", value)
-		}
-	}
-	var targets []hookTarget
-	for _, target := range allHookTargets {
-		if requested[target] {
-			targets = append(targets, target)
-		}
-	}
-	return targets, nil
+    if raw == "" || raw == "all" {
+        return append([]hookTarget(nil), allHookTargets...), nil
+    }
+    if raw == "none" {
+        return []hookTarget{}, nil
+    }
+    requested := map[hookTarget]bool{}
+    for _, value := range strings.Split(raw, ",") {
+        target := hookTarget(strings.TrimSpace(value))
+        switch target {
+        case hookClaude, hookCodex, hookCursor:
+            requested[target] = true
+        default:
+            return nil, fmt.Errorf("unknown hook target %q", value)
+        }
+    }
+    var targets []hookTarget
+    for _, target := range allHookTargets {
+        if requested[target] {
+            targets = append(targets, target)
+        }
+    }
+    return targets, nil
 }
 ```
 
@@ -202,21 +202,21 @@ non-object root, and replacement of an existing file:
 
 ```go
 func TestUpdateHookFileLeavesMalformedJSONUnchanged(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "settings.json")
-	want := []byte("{not json\n")
-	if err := os.WriteFile(path, want, 0o640); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := updateHookFile(path, mergeClaudeHook); err == nil {
-		t.Fatal("want malformed JSON error")
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("malformed file changed: %q", got)
-	}
+    path := filepath.Join(t.TempDir(), "settings.json")
+    want := []byte("{not json\n")
+    if err := os.WriteFile(path, want, 0o640); err != nil {
+        t.Fatal(err)
+    }
+    if _, err := updateHookFile(path, mergeClaudeHook); err == nil {
+        t.Fatal("want malformed JSON error")
+    }
+    got, err := os.ReadFile(path)
+    if err != nil {
+        t.Fatal(err)
+    }
+    if !bytes.Equal(got, want) {
+        t.Fatalf("malformed file changed: %q", got)
+    }
 }
 ```
 
@@ -249,30 +249,30 @@ newline, and replace through a same-directory temporary file:
 type hookMergeFunc func(map[string]any) (bool, error)
 
 func updateHookFile(path string, merge hookMergeFunc) (bool, error) {
-	root := map[string]any{}
-	mode := os.FileMode(0o600)
-	if data, err := os.ReadFile(path); err == nil {
-		info, statErr := os.Stat(path)
-		if statErr != nil {
-			return false, statErr
-		}
-		mode = info.Mode().Perm()
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
-		if err := decoder.Decode(&root); err != nil {
-			return false, fmt.Errorf("parse %s: %w", path, err)
-		}
-		if err := requireJSONEOF(decoder); err != nil {
-			return false, fmt.Errorf("parse %s: %w", path, err)
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	changed, err := merge(root)
-	if err != nil || !changed {
-		return changed, err
-	}
-	return true, writeJSONAtomically(path, root, mode)
+    root := map[string]any{}
+    mode := os.FileMode(0o600)
+    if data, err := os.ReadFile(path); err == nil {
+        info, statErr := os.Stat(path)
+        if statErr != nil {
+            return false, statErr
+        }
+        mode = info.Mode().Perm()
+        decoder := json.NewDecoder(bytes.NewReader(data))
+        decoder.UseNumber()
+        if err := decoder.Decode(&root); err != nil {
+            return false, fmt.Errorf("parse %s: %w", path, err)
+        }
+        if err := requireJSONEOF(decoder); err != nil {
+            return false, fmt.Errorf("parse %s: %w", path, err)
+        }
+    } else if !errors.Is(err, os.ErrNotExist) {
+        return false, err
+    }
+    changed, err := merge(root)
+    if err != nil || !changed {
+        return changed, err
+    }
+    return true, writeJSONAtomically(path, root, mode)
 }
 ```
 
@@ -394,16 +394,16 @@ Map targets to paths and merge functions:
 
 ```go
 func hookPath(home string, target hookTarget) string {
-	switch target {
-	case hookClaude:
-		return filepath.Join(home, ".claude", "settings.json")
-	case hookCodex:
-		return filepath.Join(home, ".codex", "hooks.json")
-	case hookCursor:
-		return filepath.Join(home, ".cursor", "hooks.json")
-	default:
-		return ""
-	}
+    switch target {
+    case hookClaude:
+        return filepath.Join(home, ".claude", "settings.json")
+    case hookCodex:
+        return filepath.Join(home, ".codex", "hooks.json")
+    case hookCursor:
+        return filepath.Join(home, ".cursor", "hooks.json")
+    default:
+        return ""
+    }
 }
 ```
 
