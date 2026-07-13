@@ -8,21 +8,23 @@ under the Netcracker GitHub organization unless you set a different repository s
 ## TL;DR
 
 ```sh
-# macOS / Linux: install or update the CLI and run configure if needed
+# macOS / Linux
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --force
-
-# Windows PowerShell: install or update the CLI and run configure if needed
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
-
-# hooks (every repository that wants telemetry)
-apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
 ```
 
-`--target` is required — without it APM cannot pick a harness and the install fails. The examples
-target Claude Code; for Codex or Cursor, use `--target codex`, `--target cursor`, or `--target all`.
+```powershell
+# Windows PowerShell
+iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
+```
 
-Restart the agent after installing the CLI so the hook can resolve `ai-agent-telemetry` on
-`PATH`. See [Installation](#installation) for the full walkthrough.
+1. Run the installer for your operating system.
+2. Complete `ai-agent-telemetry configure` if prompted.
+3. Run `ai-agent-telemetry status` and `ai-agent-telemetry selftest`.
+4. Fully restart Claude Code, Codex, or Cursor.
+5. Inspect and trust the telemetry hook if the harness prompts.
+
+Codex may ask you to approve the exact command `ai-agent-telemetry ingest --agent=codex`. See
+[Installation](#installation) for configuration options, hook repair, and verification details.
 
 ## Architecture
 
@@ -41,18 +43,18 @@ session transcript where it does not (see
 and flushes it over OTLP/HTTPS. It always exits 0, so a delivery failure never blocks the
 agent.
 
-The two packages serve different roles:
+The CLI and optional setup package serve different roles:
 
-| Package | Repository | What it carries | How to install |
-| --- | --- | --- | --- |
-| [`ai-agent-telemetry`](https://github.com/Netcracker/qubership-ai-agent-telemetry/tree/main/agent-packages/ai-agent-telemetry) | `Netcracker/qubership-ai-agent-telemetry` | Three hook files (Claude Code, Codex, Cursor) | `apm install` as a regular dependency |
-| `ai-agent-telemetry-configure` | this repository | Setup, repair, and verification skill | Optional `apm install --dev` |
+| Component | What it carries | How to install |
+| --- | --- | --- |
+| `ai-agent-telemetry` CLI | Binary, configuration, global hooks, buffering, and delivery | Platform installer |
+| `ai-agent-telemetry-configure` | Agent-guided setup, repair, and verification skill | Optional `apm install --dev` |
 
 The hooks call the CLI by its bare name on `PATH` (`~/.local/bin/ai-agent-telemetry`), so
 one command works across every harness and OS. The endpoint, optional CA certificate, and
-token are written once per machine by `ai-agent-telemetry configure`. The installer runs
-that command after installing the binary when no endpoint is configured yet. For the CLI
-internals and file layout, see [the ai-agent-telemetry CLI](docs/cli.md).
+token are written once per machine by `ai-agent-telemetry configure`. The CLI installs hooks
+in each harness's global user configuration. For the CLI internals and file layout, see
+[the ai-agent-telemetry CLI](docs/cli.md).
 
 ## Data
 
@@ -122,16 +124,17 @@ Any collector that meets these requirements works. A ready-to-deploy reference s
 
 ## Installation
 
-These steps assume no prior APM setup. Have the collector endpoint, an optional CA
-certificate, and an optional access token on hand.
+Have the collector endpoint, an optional CA certificate, and an optional access token on hand.
 
-### 1. Install or update the CLI and configure if needed
+### 1. Install or update the CLI
 
 The installer downloads the right release asset, verifies it against `SHA256SUMS`, installs it
 to `~/.local/bin`, and adds that directory to the user `PATH`. The `--force` and `-Force`
-options replace an existing binary with the latest release. If no endpoint is configured yet,
-the installer runs `ai-agent-telemetry configure`; the binary prompts for the collector endpoint
-and optional token and writes the config.
+options replace an existing binary with the latest release.
+
+If the collector endpoint is missing, the installer runs `ai-agent-telemetry configure`. If an
+endpoint already exists, it runs `ai-agent-telemetry hooks install` to refresh all global hooks
+without prompting. `--skip-config` and `-SkipConfig` skip both configuration and hook changes.
 
 ```sh
 # macOS / Linux
@@ -143,46 +146,45 @@ curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/l
 iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
 ```
 
-### 2. Install APM
+### 2. Configure hooks and collection scope
+
+`configure` installs all supported global hooks by default. Select a subset or skip hook changes
+with `--hooks=all`, `--hooks=none`, or a comma-separated list of `claude`, `codex`, and `cursor`:
 
 ```sh
-uv tool install apm-cli
+ai-agent-telemetry configure --hooks=claude,codex
+ai-agent-telemetry configure --hooks=none
 ```
 
-### 3. Install the hooks
-
-`--target` is required: it tells APM which harness to deploy to, and the install fails without it.
-The command below targets Claude Code. For Codex or Cursor, use `--target codex`, `--target cursor`,
-or `--target all`.
+Repair or refresh hooks without reading or changing the endpoint, token, CA certificate, or repository policy:
 
 ```sh
-apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
+ai-agent-telemetry hooks install
+ai-agent-telemetry hooks install --target=claude,codex
 ```
 
-Or add the dependency to `apm.yml` by hand:
-
-```yaml
-dependencies:
-  apm:
-    - Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
-```
-
-Then install for your agent:
+### 3. Verify registration and delivery
 
 ```sh
-apm install --target claude
+ai-agent-telemetry status    # read config and global hook registration; sends nothing
+ai-agent-telemetry selftest  # send a probe and confirm collector delivery
 ```
 
-### 4. Verify
+`status` reports each hook as `installed`, `missing`, or `invalid`; `status --verbose` adds the
+native file path and parse error. `selftest` proves the CLI can deliver to the collector, but it
+cannot prove that a harness loaded or invoked its hook. Check both before relying on telemetry.
 
-```sh
-ai-agent-telemetry status    # config, endpoint, outbox backlog
-ai-agent-telemetry selftest  # send a probe event and confirm delivery
+### 4. Restart and review trust
+
+Fully quit the GUI application or close the terminal tab, then restart the harness. A new chat is
+not enough because the running process retains its old `PATH` and hook configuration.
+
+The CLI registers commands but does not modify private harness trust state. Inspect the command
+and approve it if prompted. For Codex, approve exactly:
+
+```text
+ai-agent-telemetry ingest --agent=codex
 ```
-
-Both must pass before telemetry is live. After configuring, restart the agent (fully quit
-the app or close the terminal tab; a new chat is not enough) so the hook resolves the
-binary by its bare name.
 
 ### Optional setup skill
 
@@ -211,7 +213,7 @@ This puts the binary at `~/.local/bin/ai-agent-telemetry`, verifies the checksum
 
 ```sh
 ai-agent-telemetry configure --endpoint=https://<collector-host>/v1/logs
-# Token (leave empty if none): <paste token, press Enter — input is hidden>
+# Token (leave empty if none): <paste token, press Enter; input is hidden>
 ```
 
 **Limit collection to organization repositories** (recommended for global hooks):
@@ -236,6 +238,11 @@ ai-agent-telemetry status    # config, endpoint, outbox backlog
 ai-agent-telemetry selftest  # send a probe event and confirm delivery
 ```
 
-Both must pass before telemetry is live. After configuring, restart the agent (fully quit
-the app or close the terminal tab — a new chat is not enough) so the hook resolves the
-binary by its bare name.
+Both must pass before telemetry is live. Restart the harness after any hook change.
+
+### Legacy APM hook package
+
+Existing repositories that already consume the `ai-agent-telemetry` APM hook package may keep
+using it. New installations should use the CLI-managed global hooks above; they apply across
+repositories and do not require APM. The compatibility package remains available while existing
+consumers migrate.

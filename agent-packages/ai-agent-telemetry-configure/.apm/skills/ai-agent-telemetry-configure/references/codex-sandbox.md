@@ -5,7 +5,7 @@ targets and the rule is missing or inert, and you need to write or repair it.
 
 ## Why this is needed
 
-Codex runs hook commands and tool calls in a **sandbox** that, by default, denies the binary the
+The CLI-managed global Codex hook still runs in a **sandbox** that, by default, denies the binary the
 two things telemetry needs: read access to the machine-level config outside the project
 (`~/.config/ai-agent-telemetry/`) and network egress to the collector. The tell is a
 **Codex-only** failure: inside Codex, `status` reports `endpoint: (unset)` / `not configured` and
@@ -19,6 +19,10 @@ The fix is a Codex **execution-policy rule** that lets those telemetry commands 
 sandbox. Keep it machine-level, like the rest of telemetry (`~/.local/bin`, `~/.config`): write it
 to the **user layer** `~/.codex/rules/`, which Codex loads in every repo with no per-project trust
 step.
+
+The rule controls sandbox execution; it does not approve the hook on the user's behalf. Do not
+clear or rewrite Codex trust hashes automatically. If Codex reports a changed command, ask the user
+to inspect and approve `ai-agent-telemetry ingest --agent=codex`.
 
 ## Write the rule
 
