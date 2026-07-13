@@ -95,11 +95,13 @@ ensure_path() {
   fi
 }
 
-configure_if_missing() {
+configure_or_refresh_hooks() {
   env_file="$(config_dir)/env"
   endpoint="$(env_value AI_AGENT_TELEMETRY_ENDPOINT "$env_file")"
   if [ -z "$endpoint" ]; then
     "$BIN" configure
+  else
+    "$BIN" hooks install
   fi
 }
 
@@ -146,7 +148,7 @@ main() {
 
   ensure_path
   if [ "$SKIP_CONFIG" = 0 ]; then
-    configure_if_missing
+    configure_or_refresh_hooks
   fi
 }
 

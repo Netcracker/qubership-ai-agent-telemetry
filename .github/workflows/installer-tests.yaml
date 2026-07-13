@@ -30,6 +30,7 @@ jobs:
 
       - name: Check relevant file changes
         id: filter
+        shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -44,16 +45,16 @@ jobs:
           mkdir -p test-release/latest/download test-release/download/v0.1.0 test-release/download/v0.2.0
           cat > test-release/download/v0.1.0/ai-agent-telemetry-linux-amd64 <<'EOF'
           #!/bin/sh
-          if [ "${1:-}" = configure ]; then
-            printf 'configure\n' >> "$AI_AGENT_TELEMETRY_TEST_LOG"
+          if [ "$#" -gt 0 ]; then
+            printf '%s\n' "$*" >> "$AI_AGENT_TELEMETRY_TEST_LOG"
             exit 0
           fi
           printf '0.1.0\n'
           EOF
           cat > test-release/download/v0.2.0/ai-agent-telemetry-linux-amd64 <<'EOF'
           #!/bin/sh
-          if [ "${1:-}" = configure ]; then
-            printf 'configure\n' >> "$AI_AGENT_TELEMETRY_TEST_LOG"
+          if [ "$#" -gt 0 ]; then
+            printf '%s\n' "$*" >> "$AI_AGENT_TELEMETRY_TEST_LOG"
             exit 0
           fi
           printf '0.2.0\n'
@@ -91,20 +92,38 @@ jobs:
           test "$("$HOME/.local/bin/ai-agent-telemetry")" = "0.1.0"
           test "$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")" = "configure"
 
-      - name: Force reinstall existing binary
+      - name: Force reinstall refreshes hooks
         if: ${{ steps.filter.outputs.run-build == 'true' }}
         env:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
+          AI_AGENT_TELEMETRY_TEST_LOG: ${{ runner.temp }}/shell-configure.log
           HOME: ${{ runner.temp }}/shell-home
         run: |
           set -eu
-          sh scripts/install.sh --skip-config --force
+          mkdir -p "$HOME/.config/ai-agent-telemetry"
+          printf 'AI_AGENT_TELEMETRY_ENDPOINT=https://otel.example/v1/logs\n' > \
+            "$HOME/.config/ai-agent-telemetry/env"
+          sh scripts/install.sh --force
           test "$("$HOME/.local/bin/ai-agent-telemetry")" = "0.2.0"
+          test "$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")" = "$(printf 'configure\nhooks install')"
+
+      - name: Skip config leaves hook log unchanged
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
+        env:
+          AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
+          AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
+          AI_AGENT_TELEMETRY_TEST_LOG: ${{ runner.temp }}/shell-configure.log
+          HOME: ${{ runner.temp }}/shell-home
+        run: |
+          set -eu
+          before="$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")"
+          sh scripts/install.sh --skip-config --force
+          test "$(cat "$AI_AGENT_TELEMETRY_TEST_LOG")" = "$before"
 
   powershell:
     name: install.ps1 clean and force reinstall
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -116,6 +135,7 @@ jobs:
 
       - name: Check relevant file changes
         id: filter
+        shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -135,10 +155,35 @@ jobs:
           )
           New-Item -ItemType Directory -Force -Path $dirs | Out-Null
 
+          @'
+          package main
+
+          import (
+            "fmt"
+            "os"
+            "strings"
+          )
+
+          var version = "dev"
+
+          func main() {
+            if len(os.Args) > 1 {
+              file, err := os.OpenFile(os.Getenv("AI_AGENT_TELEMETRY_TEST_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+              if err != nil {
+                panic(err)
+              }
+              defer file.Close()
+              fmt.Fprintln(file, strings.Join(os.Args[1:], " "))
+              return
+            }
+            fmt.Println(version)
+          }
+          '@ | Set-Content -LiteralPath test-release/fake-main.go
+
           $asset01 = 'test-release/download/v0.1.0/ai-agent-telemetry-windows-amd64.exe'
           $asset02 = 'test-release/download/v0.2.0/ai-agent-telemetry-windows-amd64.exe'
-          [System.IO.File]::WriteAllText($asset01, "0.1.0`n", [System.Text.Encoding]::ASCII)
-          [System.IO.File]::WriteAllText($asset02, "0.2.0`n", [System.Text.Encoding]::ASCII)
+          go build -ldflags '-X main.version=0.1.0' -o $asset01 test-release/fake-main.go
+          go build -ldflags '-X main.version=0.2.0' -o $asset02 test-release/fake-main.go
           Copy-Item test-release/download/v0.2.0/ai-agent-telemetry-windows-amd64.exe test-release/latest/download/
 
           foreach ($version in 'v0.1.0', 'v0.2.0') {
@@ -152,14 +197,18 @@ jobs:
 
       - name: Serve local release assets
         if: ${{ steps.filter.outputs.run-build == 'true' }}
+        shell: pwsh
         run: |
-          python3 -m http.server 8765 --directory test-release &
-          for _ in 1 2 3 4 5; do
-            if curl -fsS http://127.0.0.1:8765/latest/download/SHA256SUMS >/dev/null; then
+          $ErrorActionPreference = 'Stop'
+          Start-Process python -ArgumentList '-m', 'http.server', '8765', '--directory', 'test-release'
+          foreach ($attempt in 1..5) {
+            try {
+              Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8765/latest/download/SHA256SUMS | Out-Null
               exit 0
-            fi
-            sleep 1
-          done
+            } catch {
+              Start-Sleep -Seconds 1
+            }
+          }
           exit 1
 
       - name: Clean install
@@ -168,15 +217,19 @@ jobs:
         env:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.1.0
+          AI_AGENT_TELEMETRY_TEST_LOG: ${{ runner.temp }}/powershell-configure.log
           USERPROFILE: ${{ runner.temp }}/powershell-home
           PROCESSOR_ARCHITECTURE: AMD64
         run: |
           $ErrorActionPreference = 'Stop'
-          ./scripts/install.ps1 -SkipConfig
+          ./scripts/install.ps1
           $binDir = Join-Path $env:USERPROFILE '.local\bin'
           $bin = Join-Path $binDir 'ai-agent-telemetry.exe'
           if (-not (Test-Path $bin)) { throw "missing installed binary: $bin" }
-          if ((Get-Content -Raw -LiteralPath $bin).Trim() -ne '0.1.0') { throw "unexpected clean install content" }
+          if ((& $bin) -ne '0.1.0') { throw "unexpected clean install version" }
+          if ((Get-Content -Raw -LiteralPath $env:AI_AGENT_TELEMETRY_TEST_LOG).Trim() -ne 'configure') {
+            throw "clean install did not invoke configure"
+          }
 
       - name: Force reinstall existing binary
         if: ${{ steps.filter.outputs.run-build == 'true' }}
@@ -184,11 +237,34 @@ jobs:
         env:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
+          AI_AGENT_TELEMETRY_TEST_LOG: ${{ runner.temp }}/powershell-configure.log
           USERPROFILE: ${{ runner.temp }}/powershell-home
           PROCESSOR_ARCHITECTURE: AMD64
         run: |
           $ErrorActionPreference = 'Stop'
-          ./scripts/install.ps1 -SkipConfig -Force
+          $configDir = Join-Path $env:USERPROFILE '.config\ai-agent-telemetry'
+          New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+          Set-Content -LiteralPath (Join-Path $configDir 'env') `
+            -Value 'AI_AGENT_TELEMETRY_ENDPOINT=https://otel.example/v1/logs'
+          ./scripts/install.ps1 -Force
           $binDir = Join-Path $env:USERPROFILE '.local\bin'
           $bin = Join-Path $binDir 'ai-agent-telemetry.exe'
-          if ((Get-Content -Raw -LiteralPath $bin).Trim() -ne '0.2.0') { throw "unexpected force reinstall content" }
+          if ((& $bin) -ne '0.2.0') { throw "unexpected force reinstall version" }
+          $calls = (Get-Content -LiteralPath $env:AI_AGENT_TELEMETRY_TEST_LOG) -join "`n"
+          if ($calls -ne "configure`nhooks install") { throw "unexpected calls: $calls" }
+
+      - name: Skip config leaves hook log unchanged
+        if: ${{ steps.filter.outputs.run-build == 'true' }}
+        shell: pwsh
+        env:
+          AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
+          AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
+          AI_AGENT_TELEMETRY_TEST_LOG: ${{ runner.temp }}/powershell-configure.log
+          USERPROFILE: ${{ runner.temp }}/powershell-home
+          PROCESSOR_ARCHITECTURE: AMD64
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $before = (Get-Content -LiteralPath $env:AI_AGENT_TELEMETRY_TEST_LOG) -join "`n"
+          ./scripts/install.ps1 -SkipConfig -Force
+          $after = (Get-Content -LiteralPath $env:AI_AGENT_TELEMETRY_TEST_LOG) -join "`n"
+          if ($after -ne $before) { throw "-SkipConfig invoked hook configuration" }
