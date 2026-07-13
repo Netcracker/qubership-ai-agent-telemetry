@@ -36,3 +36,4 @@ telemetry-backend/.env
 
 # Internal SDD scratch (briefs, reports, review diffs — never shipped)
 /.superpowers/
+/.worktrees/
