@@ -1,9 +1,65 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
+
+type hookInstallResult struct {
+	Target  hookTarget
+	Path    string
+	Changed bool
+	Err     error
+}
+
+func hookPath(home string, target hookTarget) string {
+	switch target {
+	case hookClaude:
+		return filepath.Join(home, ".claude", "settings.json")
+	case hookCodex:
+		return filepath.Join(home, ".codex", "hooks.json")
+	case hookCursor:
+		return filepath.Join(home, ".cursor", "hooks.json")
+	default:
+		return ""
+	}
+}
+
+func installHooks(home string, targets []hookTarget) []hookInstallResult {
+	requested := make(map[hookTarget]bool, len(targets))
+	for _, target := range targets {
+		requested[target] = true
+	}
+	results := make([]hookInstallResult, 0, len(requested))
+	for _, target := range allHookTargets {
+		if !requested[target] {
+			continue
+		}
+		path := hookPath(home, target)
+		merge := mergeClaudeHook
+		switch target {
+		case hookCodex:
+			merge = mergeCodexHook
+		case hookCursor:
+			merge = mergeCursorHook
+		}
+		changed, err := updateHookFile(path, merge)
+		results = append(results, hookInstallResult{Target: target, Path: path, Changed: changed, Err: err})
+	}
+	return results
+}
+
+func hookInstallError(results []hookInstallResult) error {
+	var errs []error
+	for _, result := range results {
+		if result.Err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", result.Target, result.Err))
+		}
+	}
+	return errors.Join(errs...)
+}
 
 type hookTarget string
 

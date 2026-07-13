@@ -1,10 +1,60 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestInstallHooksContinuesAfterFailure(t *testing.T) {
+	home := t.TempDir()
+	claudePath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(claudePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claudePath, []byte("{not json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	results := installHooks(home, []hookTarget{hookCursor, hookClaude, hookCodex})
+	if len(results) != 3 || results[0].Target != hookClaude || results[1].Target != hookCodex || results[2].Target != hookCursor {
+		t.Fatalf("results = %#v, want canonical order", results)
+	}
+	if results[0].Err == nil || results[1].Err != nil || results[2].Err != nil {
+		t.Fatalf("results = %#v, want only Claude error", results)
+	}
+	if !results[1].Changed || !results[2].Changed {
+		t.Fatalf("successful results = %#v, want changed", results)
+	}
+
+	err := hookInstallError(results)
+	if err == nil || !strings.Contains(err.Error(), "claude") || strings.Contains(err.Error(), "codex") || strings.Contains(err.Error(), "cursor") {
+		t.Fatalf("error = %v, want only Claude", err)
+	}
+	assertInstalledHook(t, filepath.Join(home, ".codex", "hooks.json"), inspectCodexHook)
+	assertInstalledHook(t, filepath.Join(home, ".cursor", "hooks.json"), inspectCursorHook)
+}
+
+func assertInstalledHook(t *testing.T, path string, inspect func(map[string]any) bool) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&root); err != nil {
+		t.Fatal(err)
+	}
+	if !inspect(root) {
+		t.Fatalf("hook is not installed: %s", data)
+	}
+}
 
 func TestParseHookTargets(t *testing.T) {
 	tests := []struct {

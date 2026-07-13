@@ -31,10 +31,32 @@ func TestRunUnknownCommand(t *testing.T) {
 }
 
 func TestRunHooksInstallAcceptsTargets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	var out string
 	code := run([]string{"hooks", "install", "--target=codex,claude"}, func(s string) { out += s })
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+	}
+	if !strings.Contains(out, "claude: installed") || !strings.Contains(out, "codex: installed") {
+		t.Fatalf("output = %q, want install results", out)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("unrequested Cursor hook exists: %v", err)
+	}
+}
+
+func TestRunHooksReportsUnavailableHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	var out string
+	code := run([]string{"hooks", "install"}, func(s string) { out += s })
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(out, "no user home directory") {
+		t.Fatalf("output = %q, want home error", out)
 	}
 }
 

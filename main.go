@@ -74,9 +74,31 @@ func run(args []string, stdout func(string)) int {
 		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy()), false))
 		return 0
 	case "hooks":
-		if _, err := parseHooksCommand(args[1:]); err != nil {
+		targets, err := parseHooksCommand(args[1:])
+		if err != nil {
 			stdout("hooks: " + err.Error() + "\n")
 			return 2
+		}
+		home := userHomeDir()
+		if home == "" {
+			stdout("hooks: no user home directory available\n")
+			return 1
+		}
+		results := installHooks(home, targets)
+		for _, result := range results {
+			if result.Err != nil {
+				stdout(fmt.Sprintf("%s: failed: %s\n", result.Target, result.Path))
+				continue
+			}
+			state := "unchanged"
+			if result.Changed {
+				state = "installed"
+			}
+			stdout(fmt.Sprintf("%s: %s: %s\n", result.Target, state, result.Path))
+		}
+		if err := hookInstallError(results); err != nil {
+			stdout("hooks: " + err.Error() + "\n")
+			return 1
 		}
 		return 0
 	case "selftest":
