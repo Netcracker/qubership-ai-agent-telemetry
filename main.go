@@ -134,7 +134,11 @@ func run(args []string, stdout func(string)) int {
 		stdout("selftest: ok — probe accepted by the collector and cleared from the outbox\n")
 		return 0
 	case "ingest":
-		agent, endpoint := parseFlags(args[1:])
+		agent, endpoint, err := parseIngestFlags(args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "ingest:", err)
+			return 0
+		}
 		endpoint = resolveEndpoint(endpoint)
 		s, err := DefaultOutbox()
 		if err != nil {
@@ -181,6 +185,17 @@ func parseStatusFlags(args []string) bool {
 		}
 	}
 	return false
+}
+
+// parseIngestFlags keeps the execpolicy-approved Codex hook shape exact. Codex
+// execution policy matches command prefixes, so accepting a trailing endpoint
+// override would let an approved hook redirect buffered events and credentials.
+func parseIngestFlags(args []string) (agent, endpoint string, err error) {
+	if len(args) > 0 && args[0] == "--agent=codex" && len(args) != 1 {
+		return "", "", fmt.Errorf("the Codex hook does not accept additional arguments")
+	}
+	agent, endpoint = parseFlags(args)
+	return agent, endpoint, nil
 }
 
 // parseFlags reads --agent= and --endpoint= without a flag framework (minimal).

@@ -63,6 +63,37 @@ func TestMergeCodexHookCanonicalizesOwnedEntries(t *testing.T) {
 	}
 }
 
+func TestMergeCodexHookPreservesUnrelatedHandlerInAPMGroup(t *testing.T) {
+	userHandler := map[string]any{
+		"type":      "command",
+		"command":   "user-hook",
+		"extension": "keep",
+	}
+	root := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{
+				map[string]any{
+					"_apm_source": hookAPMSource,
+					"hooks":       []any{canonicalCodexHandler(), userHandler},
+				},
+			},
+		},
+	}
+
+	changed, err := mergeCodexHook(root)
+	if err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+	group := root["hooks"].(map[string]any)["Stop"].([]any)[0].(map[string]any)
+	if _, exists := group["_apm_source"]; exists {
+		t.Fatalf("APM marker remains: %#v", group)
+	}
+	want := []any{userHandler, canonicalCodexHandler()}
+	if handlers := group["hooks"].([]any); !reflect.DeepEqual(handlers, want) {
+		t.Fatalf("handlers = %#v, want %#v", handlers, want)
+	}
+}
+
 func TestMergeCodexHookRejectsIncompatibleStructure(t *testing.T) {
 	tests := []struct {
 		name string

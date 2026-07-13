@@ -10,13 +10,14 @@ The CLI registers one global harness-specific hook in each native user configura
 | Harness | Global file |
 | --- | --- |
 | Claude Code | `~/.claude/settings.json` |
-| Codex | `~/.codex/hooks.json` |
+| Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` |
 | Cursor | `~/.cursor/hooks.json` |
 
 One platform-installer run puts the binary on `PATH` and registers all three hooks, even when a
 harness is not installed yet. Each hook calls the CLI by its bare name,
 `ai-agent-telemetry ingest --agent=<name>`, which works across Git Bash, PowerShell, `cmd.exe`,
-and POSIX `sh`.
+and POSIX `sh`. The Codex policy file allows only the hook and two diagnostic commands to access
+the machine configuration and collector outside its sandbox.
 
 The CLI reads the agent's payload on stdin, detects any skill that ran, queues the event to an
 on-disk outbox, and flushes opportunistically over OTLP/HTTPS. It always exits 0, so it never

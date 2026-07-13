@@ -99,16 +99,6 @@ func TestMergeClaudeHookCanonicalizesOwnedHandlers(t *testing.T) {
 				canonicalClaudeHandler(),
 			},
 		},
-		{
-			name: "APM source marker",
-			handlers: []any{
-				map[string]any{
-					"type":      "command",
-					"command":   "some-installed-command",
-					"extension": "discard with owned handler",
-				},
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -118,9 +108,6 @@ func TestMergeClaudeHookCanonicalizesOwnedHandlers(t *testing.T) {
 						map[string]any{"matcher": "Skill", "hooks": tt.handlers},
 					},
 				},
-			}
-			if tt.name == "APM source marker" {
-				root["hooks"].(map[string]any)["PreToolUse"].([]any)[0].(map[string]any)["_apm_source"] = "ai-agent-telemetry"
 			}
 			changed, err := mergeClaudeHook(root)
 			if err != nil {
@@ -135,6 +122,38 @@ func TestMergeClaudeHookCanonicalizesOwnedHandlers(t *testing.T) {
 				t.Fatalf("handlers = %#v, want %#v", handlers, want)
 			}
 		})
+	}
+}
+
+func TestMergeClaudeHookPreservesUnrelatedHandlerInAPMGroup(t *testing.T) {
+	userHandler := map[string]any{
+		"type":      "command",
+		"command":   "user-hook",
+		"extension": "keep",
+	}
+	root := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []any{
+				map[string]any{
+					"matcher":     "Skill",
+					"_apm_source": hookAPMSource,
+					"hooks":       []any{canonicalClaudeHandler(), userHandler},
+				},
+			},
+		},
+	}
+
+	changed, err := mergeClaudeHook(root)
+	if err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+	group := root["hooks"].(map[string]any)["PreToolUse"].([]any)[0].(map[string]any)
+	if _, exists := group["_apm_source"]; exists {
+		t.Fatalf("APM marker remains: %#v", group)
+	}
+	want := []any{userHandler, canonicalClaudeHandler()}
+	if handlers := group["hooks"].([]any); !reflect.DeepEqual(handlers, want) {
+		t.Fatalf("handlers = %#v, want %#v", handlers, want)
 	}
 }
 

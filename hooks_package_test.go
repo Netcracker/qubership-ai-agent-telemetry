@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,29 @@ func TestLegacyHookPackageParity(t *testing.T) {
 				t.Fatalf("%s hook package %s: command = %q, want %q", tt.target, path, command, want)
 			}
 		})
+	}
+}
+
+func TestCodexPolicyReferenceParity(t *testing.T) {
+	path := filepath.Join(
+		"agent-packages", "ai-agent-telemetry-configure", ".apm", "skills",
+		"ai-agent-telemetry-configure", "references", "codex-sandbox.md",
+	)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const start = "```python\n"
+	_, remaining, found := strings.Cut(string(data), start)
+	if !found {
+		t.Fatalf("%s does not contain a Python rule block", path)
+	}
+	rule, _, found := strings.Cut(remaining, "```\n")
+	if !found {
+		t.Fatalf("%s has an unterminated Python rule block", path)
+	}
+	if rule != codexExecutionPolicy {
+		t.Fatalf("%s rule differs from the CLI-managed policy", path)
 	}
 }
 

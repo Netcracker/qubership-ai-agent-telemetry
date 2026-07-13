@@ -24,8 +24,7 @@ iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releas
 2. Run `ai-agent-telemetry status` and `ai-agent-telemetry selftest`.
 3. Fully restart your harness, then review or approve the hook if prompted.
 
-Codex may ask you to approve the exact command `ai-agent-telemetry ingest --agent=codex`. See
-[Installation](#installation) for configuration options, hook repair, and verification details.
+See [Installation](#installation) for configuration options, hook repair, and verification details.
 
 ## Architecture
 
@@ -177,8 +176,7 @@ ai-agent-telemetry hooks install --target=claude,codex
 
 ### Optional setup skill
 
-Install the setup skill when you want an agent-guided repair flow, Codex sandbox checks, or
-collector CA help:
+Install the setup skill when you want an agent-guided repair flow or collector CA help:
 
 ```sh
 apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure --target claude

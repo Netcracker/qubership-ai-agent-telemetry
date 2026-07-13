@@ -73,6 +73,11 @@ func installHooks(home string, targets []hookTarget) []hookInstallResult {
 			merge = mergeCursorHook
 		}
 		changed, err := updateHookFile(path, merge)
+		if target == hookCodex {
+			ruleChanged, ruleErr := updateCodexRule(codexRulePath(home))
+			changed = changed || ruleChanged
+			err = errors.Join(err, ruleErr)
+		}
 		results = append(results, hookInstallResult{Target: target, Path: path, Changed: changed, Err: err})
 	}
 	return results
@@ -120,6 +125,14 @@ func gatherHookStatus(home string) []hookStatus {
 			status.State = hookInvalid
 			status.Detail = detail
 		} else if valid {
+			if target == hookCodex {
+				if _, detail := inspectCodexRule(codexRulePath(home)); detail != "" {
+					status.State = hookInvalid
+					status.Detail = detail
+					statuses = append(statuses, status)
+					continue
+				}
+			}
 			status.State = hookInstalled
 		}
 		statuses = append(statuses, status)
@@ -248,9 +261,17 @@ func parseHooksCommand(args []string) ([]hookTarget, error) {
 	}
 
 	rawTargets := ""
+	targetFlagSet := false
 	for _, arg := range args[1:] {
 		if strings.HasPrefix(arg, "--target=") {
+			if targetFlagSet {
+				return nil, fmt.Errorf("hook target flag may be specified only once")
+			}
 			rawTargets = strings.TrimPrefix(arg, "--target=")
+			if rawTargets == "" {
+				return nil, fmt.Errorf("hook target value must not be empty")
+			}
+			targetFlagSet = true
 			continue
 		}
 		return nil, fmt.Errorf("unknown hooks install flag %q", arg)

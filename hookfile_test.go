@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -83,6 +84,70 @@ func TestUpdateHookFilePreservesExistingMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertPerm(t, path, 0o640)
+}
+
+func TestUpdateHookFilePreservesSymlinkAndUpdatesTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks on Windows may require elevated privileges")
+	}
+	managedDir := t.TempDir()
+	target := filepath.Join(managedDir, "settings.json")
+	if err := os.WriteFile(target, []byte("{\"managed\":true}\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := t.TempDir()
+	link := filepath.Join(linkDir, "settings.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := updateHookFile(link, func(root map[string]any) (bool, error) {
+		root["updated"] = true
+		return true, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("%s is no longer a symlink", link)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(got, []byte(`"updated": true`)) {
+		t.Fatalf("target was not updated: %s", got)
+	}
+	assertPerm(t, target, 0o640)
+}
+
+func TestUpdateHookFileRejectsDanglingSymlinkWithoutReplacingIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks on Windows may require elevated privileges")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.Symlink(filepath.Join(dir, "missing.json"), path); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := updateHookFile(path, mergeClaudeHook); err == nil || !strings.Contains(err.Error(), "resolve symlink") {
+		t.Fatalf("error = %v, want dangling symlink error", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("%s is no longer a symlink", path)
+	}
 }
 
 func TestUpdateHookFileLeavesMalformedJSONUnchanged(t *testing.T) {

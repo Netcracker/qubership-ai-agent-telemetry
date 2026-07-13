@@ -30,7 +30,7 @@ func mergeCodexHook(root map[string]any) (bool, error) {
 		foundOwned := ownedGroup
 		for _, handlerValue := range handlers {
 			handler := handlerValue.(map[string]any)
-			if ownedGroup || isOwnedCodexHandler(handler) {
+			if isOwnedCodexHandler(handler) {
 				foundOwned = true
 				continue
 			}

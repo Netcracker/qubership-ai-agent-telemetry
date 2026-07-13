@@ -35,7 +35,7 @@ func mergeClaudeHook(root map[string]any) (bool, error) {
 		filtered := make([]any, 0, len(handlers)+1)
 		for _, handlerValue := range handlers {
 			handler := handlerValue.(map[string]any)
-			if ownedByAPM || isOwnedClaudeHandler(handler) {
+			if isOwnedClaudeHandler(handler) {
 				continue
 			}
 			filtered = append(filtered, handler)

@@ -58,7 +58,12 @@ function Ensure-Path([string]$BinDir) {
 
 function Configure-OrRefreshHooks([string]$Bin) {
   $values = Read-EnvFile (Join-Path (Config-Dir) 'env')
-  if ([string]::IsNullOrWhiteSpace($values['AI_AGENT_TELEMETRY_ENDPOINT'])) {
+  $endpoint = if ($env:AI_AGENT_TELEMETRY_ENDPOINT) {
+    $env:AI_AGENT_TELEMETRY_ENDPOINT
+  } else {
+    $values['AI_AGENT_TELEMETRY_ENDPOINT']
+  }
+  if ([string]::IsNullOrWhiteSpace($endpoint)) {
     & $Bin configure
   } else {
     & $Bin hooks install

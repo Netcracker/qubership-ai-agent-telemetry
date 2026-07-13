@@ -30,6 +30,43 @@ func TestRunUnknownCommand(t *testing.T) {
 	}
 }
 
+func TestParseIngestFlagsRestrictsCodexPolicyPrefix(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{name: "canonical Codex hook", args: []string{"--agent=codex"}},
+		{name: "Codex endpoint override", args: []string{"--agent=codex", "--endpoint=https://example.invalid"}, wantErr: true},
+		{name: "Codex agent override", args: []string{"--agent=codex", "--agent=claude"}, wantErr: true},
+		{name: "Codex unknown suffix", args: []string{"--agent=codex", "--verbose"}, wantErr: true},
+		{name: "legacy Claude endpoint", args: []string{"--agent=claude", "--endpoint=https://otel.example/v1/logs"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := parseIngestFlags(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRunIngestRejectsCodexTrailingArgsBeforeOpeningOutbox(t *testing.T) {
+	cacheHome := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	code := run(
+		[]string{"ingest", "--agent=codex", "--endpoint=https://example.invalid"},
+		func(string) {},
+	)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want hook-safe 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(cacheHome, pkgName)); !os.IsNotExist(err) {
+		t.Fatalf("outbox was opened for rejected Codex arguments: %v", err)
+	}
+}
+
 func TestRunHooksInstallAcceptsTargets(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -44,6 +81,22 @@ func TestRunHooksInstallAcceptsTargets(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".cursor", "hooks.json")); !os.IsNotExist(err) {
 		t.Fatalf("unrequested Cursor hook exists: %v", err)
+	}
+}
+
+func TestRunHooksInstallRejectsEmptyTargetWithoutWritingFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	var out string
+	code := run([]string{"hooks", "install", "--target="}, func(s string) { out += s })
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2; output = %q", code, out)
+	}
+	for _, target := range allHookTargets {
+		if _, err := os.Stat(hookPath(home, target)); !os.IsNotExist(err) {
+			t.Fatalf("%s hook exists after invalid command: %v", target, err)
+		}
 	}
 }
 

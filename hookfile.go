@@ -13,10 +13,14 @@ import (
 type hookMergeFunc func(map[string]any) (bool, error)
 
 func updateHookFile(path string, merge hookMergeFunc) (bool, error) {
+	writePath, err := resolveHookWritePath(path)
+	if err != nil {
+		return false, err
+	}
 	root := map[string]any{}
 	mode := os.FileMode(0o600)
-	if data, err := os.ReadFile(path); err == nil {
-		info, statErr := os.Stat(path)
+	if data, err := os.ReadFile(writePath); err == nil {
+		info, statErr := os.Stat(writePath)
 		if statErr != nil {
 			return false, statErr
 		}
@@ -44,7 +48,25 @@ func updateHookFile(path string, merge hookMergeFunc) (bool, error) {
 	if err != nil || !changed {
 		return changed, err
 	}
-	return true, writeJSONAtomically(path, root, mode)
+	return true, writeJSONAtomically(writePath, root, mode)
+}
+
+func resolveHookWritePath(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return path, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve symlink %s: %w", path, err)
+	}
+	return resolved, nil
 }
 
 func requireJSONEOF(decoder *json.Decoder) error {
@@ -64,7 +86,10 @@ func writeJSONAtomically(path string, root map[string]any, mode os.FileMode) err
 		return err
 	}
 	data = append(data, '\n')
+	return writeFileAtomically(path, data, mode)
+}
 
+func writeFileAtomically(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err

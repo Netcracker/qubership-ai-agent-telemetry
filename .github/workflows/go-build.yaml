@@ -98,4 +98,4 @@ jobs:
         env:
           HOME: ${{ runner.temp }}/hook-home
           USERPROFILE: ${{ runner.temp }}/hook-user-profile
-        run: go test ./... -run 'Hook|Configure' -count=1
+        run: go test ./... -run '^Test.*(Hook|Configure($|[A-Z]))' -count=1

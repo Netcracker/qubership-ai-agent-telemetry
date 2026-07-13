@@ -5,7 +5,7 @@ This package delivers the optional setup, repair, and verification skill for the
 configuration, and global hook registration; this package provides agent-guided diagnosis.
 
 Most users only need the standalone installer. Add this package when you want the agent to guide
-repair, Codex sandbox checks, or collector CA troubleshooting.
+repair or collector CA troubleshooting.
 
 Supported agents: Codex, Claude Code, and Cursor. An OpenCode adapter is
 follow-up work.

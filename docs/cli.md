@@ -31,7 +31,7 @@ upgrades, so these commands rarely need to be run by hand.
 | Command | Purpose |
 | --- | --- |
 | `configure` | Write the per-machine endpoint, repository policy, optional CA, and optional token. Install all global hooks by default; use `--hooks=all`, `--hooks=none`, or `--hooks=<list>`. |
-| `hooks install` | Install or repair global hooks without reading or changing the endpoint, token, CA, or repository policy. Use `--target=<list>` to select harnesses. |
+| `hooks install` | Install or repair global hooks and required harness policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
 | `status` | Read-only check of configuration, delivery backlog, and each global hook. Sends nothing. Use `--verbose` for native paths and parse errors. |
 | `selftest` | Send one marked probe event and report whether the collector accepted it and it left the outbox. |
 | `ingest` | The hook path: read an agent hook payload on stdin, detect skill use (on Codex the `SKILL.md` reads in the session rollout; on Claude Code the `Skill` tool name in the `PreToolUse` payload; on Cursor the `SKILL.md` reads in the `afterAgentResponse` transcript), queue the events, and flush opportunistically. Always exits 0 so it never fails an agent turn. |
@@ -50,7 +50,7 @@ The CLI manages one user-level native file per harness on every supported operat
 | Harness | File | Registration |
 | --- | --- | --- |
 | Claude Code | `~/.claude/settings.json` | `PreToolUse`, matcher `Skill` |
-| Codex | `~/.codex/hooks.json` | `Stop` |
+| Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` | `Stop` and its execution policy |
 | Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, with numeric top-level `version` |
 
 Normal installation registers all three hooks; no separate hook command is required. For a custom
@@ -70,9 +70,9 @@ If a file contains malformed JSON or an incompatible native structure, the CLI l
 byte-for-byte unchanged and reports that target as failed. It continues with the other selected
 targets and returns a nonzero exit code after reporting every failure.
 
-`status` reports `installed`, `missing`, or `invalid` for each harness. It verifies registration,
-not execution or trust. `selftest` verifies collector delivery, not hook registration. Fully
-restart a harness after changing its hook so it reloads the file and refreshed `PATH`.
+`status` reports `installed`, `missing`, or `invalid` for each harness. It verifies registration
+and required policy files, not execution or trust. `selftest` verifies collector delivery, not hook
+registration. Fully restart a harness after changing its hook so it reloads the file and refreshed `PATH`.
 
 The CLI does not edit Codex's private trust state. If Codex prompts after installation or a
 command change, inspect and approve exactly `ai-agent-telemetry ingest --agent=codex`.

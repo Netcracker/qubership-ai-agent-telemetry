@@ -97,7 +97,10 @@ ensure_path() {
 
 configure_or_refresh_hooks() {
   env_file="$(config_dir)/env"
-  endpoint="$(env_value AI_AGENT_TELEMETRY_ENDPOINT "$env_file")"
+  endpoint="${AI_AGENT_TELEMETRY_ENDPOINT:-}"
+  if [ -z "$endpoint" ]; then
+    endpoint="$(env_value AI_AGENT_TELEMETRY_ENDPOINT "$env_file")"
+  fi
   if [ -z "$endpoint" ]; then
     "$BIN" configure
   else

@@ -31,13 +31,13 @@ not be overwritten, and one harness failure must not prevent independent harness
 
 ## Decision
 
-The `ai-agent-telemetry` CLI owns global telemetry hook registration. It writes these native user
-files on every supported operating system:
+The `ai-agent-telemetry` CLI owns global telemetry hook registration and required harness policy
+files. It writes these user-level files on every supported operating system:
 
 | Harness | Global file | Registration |
 | --- | --- | --- |
 | Claude Code | `~/.claude/settings.json` | `PreToolUse`, matcher `Skill` |
-| Codex | `~/.codex/hooks.json` | `Stop` |
+| Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` | `Stop` and its execution policy |
 | Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, with numeric top-level `version` |
 
 `ai-agent-telemetry configure` installs all supported hooks by default after it writes machine
@@ -59,10 +59,10 @@ The platform installers choose between configuration and repair. A missing endpo
 `configure`; an existing endpoint invokes `hooks install`. Their skip-config options skip both
 configuration and hook writes.
 
-The CLI reports registration, not execution or trust. `status` reports each hook as `installed`,
-`missing`, or `invalid`; `selftest` proves collector delivery. Harnesses must be fully restarted
-after hook changes. The CLI does not modify Codex's private trust state. Codex users inspect and
-approve `ai-agent-telemetry ingest --agent=codex` when prompted.
+The CLI reports registration and required policy state, not execution or trust. `status` reports
+each hook as `installed`, `missing`, or `invalid`; `selftest` proves collector delivery. Harnesses
+must be fully restarted after hook changes. The CLI does not modify private harness trust state.
+Users inspect and approve the telemetry command when prompted.
 
 The `agent-packages/ai-agent-telemetry` APM hook package remains as a legacy compatibility surface
 for existing consumers. New setups use the machine-wide hooks installed with the CLI. A parity

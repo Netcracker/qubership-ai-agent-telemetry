@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -37,6 +38,40 @@ func TestInstallHooksContinuesAfterFailure(t *testing.T) {
 	}
 	assertInstalledHook(t, filepath.Join(home, ".codex", "hooks.json"), inspectCodexHook)
 	assertInstalledHook(t, filepath.Join(home, ".cursor", "hooks.json"), inspectCursorHook)
+}
+
+func TestInstallHooksWritesCodexExecutionPolicy(t *testing.T) {
+	home := t.TempDir()
+	results := installHooks(home, []hookTarget{hookCodex})
+	if err := hookInstallError(results); err != nil {
+		t.Fatal(err)
+	}
+	path := codexRulePath(home)
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != codexExecutionPolicy {
+		t.Fatalf("rule = %q, want canonical policy", got)
+	}
+	if !strings.Contains(string(got), `"ai-agent-telemetry.exe"`) {
+		t.Fatalf("rule does not allow the Windows executable: %s", got)
+	}
+	if !strings.Contains(string(got), `"ingest", "--agent=codex"`) {
+		t.Fatalf("rule does not allow Codex ingest: %s", got)
+	}
+	if runtime.GOOS != "windows" {
+		assertPerm(t, filepath.Dir(path), 0o700)
+		assertPerm(t, path, 0o600)
+	}
+
+	results = installHooks(home, []hookTarget{hookCodex})
+	if err := hookInstallError(results); err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Changed {
+		t.Fatalf("second install results = %#v, want unchanged", results)
+	}
 }
 
 func TestGatherHookStatusReportsInstalledMissingAndInvalid(t *testing.T) {
@@ -80,6 +115,22 @@ func TestGatherHookStatusDoesNotCreateFiles(t *testing.T) {
 		if _, err := os.Stat(filepath.Dir(status.Path)); !os.IsNotExist(err) {
 			t.Fatalf("status created %s: %v", filepath.Dir(status.Path), err)
 		}
+	}
+}
+
+func TestGatherHookStatusRequiresCodexExecutionPolicy(t *testing.T) {
+	home := t.TempDir()
+	if _, err := updateHookFile(hookPath(home, hookCodex), mergeCodexHook); err != nil {
+		t.Fatal(err)
+	}
+
+	statuses := gatherHookStatus(home)
+	status := statuses[1]
+	if status.Target != hookCodex || status.State != hookInvalid {
+		t.Fatalf("Codex status = %#v, want invalid", status)
+	}
+	if !strings.Contains(status.Detail, codexRulePath(home)) {
+		t.Fatalf("Codex detail = %q, want missing rule path", status.Detail)
 	}
 }
 
@@ -174,6 +225,9 @@ func TestParseHooksCommand(t *testing.T) {
 		{name: "unknown action", args: []string{"remove"}, wantErr: true},
 		{name: "unknown flag", args: []string{"install", "--bogus"}, wantErr: true},
 		{name: "unknown target", args: []string{"install", "--target=windsurf"}, wantErr: true},
+		{name: "empty explicit target", args: []string{"install", "--target="}, wantErr: true},
+		{name: "empty target before valid target", args: []string{"install", "--target=", "--target=codex"}, wantErr: true},
+		{name: "duplicate target flag", args: []string{"install", "--target=codex", "--target=claude"}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
