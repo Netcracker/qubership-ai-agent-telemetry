@@ -39,6 +39,50 @@ func TestInstallHooksContinuesAfterFailure(t *testing.T) {
 	assertInstalledHook(t, filepath.Join(home, ".cursor", "hooks.json"), inspectCursorHook)
 }
 
+func TestGatherHookStatusReportsInstalledMissingAndInvalid(t *testing.T) {
+	home := t.TempDir()
+	results := installHooks(home, allHookTargets)
+	if err := hookInstallError(results); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(hookPath(home, hookCodex)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hookPath(home, hookCursor), []byte("{not json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := gatherHookStatus(home)
+	if len(got) != 3 {
+		t.Fatalf("statuses = %#v, want three", got)
+	}
+	wantStates := []hookState{hookInstalled, hookMissing, hookInvalid}
+	for i, target := range allHookTargets {
+		if got[i].Target != target || got[i].Path != hookPath(home, target) || got[i].State != wantStates[i] {
+			t.Fatalf("status[%d] = %#v", i, got[i])
+		}
+	}
+	if got[0].Detail != "" || got[1].Detail != "" {
+		t.Fatalf("non-invalid details = %#v", got)
+	}
+	if !strings.Contains(got[2].Detail, "parse") {
+		t.Fatalf("Cursor detail = %q, want parse error", got[2].Detail)
+	}
+}
+
+func TestGatherHookStatusDoesNotCreateFiles(t *testing.T) {
+	home := t.TempDir()
+	got := gatherHookStatus(home)
+	for i, status := range got {
+		if status.State != hookMissing {
+			t.Fatalf("status[%d] = %#v, want missing", i, status)
+		}
+		if _, err := os.Stat(filepath.Dir(status.Path)); !os.IsNotExist(err) {
+			t.Fatalf("status created %s: %v", filepath.Dir(status.Path), err)
+		}
+	}
+}
+
 func assertInstalledHook(t *testing.T, path string, inspect func(map[string]any) bool) {
 	t.Helper()
 	data, err := os.ReadFile(path)

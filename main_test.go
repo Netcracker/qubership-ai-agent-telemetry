@@ -47,6 +47,99 @@ func TestRunHooksInstallAcceptsTargets(t *testing.T) {
 	}
 }
 
+func TestRunConfigureInstallsHooks(t *testing.T) {
+	home, configHome := isolateRunConfigure(t)
+	var out string
+	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+	}
+	for _, target := range allHookTargets {
+		if _, err := os.Stat(hookPath(home, target)); err != nil {
+			t.Fatalf("%s hook not installed: %v", target, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(configHome, pkgName, "env")); err != nil {
+		t.Fatalf("telemetry env not written: %v", err)
+	}
+	if !strings.Contains(out, "restart Codex and approve `ai-agent-telemetry ingest --agent=codex` if prompted") {
+		t.Fatalf("output = %q, want Codex restart reminder", out)
+	}
+}
+
+func TestRunConfigureInstallsHooksNone(t *testing.T) {
+	home, _ := isolateRunConfigure(t)
+	var out string
+	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks=none"}, func(s string) { out += s })
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+	}
+	for _, target := range allHookTargets {
+		if _, err := os.Stat(hookPath(home, target)); !os.IsNotExist(err) {
+			t.Fatalf("%s hook exists with --hooks=none: %v", target, err)
+		}
+	}
+}
+
+func TestRunConfigureInstallsHooksSubset(t *testing.T) {
+	home, _ := isolateRunConfigure(t)
+	var out string
+	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks=claude,cursor"}, func(s string) { out += s })
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+	}
+	for _, target := range []hookTarget{hookClaude, hookCursor} {
+		if _, err := os.Stat(hookPath(home, target)); err != nil {
+			t.Fatalf("%s hook not installed: %v", target, err)
+		}
+	}
+	if _, err := os.Stat(hookPath(home, hookCodex)); !os.IsNotExist(err) {
+		t.Fatalf("unrequested Codex hook exists: %v", err)
+	}
+}
+
+func TestRunConfigureInstallsHooksContinuesAfterMalformedClaudeFile(t *testing.T) {
+	home, configHome := isolateRunConfigure(t)
+	claudePath := hookPath(home, hookClaude)
+	if err := os.MkdirAll(filepath.Dir(claudePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claudePath, []byte("{not json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out string
+	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; output = %q", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(configHome, pkgName, "env")); err != nil {
+		t.Fatalf("telemetry env not written: %v", err)
+	}
+	for _, target := range []hookTarget{hookCodex, hookCursor} {
+		if _, err := os.Stat(hookPath(home, target)); err != nil {
+			t.Fatalf("%s hook not installed after Claude failure: %v", target, err)
+		}
+	}
+	if !strings.Contains(out, "claude: invalid") || !strings.Contains(out, "codex: installed") || !strings.Contains(out, "cursor: installed") {
+		t.Fatalf("output = %q, want aggregate hook status", out)
+	}
+}
+
+func isolateRunConfigure(t *testing.T) (string, string) {
+	t.Helper()
+	home := t.TempDir()
+	configHome := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("AI_AGENT_TELEMETRY_ENDPOINT", "")
+	t.Setenv("AI_AGENT_TELEMETRY_TOKEN", "")
+	t.Setenv(envRepoAllow, "")
+	return home, configHome
+}
+
 func TestRunHooksReportsUnavailableHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	t.Setenv("USERPROFILE", "")

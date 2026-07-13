@@ -1,11 +1,29 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
+
+type hookState string
+
+const (
+	hookInstalled hookState = "installed"
+	hookMissing   hookState = "missing"
+	hookInvalid   hookState = "invalid"
+)
+
+type hookStatus struct {
+	Target hookTarget
+	Path   string
+	State  hookState
+	Detail string
+}
 
 type hookInstallResult struct {
 	Target  hookTarget
@@ -59,6 +77,89 @@ func hookInstallError(results []hookInstallResult) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func gatherHookStatus(home string) []hookStatus {
+	statuses := make([]hookStatus, 0, len(allHookTargets))
+	for _, target := range allHookTargets {
+		path := hookPath(home, target)
+		status := hookStatus{Target: target, Path: path, State: hookMissing}
+		root, err := readHookRoot(path)
+		if errors.Is(err, os.ErrNotExist) {
+			statuses = append(statuses, status)
+			continue
+		}
+		if err != nil {
+			status.State = hookInvalid
+			status.Detail = err.Error()
+			statuses = append(statuses, status)
+			continue
+		}
+
+		valid, detail := inspectHookTarget(root, target)
+		if detail != "" {
+			status.State = hookInvalid
+			status.Detail = detail
+		} else if valid {
+			status.State = hookInstalled
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses
+}
+
+func readHookRoot(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	root, ok := decoded.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("parse %s: root must be an object", path)
+	}
+	return root, nil
+}
+
+func inspectHookTarget(root map[string]any, target hookTarget) (bool, string) {
+	copyRoot := cloneJSONObject(root)
+	var changed bool
+	var err error
+	var installed bool
+	switch target {
+	case hookClaude:
+		changed, err = mergeClaudeHook(copyRoot)
+		installed = inspectClaudeHook(root)
+	case hookCodex:
+		changed, err = mergeCodexHook(copyRoot)
+		installed = inspectCodexHook(root)
+	case hookCursor:
+		changed, err = mergeCursorHook(copyRoot)
+		installed = inspectCursorHook(root)
+	default:
+		return false, fmt.Sprintf("unknown hook target %q", target)
+	}
+	if err != nil {
+		return false, err.Error()
+	}
+	return installed && !changed, ""
+}
+
+func codexHookChanged(results []hookInstallResult) bool {
+	for _, result := range results {
+		if result.Target == hookCodex && result.Changed && result.Err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 type hookTarget string

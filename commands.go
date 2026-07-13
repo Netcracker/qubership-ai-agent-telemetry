@@ -174,6 +174,7 @@ type statusReport struct {
 	Buffered          int
 	LastFlush         string
 	LastDeliveryError string
+	Hooks             []hookStatus
 }
 
 // gatherStatus inspects the outbox and config dir against an already-resolved
@@ -186,6 +187,7 @@ func gatherStatus(s *Outbox, configDir, endpoint string, policy telemetryPolicy)
 		Configured: endpoint != "",
 		RepoScope:  policy.repoScope(),
 		LastFlush:  "never",
+		Hooks:      gatherHookStatus(userHomeDir()),
 	}
 	if configDir != "" {
 		if _, err := os.Stat(filepath.Join(configDir, caFileName)); err == nil {
@@ -223,6 +225,17 @@ func formatStatus(r statusReport, verbose bool) string {
 	fmt.Fprintf(&b, "ca: %s\n", caState(r.CAFound))
 	fmt.Fprintf(&b, "buffered: %d\n", r.Buffered)
 	fmt.Fprintf(&b, "last_flush_attempt: %s\n", r.LastFlush)
+	fmt.Fprint(&b, "hooks:\n")
+	for _, hook := range r.Hooks {
+		fmt.Fprintf(&b, "  %s: %s", hook.Target, hook.State)
+		if verbose {
+			fmt.Fprintf(&b, " (%s)", hook.Path)
+			if hook.Detail != "" {
+				fmt.Fprintf(&b, ": %s", hook.Detail)
+			}
+		}
+		fmt.Fprintln(&b)
+	}
 	if r.Configured {
 		fmt.Fprint(&b, "state: configured\n")
 	} else {

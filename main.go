@@ -66,12 +66,20 @@ func run(args []string, stdout func(string)) int {
 			fmt.Fprintln(os.Stderr, "configure:", err)
 			return 1
 		}
+		results := installHooks(userHomeDir(), opts.Hooks)
 		s, err := DefaultOutbox()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "outbox:", err)
 			return 1
 		}
 		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy()), false))
+		if err := hookInstallError(results); err != nil {
+			fmt.Fprintln(os.Stderr, "configure hooks:", err)
+			return 1
+		}
+		if codexHookChanged(results) {
+			stdout("restart Codex and approve `ai-agent-telemetry ingest --agent=codex` if prompted\n")
+		}
 		return 0
 	case "hooks":
 		targets, err := parseHooksCommand(args[1:])
@@ -99,6 +107,9 @@ func run(args []string, stdout func(string)) int {
 		if err := hookInstallError(results); err != nil {
 			stdout("hooks: " + err.Error() + "\n")
 			return 1
+		}
+		if codexHookChanged(results) {
+			stdout("restart Codex and approve `ai-agent-telemetry ingest --agent=codex` if prompted\n")
 		}
 		return 0
 	case "selftest":
