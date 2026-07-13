@@ -40,6 +40,16 @@ upgrades, so these commands rarely need to be run by hand.
 | `self-update` | Download the latest release asset for this OS and architecture, verify it against `SHA256SUMS`, and replace the running binary. |
 | `version` | Print the build version. |
 
+Use the built-in help to see a command's current syntax and options:
+
+```sh
+ai-agent-telemetry --help
+ai-agent-telemetry help configure
+ai-agent-telemetry hooks --help
+```
+
+Explicit help prints the requested information and exits without running the command.
+
 When buffered events remain after a failed delivery attempt, `status` points to
 `status --verbose`. The verbose output includes the last recorded delivery error.
 
