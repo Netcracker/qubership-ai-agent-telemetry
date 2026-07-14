@@ -44,9 +44,12 @@ package with consent supplied non-interactively.
 
 ### AI agent telemetry
 
-Run the published telemetry release installer and pass the selected hooks. The telemetry installer remains owned and
-tested by its existing files and workflow; this change treats it as an external component contract. Verify the
-installed CLI with `ai-agent-telemetry status` and `ai-agent-telemetry selftest`.
+Run the published telemetry release installer with its supported skip-configuration option. The telemetry installer
+remains owned and tested by its existing files and workflow; this change treats it as an external component contract.
+For an already configured CLI, install the selected hooks with `ai-agent-telemetry hooks install`. Otherwise,
+interactive mode runs `ai-agent-telemetry configure` with the selected hooks. Non-interactive mode fails promptly
+instead of waiting for configuration input. Verify the installed CLI with `ai-agent-telemetry status` and
+`ai-agent-telemetry selftest`.
 
 `--force-update` maps to the telemetry installer's `--force` or `-Force` option.
 
@@ -61,14 +64,16 @@ Clone `https://github.com/exadmin/pre-commit-global.git` into the platform data 
 the installer prints the old and new values before replacing the setting. A missing `CYBER_FERRET_PASSWORD` produces
 a warning but does not fail installation.
 
-`--force-update` fast-forwards an existing managed clone. Local changes or a divergent clone fail the component
-instead of being discarded.
+Before activation, require a valid Git worktree with the configured repository as its `origin` and no local changes.
+An unrelated directory or repository fails without changing `core.hooksPath`. `--force-update` fast-forwards the
+validated clone. Local changes or a divergent clone fail the component instead of being discarded.
 
 ## Portability and testing
 
 The implementation keeps the installers, tests, and their README under `global-scripts/`. A standalone GitHub Actions
-workflow tests Linux, macOS, and Windows with local fixtures and no external installer calls. Environment overrides
-provide test URLs and a managed Git-hooks directory without test-only branches in production code.
+workflow tests Linux, macOS, Windows PowerShell 5.1, and PowerShell 7 with local fixtures and no external installer
+calls. Environment overrides provide test URLs and a managed Git-hooks directory without test-only branches in
+production code.
 
 Publish the new scripts alongside the existing release assets under their distinct names. Do not rename, replace, or
 change `install.sh`, `install.ps1`, or `.github/workflows/installer-tests.yaml`.

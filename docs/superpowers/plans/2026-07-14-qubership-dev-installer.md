@@ -1,13 +1,15 @@
 # Qubership Developer Installer Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add separate POSIX and PowerShell workstation bootstrap scripts for the Qubership APM baseline, AI agent
 telemetry, and global Git hooks.
 
 **Architecture:** Two self-contained entry points expose the same registry-driven lifecycle and command contract. They
-delegate telemetry installation to its published installer and manage APM and global Git hooks directly. A standalone
-workflow runs black-box tests with local fixtures on Linux, macOS, and Windows.
+delegate telemetry binary installation to its published installer, configure telemetry hooks through its CLI, and
+manage APM and global Git hooks directly. A standalone workflow runs black-box tests with local fixtures on Linux,
+macOS, Windows PowerShell 5.1, and PowerShell 7.
 
 **Tech Stack:** POSIX shell, PowerShell 5.1+, Git, and GitHub Actions.
 
@@ -36,12 +38,12 @@ workflow runs black-box tests with local fixtures on Linux, macOS, and Windows.
   `QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY`, and `QUBERSHIP_DEV_GIT_HOOKS_DIR`.
 - Command handlers: `install_apm`, `install_telemetry`, and `install_git_hooks`.
 
-- [ ] Write black-box tests for defaults, selection, exclusion, harnesses, help, validation, prerequisite retries,
+- [x] Write black-box tests for defaults, selection, exclusion, harnesses, help, validation, prerequisite retries,
   Git-hook conflicts, force update, independent failures, status summaries, and exit codes.
-- [ ] Run `sh global-scripts/tests/qubership-dev-install_test.sh` and verify it fails because the installer is absent.
-- [ ] Implement centralized component metadata, parsing, prerequisite checks, handlers, and summary output.
-- [ ] Run `sh global-scripts/tests/qubership-dev-install_test.sh` and verify all cases pass.
-- [ ] Commit with `feat(installer): add POSIX developer bootstrap`.
+- [x] Run `sh global-scripts/tests/qubership-dev-install_test.sh` and verify it fails because the installer is absent.
+- [x] Implement centralized component metadata, parsing, prerequisite checks, handlers, and summary output.
+- [x] Run `sh global-scripts/tests/qubership-dev-install_test.sh` and verify all cases pass.
+- [x] Commit with `feat(installer): add POSIX developer bootstrap`.
 
 ### Task 2: Implement the PowerShell developer installer
 
@@ -53,11 +55,11 @@ workflow runs black-box tests with local fixtures on Linux, macOS, and Windows.
 - Use the same environment overrides and lifecycle as Task 1.
 - Default Git-hooks directory: `$env:LOCALAPPDATA\Qubership\pre-commit-global`.
 
-- [ ] Write PowerShell black-box tests for the complete POSIX command contract with temporary command shims.
-- [ ] Run `pwsh -NoProfile -File global-scripts/tests/qubership-dev-install.Tests.ps1` and verify RED.
-- [ ] Implement an ordered component registry and platform-specific handlers.
-- [ ] Run the PowerShell test file and verify GREEN.
-- [ ] Commit with `feat(installer): add PowerShell developer bootstrap`.
+- [x] Write PowerShell black-box tests for the complete POSIX command contract with temporary command shims.
+- [x] Run `pwsh -NoProfile -File global-scripts/tests/qubership-dev-install.Tests.ps1` and verify RED.
+- [x] Implement an ordered component registry and platform-specific handlers.
+- [x] Run the PowerShell test file and verify GREEN.
+- [x] Commit with `feat(installer): add PowerShell developer bootstrap`.
 
 ### Task 3: Add a movable cross-platform workflow
 
@@ -68,9 +70,9 @@ workflow runs black-box tests with local fixtures on Linux, macOS, and Windows.
 - Run `global-scripts/tests/qubership-dev-install_test.sh` on Ubuntu and macOS.
 - Run `global-scripts/tests/qubership-dev-install.Tests.ps1` on Windows.
 
-- [ ] Create a standalone workflow with its own `paths` filters and concurrency group.
-- [ ] Run ShellCheck on Ubuntu and the black-box suites on all three platforms.
-- [ ] Validate the workflow syntax and commit with `ci(installer): test developer bootstrap on each platform`.
+- [x] Create a standalone workflow with its own `paths` filters and concurrency group.
+- [x] Run ShellCheck on Ubuntu and the black-box suites on all three platforms.
+- [x] Validate the workflow syntax and commit with `ci(installer): test developer bootstrap on each platform`.
 
 ### Task 4: Publish and document the new installers
 
@@ -84,11 +86,11 @@ workflow runs black-box tests with local fixtures on Linux, macOS, and Windows.
 - Release assets: `qubership-dev-install.sh` and `qubership-dev-install.ps1`.
 - Existing telemetry release assets remain unchanged.
 
-- [ ] Add failing expected-payload checks for the two new asset names.
-- [ ] Stage the scripts unchanged and include them in `SHA256SUMS`.
-- [ ] Document minimal installation, flags, component behavior, and follow-up warnings.
-- [ ] Run `make clean build checksums` and verify both new assets.
-- [ ] Commit with `docs(installer): publish developer bootstrap`.
+- [x] Add failing expected-payload checks for the two new asset names.
+- [x] Stage the scripts unchanged and include them in `SHA256SUMS`.
+- [x] Document minimal installation, flags, component behavior, and follow-up warnings.
+- [x] Run packaging verification and verify both new assets.
+- [x] Commit with `docs(installer): publish developer bootstrap`.
 
 ### Task 5: Verify and review
 

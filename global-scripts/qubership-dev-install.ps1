@@ -189,23 +189,44 @@ function Install-Telemetry {
   } else {
     'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'
   }
-  $parameters = @{ Hooks = ($selectedHarnesses -join ',') }
+  $parameters = @{ SkipConfig = $true }
   if ($ForceUpdate) { $parameters.Force = $true }
   Invoke-PowerShellInstaller $source $parameters
 }
 
+function Resolve-TelemetryCommand {
+  $binDir = Join-Path $env:USERPROFILE '.local/bin'
+  $env:PATH = "$binDir$([System.IO.Path]::PathSeparator)$env:PATH"
+  $script:TelemetryCommand = (Get-Command ai-agent-telemetry -ErrorAction SilentlyContinue).Source
+  if ([string]::IsNullOrWhiteSpace($script:TelemetryCommand)) {
+    throw 'Telemetry installer completed, but ai-agent-telemetry was not found.'
+  }
+}
+
 function Configure-Telemetry {
+  Resolve-TelemetryCommand
+  $configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+  $envFile = Join-Path $configRoot 'ai-agent-telemetry/env'
+  $configured = $false
+  if (Test-Path -LiteralPath $envFile) {
+    $configured = [bool](Get-Content -LiteralPath $envFile | Where-Object {
+      $_ -match '^AI_AGENT_TELEMETRY_ENDPOINT=.+$'
+    } | Select-Object -First 1)
+  }
+  $targets = $selectedHarnesses -join ','
+  if ($configured) {
+    Invoke-Checked $script:TelemetryCommand @('hooks', 'install', "--target=$targets")
+  } elseif ($NonInteractive) {
+    throw 'telemetry configuration is required; run ai-agent-telemetry configure and retry.'
+  } else {
+    Invoke-Checked $script:TelemetryCommand @('configure', "--hooks=$targets")
+  }
 }
 
 function Test-Telemetry {
-  $binDir = Join-Path $env:USERPROFILE '.local/bin'
-  $env:PATH = "$binDir$([System.IO.Path]::PathSeparator)$env:PATH"
-  $telemetry = (Get-Command ai-agent-telemetry -ErrorAction SilentlyContinue).Source
-  if ([string]::IsNullOrWhiteSpace($telemetry)) {
-    throw 'Telemetry installer completed, but ai-agent-telemetry was not found.'
-  }
-  Invoke-Checked $telemetry @('status')
-  Invoke-Checked $telemetry @('selftest')
+  Resolve-TelemetryCommand
+  Invoke-Checked $script:TelemetryCommand @('status')
+  Invoke-Checked $script:TelemetryCommand @('selftest')
 }
 
 function Install-GitHooks {
@@ -231,13 +252,20 @@ function Install-GitHooks {
     $script:ComponentSkipped = $true
     return
   }
-  if ((Test-Path (Join-Path $script:GitHooksDir '.git')) -or (Test-Path $hooksDir)) {
-    if ($ForceUpdate) {
-      Invoke-Checked 'git' @('-C', $script:GitHooksDir, 'pull', '--ff-only')
-    }
-  } else {
+  if (-not (Test-Path $script:GitHooksDir)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:GitHooksDir) | Out-Null
     Invoke-Checked 'git' @('clone', $repository, $script:GitHooksDir)
+  }
+  & git -C $script:GitHooksDir rev-parse --is-inside-work-tree *> $null
+  if ($LASTEXITCODE -ne 0) { throw "$($script:GitHooksDir) is not the managed Git repository." }
+  $origin = (& git -C $script:GitHooksDir remote get-url origin 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw 'Cannot read the Git hooks repository origin.' }
+  if ($origin -ne $repository) { throw "Git hooks repository has unexpected origin $origin." }
+  $gitStatus = (& git -C $script:GitHooksDir status --porcelain --untracked-files=all 2>$null | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the Git hooks repository status.' }
+  if ($gitStatus) { throw 'Git hooks repository has local changes; refusing to activate or update it.' }
+  if ($ForceUpdate) {
+    Invoke-Checked 'git' @('-C', $script:GitHooksDir, 'pull', '--ff-only')
   }
   if (-not (Test-Path $hooksDir)) { throw "hooks-global was not found in $($script:GitHooksDir)." }
 }

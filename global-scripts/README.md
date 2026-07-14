@@ -82,6 +82,9 @@ qubership-dev-install.sh --skip git-hooks
 - Global Git hooks run `git pull --ff-only`. Local changes or divergent history cause this component to fail; the
   installer does not discard them.
 
+The telemetry component installs the binary first, then configures hooks through `ai-agent-telemetry`. It therefore
+requires a telemetry release that supports CLI-managed global hooks.
+
 ## Git and Java prerequisites
 
 Git and Java are required only for the `git-hooks` component. If either command is missing, the interactive installer
@@ -91,13 +94,17 @@ stops the bootstrap before it changes any component.
 If `core.hooksPath` already points somewhere else, the installer leaves it unchanged and marks `git-hooks` as
 `SKIPPED`. Pass `--force-git-hooks` or `-ForceGitHooks` to replace it explicitly.
 
+Before activating an existing hooks directory, the installer verifies that it is a clean Git clone with the expected
+`origin`. A different repository, an ordinary directory, or local changes cause `git-hooks` to fail without changing
+`core.hooksPath`.
+
 `CYBER_FERRET_PASSWORD` is not collected by the installer. When it is missing, installation continues with a warning;
 configure the environment variable before relying on CyberFerret checks.
 
 ## Automation
 
-Non-interactive telemetry configuration uses the existing `AI_AGENT_TELEMETRY_*` environment variables. Do not pass
-tokens on the command line.
+Non-interactive mode requires telemetry to have been configured already. If it is not configured, the component fails
+with an instruction to run `ai-agent-telemetry configure`; it never waits for endpoint or token input.
 
 Exit codes are:
 

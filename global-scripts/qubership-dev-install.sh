@@ -7,10 +7,6 @@ COMPONENT_REGISTRY='apm|1|1|apm
 telemetry|1|1|telemetry
 git-hooks|1|0|git_hooks'
 
-HARNESS_REGISTRY='claude
-codex
-cursor'
-
 DEFAULT_COMPONENTS=apm,telemetry,git-hooks
 DEFAULT_HARNESSES=claude,codex,cursor
 
@@ -132,7 +128,15 @@ require_git_hook_prerequisites() {
 
   printf 'Install the missing tools in another terminal. Have you installed them? [y/N] ' >&2
   _answer=
-  IFS= read -r _answer || :
+  if [ -r /dev/tty ]; then
+    if ! IFS= read -r _answer </dev/tty 2>/dev/null; then
+      printf '%s: could not read prerequisite confirmation from the terminal.\n' "$PROGRAM" >&2
+      return 1
+    fi
+  else
+    printf '%s: an interactive terminal is required to confirm prerequisite installation.\n' "$PROGRAM" >&2
+    return 1
+  fi
   case $_answer in
     y|Y|yes|YES|Yes) ;;
     *)
@@ -227,27 +231,46 @@ apm_verify() {
 telemetry_install() {
   _telemetry_url=${QUBERSHIP_DEV_TELEMETRY_INSTALL_URL:-https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh}
   if [ "$FORCE_UPDATE" -eq 1 ]; then
-    run_shell_installer "$_telemetry_url" "--hooks=$HARNESSES" --force
+    run_shell_installer "$_telemetry_url" --skip-config --force
   else
-    run_shell_installer "$_telemetry_url" "--hooks=$HARNESSES"
+    run_shell_installer "$_telemetry_url" --skip-config
   fi
 }
 
-telemetry_configure() {
-  :
-}
-
-telemetry_verify() {
+resolve_telemetry_bin() {
   if command -v ai-agent-telemetry >/dev/null 2>&1; then
-    _telemetry_bin=ai-agent-telemetry
+    TELEMETRY_BIN=ai-agent-telemetry
   elif [ -x "$HOME/.local/bin/ai-agent-telemetry" ]; then
-    _telemetry_bin=$HOME/.local/bin/ai-agent-telemetry
+    TELEMETRY_BIN=$HOME/.local/bin/ai-agent-telemetry
   else
     printf '%s: telemetry installer completed, but ai-agent-telemetry was not found.\n' "$PROGRAM" >&2
     return 1
   fi
-  "$_telemetry_bin" status || return 1
-  "$_telemetry_bin" selftest
+}
+
+telemetry_configure() {
+  resolve_telemetry_bin || return 1
+  _config_dir=${XDG_CONFIG_HOME:-$HOME/.config}/ai-agent-telemetry
+  _endpoint=
+  if [ -f "$_config_dir/env" ]; then
+    _endpoint=$(awk -F= '$1 == "AI_AGENT_TELEMETRY_ENDPOINT" {sub(/^[^=]*=/, ""); print; exit}' \
+      "$_config_dir/env")
+  fi
+  if [ -n "$_endpoint" ]; then
+    "$TELEMETRY_BIN" hooks install "--target=$HARNESSES"
+  elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+    printf '%s: telemetry configuration is required; run ai-agent-telemetry configure and retry.\n' \
+      "$PROGRAM" >&2
+    return 1
+  else
+    "$TELEMETRY_BIN" configure "--hooks=$HARNESSES"
+  fi
+}
+
+telemetry_verify() {
+  resolve_telemetry_bin || return 1
+  "$TELEMETRY_BIN" status || return 1
+  "$TELEMETRY_BIN" selftest
 }
 
 git_hooks_install() {
@@ -264,13 +287,29 @@ git_hooks_install() {
       "$PROGRAM" "$_current_hooks_path" >&2
     return 10
   fi
-  if [ -d "$GIT_HOOKS_DIR/.git" ] || [ -d "$GIT_HOOKS_DIR/hooks-global" ]; then
-    if [ "$FORCE_UPDATE" -eq 1 ]; then
-      git -C "$GIT_HOOKS_DIR" pull --ff-only
-    fi
-  else
+  if [ ! -e "$GIT_HOOKS_DIR" ]; then
     mkdir -p "$(dirname "$GIT_HOOKS_DIR")"
-    git clone "$GIT_HOOKS_REPOSITORY" "$GIT_HOOKS_DIR"
+    git clone "$GIT_HOOKS_REPOSITORY" "$GIT_HOOKS_DIR" || return 1
+  fi
+  if ! git -C "$GIT_HOOKS_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf '%s: %s is not the managed Git repository.\n' "$PROGRAM" "$GIT_HOOKS_DIR" >&2
+    return 1
+  fi
+  _origin=$(git -C "$GIT_HOOKS_DIR" remote get-url origin 2>/dev/null) || {
+    printf '%s: cannot read the Git hooks repository origin.\n' "$PROGRAM" >&2
+    return 1
+  }
+  if [ "$_origin" != "$GIT_HOOKS_REPOSITORY" ]; then
+    printf '%s: Git hooks repository has unexpected origin %s.\n' "$PROGRAM" "$_origin" >&2
+    return 1
+  fi
+  _git_status=$(git -C "$GIT_HOOKS_DIR" status --porcelain --untracked-files=all) || return 1
+  if [ -n "$_git_status" ]; then
+    printf '%s: Git hooks repository has local changes; refusing to activate or update it.\n' "$PROGRAM" >&2
+    return 1
+  fi
+  if [ "$FORCE_UPDATE" -eq 1 ]; then
+    git -C "$GIT_HOOKS_DIR" pull --ff-only || return 1
   fi
   [ -d "$GIT_HOOKS_DIR/hooks-global" ] || {
     printf '%s: hooks-global was not found in %s.\n' "$PROGRAM" "$GIT_HOOKS_DIR" >&2

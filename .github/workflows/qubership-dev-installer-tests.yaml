@@ -5,11 +5,15 @@ on:
     branches: [ "main" ]
     paths:
       - "global-scripts/**"
+      - "Makefile"
+      - ".github/workflows/release.yaml"
       - ".github/workflows/qubership-dev-installer-tests.yaml"
   pull_request:
     types: [ opened, synchronize, reopened ]
     paths:
       - "global-scripts/**"
+      - "Makefile"
+      - ".github/workflows/release.yaml"
       - ".github/workflows/qubership-dev-installer-tests.yaml"
   workflow_dispatch: null
 
@@ -53,6 +57,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run black-box tests
+      - name: Run black-box tests with Windows PowerShell 5.1
+        shell: powershell
+        run: powershell.exe -NoProfile -File global-scripts/tests/qubership-dev-install.Tests.ps1
+
+      - name: Run black-box tests with PowerShell 7
         shell: pwsh
         run: pwsh -NoProfile -File global-scripts/tests/qubership-dev-install.Tests.ps1
