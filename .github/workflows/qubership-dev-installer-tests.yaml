@@ -1,0 +1,58 @@
+name: Qubership Developer Installer Tests
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "global-scripts/**"
+      - ".github/workflows/qubership-dev-installer-tests.yaml"
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+    paths:
+      - "global-scripts/**"
+      - ".github/workflows/qubership-dev-installer-tests.yaml"
+  workflow_dispatch: null
+
+concurrency:
+  group: qubership-dev-installer-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  posix:
+    name: POSIX (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Run black-box tests
+        run: sh global-scripts/tests/qubership-dev-install_test.sh
+
+      - name: Run ShellCheck
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: shellcheck global-scripts/qubership-dev-install.sh global-scripts/tests/qubership-dev-install_test.sh
+
+  powershell:
+    name: PowerShell (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Run black-box tests
+        shell: pwsh
+        run: pwsh -NoProfile -File global-scripts/tests/qubership-dev-install.Tests.ps1
