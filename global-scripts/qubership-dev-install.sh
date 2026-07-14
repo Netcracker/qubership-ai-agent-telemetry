@@ -253,6 +253,17 @@ telemetry_verify() {
 git_hooks_install() {
   GIT_HOOKS_DIR=${QUBERSHIP_DEV_GIT_HOOKS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/qubership/pre-commit-global}
   GIT_HOOKS_REPOSITORY=${QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY:-https://github.com/exadmin/pre-commit-global.git}
+  case $GIT_HOOKS_DIR in
+    /*) _prospective_hooks_path=$GIT_HOOKS_DIR/hooks-global ;;
+    *) _prospective_hooks_path=$PWD/$GIT_HOOKS_DIR/hooks-global ;;
+  esac
+  _current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || :)
+  if [ -n "$_current_hooks_path" ] && [ "$_current_hooks_path" != "$_prospective_hooks_path" ] && \
+    [ "$FORCE_GIT_HOOKS" -ne 1 ]; then
+    printf '%s: core.hooksPath is already set to %s; global Git hooks installation was skipped.\n' \
+      "$PROGRAM" "$_current_hooks_path" >&2
+    return 10
+  fi
   if [ -d "$GIT_HOOKS_DIR/.git" ] || [ -d "$GIT_HOOKS_DIR/hooks-global" ]; then
     if [ "$FORCE_UPDATE" -eq 1 ]; then
       git -C "$GIT_HOOKS_DIR" pull --ff-only

@@ -101,7 +101,7 @@ function Confirm-GitHookPrerequisites {
 }
 
 function Invoke-Checked([string]$Command, [string[]]$Arguments) {
-  & $Command @Arguments
+  & $Command @Arguments | Out-Host
   if ($LASTEXITCODE -ne 0) {
     throw "Command failed with exit code ${LASTEXITCODE}: $Command $($Arguments -join ' ')"
   }
@@ -120,7 +120,7 @@ function Invoke-PowerShellInstaller([string]$Source, [hashtable]$Parameters) {
   try {
     Download-File $Source $temporaryFile
     $global:LASTEXITCODE = 0
-    & $temporaryFile @Parameters
+    & $temporaryFile @Parameters | Out-Host
     if ($LASTEXITCODE -ne 0) {
       throw "Installer failed with exit code ${LASTEXITCODE}: $Source"
     }
@@ -221,6 +221,16 @@ function Install-GitHooks {
   }
 
   $hooksDir = Join-Path $script:GitHooksDir 'hooks-global'
+  $prospectivePath = [System.IO.Path]::GetFullPath($hooksDir)
+  $currentOutput = & git config --global --get core.hooksPath 2>$null
+  $currentPath = if ($LASTEXITCODE -eq 0) { ($currentOutput | Out-String).Trim() } else { '' }
+  if ($currentPath -and $currentPath -ne $prospectivePath -and -not $ForceGitHooks) {
+    [Console]::Error.WriteLine(
+      "${Program}: core.hooksPath is already set to $currentPath; global Git hooks installation was skipped."
+    )
+    $script:ComponentSkipped = $true
+    return
+  }
   if ((Test-Path (Join-Path $script:GitHooksDir '.git')) -or (Test-Path $hooksDir)) {
     if ($ForceUpdate) {
       Invoke-Checked 'git' @('-C', $script:GitHooksDir, 'pull', '--ff-only')
@@ -269,6 +279,7 @@ function Invoke-Component([string]$Component) {
   Write-Host "`n[$Component] INSTALLING"
   try {
     & "Install-$prefix"
+    if ($script:ComponentSkipped) { return 'SKIPPED' }
     Write-Host "[$Component] CONFIGURING"
     & "Configure-$prefix"
     if ($script:ComponentSkipped) { return 'SKIPPED' }

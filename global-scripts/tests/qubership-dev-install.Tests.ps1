@@ -70,6 +70,10 @@ if ($args[0] -eq 'view') {
 }
 if ($args[0] -eq 'install') {
   New-Item -ItemType File -Force -Path $env:QDI_APM_STATE | Out-Null
+  Write-Output 'fake APM install output'
+}
+if ($args[0] -eq 'compile') {
+  Write-Output 'fake APM compile output'
 }
 exit 0
 '@ | Set-Content -LiteralPath (Join-Path $bin 'apm.ps1')
@@ -102,6 +106,7 @@ param([string]$Hooks = 'all', [switch]$Force)
 $line = "telemetry-installer -Hooks $Hooks"
 if ($Force) { $line += ' -Force' }
 Add-Content -LiteralPath $env:QDI_TEST_LOG -Value $line
+Write-Output 'fake telemetry installer output'
 $binDir = Join-Path $env:USERPROFILE '.local/bin'
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 Copy-Item -Force -LiteralPath $env:QDI_TELEMETRY_CLI -Destination (Join-Path $binDir 'ai-agent-telemetry.ps1')
@@ -227,6 +232,8 @@ function Test-UnrelatedGitHooksAreSkipped {
     if ($result.Code -ne 0) { Fail "Git hook skip failed: $($result.Output)" }
     Assert-Contains $result.Output 'git-hooks        SKIPPED'
     Assert-Contains $result.Output 'core.hooksPath is already set to /other/hooks'
+    $log = Get-Content -Raw -LiteralPath $env:QDI_TEST_LOG
+    Assert-NotContains $log 'git clone'
     if ((Get-Content -Raw $env:QDI_GIT_CONFIG) -ne '/other/hooks') { Fail 'overwrote existing Git hooks' }
   } finally { Teardown-ComponentFixture }
 }

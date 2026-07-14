@@ -310,6 +310,7 @@ test_existing_unrelated_git_hooks_are_skipped() {
   [ "$RUN_CODE" -eq 0 ] || fail "git hook skip failed: $RUN_OUTPUT"
   assert_contains "$RUN_OUTPUT" "git-hooks        SKIPPED"
   assert_contains "$RUN_OUTPUT" "core.hooksPath is already set to /other/hooks"
+  assert_not_contains "$(cat "$QDI_TEST_LOG")" "git clone"
   [ "$(cat "$QDI_GIT_CONFIG")" = /other/hooks ] || fail "overwrote existing Git hooks"
   teardown_component_fixture
 }
