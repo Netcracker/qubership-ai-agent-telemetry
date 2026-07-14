@@ -26,6 +26,9 @@ iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releas
 
 See [Installation](#installation) for configuration options, hook repair, and verification details.
 
+To install the broader Qubership developer baseline, see the
+[Qubership developer installer](global-scripts/README.md). It is separate from the telemetry-only installer above.
+
 ## Architecture
 
 ```mermaid

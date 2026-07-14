@@ -200,13 +200,17 @@ jobs:
           sed "s|^\$BinaryVersion = .*|\$BinaryVersion = '${VERSION}'|" scripts/install.ps1 > dist/install.ps1
           cp dist/install.sh dist/bootstrap.sh
           cp dist/install.ps1 dist/bootstrap.ps1
+          cp global-scripts/qubership-dev-install.sh dist/qubership-dev-install.sh
+          cp global-scripts/qubership-dev-install.ps1 dist/qubership-dev-install.ps1
 
       - name: Checksums
         # The installer scripts fetch SHA256SUMS and hard-fail when it is missing.
         # sha256sum's default output (hash, two spaces, filename) is the exact format
         # the .sh ($2 == asset) and .ps1 (filename at end of line) parse.
         working-directory: dist
-        run: sha256sum ai-agent-telemetry-* install.sh install.ps1 bootstrap.sh bootstrap.ps1 > SHA256SUMS
+        run: >-
+          sha256sum ai-agent-telemetry-* install.sh install.ps1 bootstrap.sh bootstrap.ps1
+          qubership-dev-install.sh qubership-dev-install.ps1 > SHA256SUMS
 
       - name: Verify staged release payload
         working-directory: dist
@@ -223,6 +227,8 @@ jobs:
           bootstrap.sh
           install.ps1
           install.sh
+          qubership-dev-install.ps1
+          qubership-dev-install.sh
           EOF
           sed -i 's/^ *//' ../expected-assets.txt
           sort -o ../expected-assets.txt ../expected-assets.txt
@@ -244,4 +250,4 @@ jobs:
         uses: netcracker/qubership-workflow-hub/actions/assets-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
         with:
           tag: ${{ env.VERSION }}
-          item-path: dist/ai-agent-telemetry-*,dist/install.sh,dist/install.ps1,dist/bootstrap.sh,dist/bootstrap.ps1,dist/SHA256SUMS
+          item-path: dist/ai-agent-telemetry-*,dist/install.sh,dist/install.ps1,dist/bootstrap.sh,dist/bootstrap.ps1,dist/qubership-dev-install.sh,dist/qubership-dev-install.ps1,dist/SHA256SUMS
