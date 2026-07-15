@@ -38,6 +38,11 @@ function Assert-LogContains([string]$Expected) {
   Assert-Contains $log $Expected
 }
 
+function Assert-LogNotContains([string]$Unexpected) {
+  $log = Get-Content -Raw -LiteralPath $env:QDI_TEST_LOG
+  Assert-NotContains $log $Unexpected
+}
+
 function Setup-ComponentFixture {
   $script:FixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) "qdi-$([guid]::NewGuid())"
   $script:SavedPath = $env:PATH
@@ -59,6 +64,8 @@ function Setup-ComponentFixture {
   [System.IO.File]::WriteAllText($env:QDI_TEST_LOG, '')
   Remove-Item Env:CYBER_FERRET_PASSWORD -ErrorAction SilentlyContinue
   Remove-Item Env:QDI_FAIL_APM_COMMAND -ErrorAction SilentlyContinue
+  Remove-Item Env:QDI_TEST_JAVA_EXIT_CODE -ErrorAction SilentlyContinue
+  Remove-Item Env:QDI_TEST_JAVA_SPEC_VERSION -ErrorAction SilentlyContinue
 
   @'
 $line = "apm " + ($args -join ' ')
@@ -91,7 +98,9 @@ exit 0
 
   @'
 Add-Content -LiteralPath $env:QDI_TEST_LOG -Value ("java " + ($args -join ' '))
-exit 0
+if ($env:QDI_TEST_JAVA_EXIT_CODE) { exit [int]$env:QDI_TEST_JAVA_EXIT_CODE }
+$version = if ($env:QDI_TEST_JAVA_SPEC_VERSION) { $env:QDI_TEST_JAVA_SPEC_VERSION } else { '21' }
+Write-Error "    java.specification.version = $version" -ErrorAction Continue
 '@ | Set-Content -LiteralPath (Join-Path $bin 'java.ps1')
 
   @'
@@ -158,7 +167,7 @@ function Teardown-ComponentFixture {
   foreach ($name in @(
     'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'QDI_TEST_LOG', 'QDI_GIT_CONFIG', 'QDI_APM_STATE',
     'QDI_MARKETPLACE_STATE', 'QDI_TELEMETRY_CLI', 'QDI_FAIL_APM_COMMAND', 'QDI_GIT_ORIGIN_FILE',
-    'QDI_GIT_STATUS', 'QDI_GIT_PULL_FAIL',
+    'QDI_GIT_STATUS', 'QDI_GIT_PULL_FAIL', 'QDI_TEST_JAVA_EXIT_CODE', 'QDI_TEST_JAVA_SPEC_VERSION',
     'QUBERSHIP_DEV_TELEMETRY_INSTALL_URL', 'QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY',
     'QUBERSHIP_DEV_GIT_HOOKS_DIR', 'CYBER_FERRET_PASSWORD'
   )) {
@@ -209,7 +218,7 @@ function Test-PrerequisitesApplyOnlyToGitHooks {
     $gitHooks = Invoke-Installer @('-Components', 'git-hooks', '-NonInteractive')
     if ($gitHooks.Code -ne 1) { Fail "expected prerequisite exit 1, got $($gitHooks.Code): $($gitHooks.Output)" }
     Assert-Contains $gitHooks.Output 'Git is required'
-    Assert-Contains $gitHooks.Output 'Java is required'
+    Assert-Contains $gitHooks.Output 'Java 21 or newer is required'
 
     $telemetry = Invoke-Installer @('-Components', 'telemetry', '-NonInteractive')
     Assert-NotContains $telemetry.Output 'Git is required'
@@ -217,6 +226,45 @@ function Test-PrerequisitesApplyOnlyToGitHooks {
   } finally {
     $env:PATH = $savedPath
     Remove-Item -Recurse -Force $emptyPath
+  }
+}
+
+function Test-Java20IsRejected {
+  Setup-ComponentFixture
+  try {
+    $env:QDI_TEST_JAVA_SPEC_VERSION = '20'
+    $result = Invoke-Installer @('-Components', 'git-hooks', '-NonInteractive')
+    if ($result.Code -ne 1) { Fail "expected Java 20 rejection: $($result.Output)" }
+    Assert-Contains $result.Output 'Detected Java 20'
+    Assert-Contains $result.Output 'Java 21 or newer is required'
+    Assert-LogNotContains 'git clone'
+  } finally { Teardown-ComponentFixture }
+}
+
+function Test-Java21AndNewerAreAccepted {
+  foreach ($version in @('21', '26')) {
+    Setup-ComponentFixture
+    try {
+      $env:QDI_TEST_JAVA_SPEC_VERSION = $version
+      $result = Invoke-Installer @('-Components', 'git-hooks', '-NonInteractive')
+      if ($result.Code -ne 0) { Fail "expected Java $version acceptance: $($result.Output)" }
+    } finally { Teardown-ComponentFixture }
+  }
+}
+
+function Test-UnrecognizedOrFailingJavaIsRejected {
+  foreach ($case in @(
+    @{ Version = 'unknown'; ExitCode = $null },
+    @{ Version = '21'; ExitCode = '1' }
+  )) {
+    Setup-ComponentFixture
+    try {
+      $env:QDI_TEST_JAVA_SPEC_VERSION = $case.Version
+      if ($case.ExitCode) { $env:QDI_TEST_JAVA_EXIT_CODE = $case.ExitCode }
+      $result = Invoke-Installer @('-Components', 'git-hooks', '-NonInteractive')
+      if ($result.Code -ne 1) { Fail "expected Java detection failure: $($result.Output)" }
+      Assert-Contains $result.Output 'Could not determine the Java version'
+    } finally { Teardown-ComponentFixture }
   }
 }
 
@@ -358,6 +406,9 @@ Test-HelpDescribesPublicOptions
 Test-InvalidSelectionsFailBeforeInstallation
 Test-UnknownParameterFailsBeforeInstallation
 Test-PrerequisitesApplyOnlyToGitHooks
+Test-Java20IsRejected
+Test-Java21AndNewerAreAccepted
+Test-UnrecognizedOrFailingJavaIsRejected
 Test-DefaultInstallRunsEveryComponent
 Test-SelectionAndHarnessesAreForwarded
 Test-ForceUpdateRefreshesSelectedComponents

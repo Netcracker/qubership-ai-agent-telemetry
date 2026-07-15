@@ -10,6 +10,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Program = 'qubership-dev-install.ps1'
+$MinimumJavaMajor = 21
 
 $ComponentRegistry = [ordered]@{
   'apm' = @{ Default = $true; UsesHarnesses = $true; Prefix = 'Apm' }
@@ -69,6 +70,30 @@ function Normalize-Selection(
   return @($result)
 }
 
+function Get-JavaMajorVersion {
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = 0
+    $output = @(& java -XshowSettings:properties -version 2>&1)
+    if ($LASTEXITCODE -ne 0) { return $null }
+  } catch {
+    return $null
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+
+  foreach ($line in $output) {
+    $match = [regex]::Match([string]$line, '^\s*java\.specification\.version\s*=\s*(\S+)\s*$')
+    if (-not $match.Success) { continue }
+    $value = $match.Groups[1].Value
+    if ($value -match '^1\.(\d+)(?:\..*)?$') { return [int]$Matches[1] }
+    if ($value -match '^(\d+)(?:\..*)?$') { return [int]$Matches[1] }
+    return $null
+  }
+  return $null
+}
+
 function Test-GitHookPrerequisites {
   $missing = [System.Collections.Generic.List[string]]::new()
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -76,8 +101,17 @@ function Test-GitHookPrerequisites {
     $missing.Add('git')
   }
   if (-not (Get-Command java -ErrorAction SilentlyContinue)) {
-    [Console]::Error.WriteLine("${Program}: Java is required for the git-hooks component. Install a supported JRE or JDK.")
+    [Console]::Error.WriteLine("${Program}: Java $MinimumJavaMajor or newer is required for the git-hooks component. Install a supported JRE or JDK.")
     $missing.Add('java')
+  } else {
+    $javaMajor = Get-JavaMajorVersion
+    if ($null -eq $javaMajor) {
+      [Console]::Error.WriteLine("${Program}: Could not determine the Java version. Java $MinimumJavaMajor or newer is required for the git-hooks component.")
+      $missing.Add('java')
+    } elseif ($javaMajor -lt $MinimumJavaMajor) {
+      [Console]::Error.WriteLine("${Program}: Detected Java $javaMajor. Java $MinimumJavaMajor or newer is required for the git-hooks component.")
+      $missing.Add('java')
+    }
   }
   return $missing.Count -eq 0
 }
@@ -88,7 +122,7 @@ function Confirm-GitHookPrerequisites {
     [Console]::Error.WriteLine("${Program}: Installation stopped because required tools are missing.")
     return $false
   }
-  $answer = Read-Host 'Install the missing tools in another terminal. Have you installed them? [y/N]'
+  $answer = Read-Host 'Install or update the required tools in another terminal. Have you installed them? [y/N]'
   if ($answer -notmatch '^(?i:y|yes)$') {
     [Console]::Error.WriteLine("${Program}: Installation stopped by the user.")
     return $false
