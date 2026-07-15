@@ -5,10 +5,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$BinaryVersion = if ($env:AI_AGENT_TELEMETRY_INSTALL_VERSION) {
-  $env:AI_AGENT_TELEMETRY_INSTALL_VERSION
-} else {
-  'latest'
+$BinaryVersion = $env:AI_AGENT_TELEMETRY_INSTALL_VERSION
+if ([string]::IsNullOrWhiteSpace($BinaryVersion)) {
+  $BinaryVersion = 'latest'
 }
 $BaseUrl = if ($env:AI_AGENT_TELEMETRY_INSTALL_BASE_URL) {
   $env:AI_AGENT_TELEMETRY_INSTALL_BASE_URL

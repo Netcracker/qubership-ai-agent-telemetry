@@ -17,10 +17,13 @@ build:
 	@cp scripts/install.ps1 $(DIST)/install.ps1
 	@cp scripts/install.sh $(DIST)/bootstrap.sh
 	@cp scripts/install.ps1 $(DIST)/bootstrap.ps1
+	@cp global-scripts/qubership-dev-install.sh $(DIST)/qubership-dev-install.sh
+	@cp global-scripts/qubership-dev-install.ps1 $(DIST)/qubership-dev-install.ps1
 
 .PHONY: checksums
 checksums: build
-	@cd $(DIST) && shasum -a 256 ai-agent-telemetry-* install.sh install.ps1 bootstrap.sh bootstrap.ps1 > SHA256SUMS && cat SHA256SUMS
+	@cd $(DIST) && shasum -a 256 ai-agent-telemetry-* install.sh install.ps1 bootstrap.sh bootstrap.ps1 \
+		qubership-dev-install.sh qubership-dev-install.ps1 > SHA256SUMS && cat SHA256SUMS
 
 .PHONY: test
 test:
