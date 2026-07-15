@@ -51,7 +51,8 @@ ai-agent-telemetry hooks --help
 Explicit help prints the requested information and exits without running the command.
 
 When buffered events remain after a failed delivery attempt, `status` points to
-`status --verbose`. The verbose output includes the last recorded delivery error.
+`status --verbose`. The verbose output includes the effective buffer capacity, flush
+timeout, and last recorded delivery error.
 
 ## Global hooks
 
@@ -126,6 +127,31 @@ and returns; delivery happens opportunistically.
   since the previous run. The key is namespaced per harness (`codex:<session>`), so
   different harnesses do not collide and one skill run counts once.
 
+The outbox retains at most 100 events by default, and an ordinary flush has a 2-second
+timeout. Configure persistent overrides with positive values:
+
+```sh
+ai-agent-telemetry configure --buffer-cap=1000 --flush-timeout=30s
+```
+
+The CLI stores these settings as `AI_AGENT_TELEMETRY_BUFFER_CAP` and
+`AI_AGENT_TELEMETRY_FLUSH_TIMEOUT` in the machine `env` file. A process environment
+variable overrides the saved value. An invalid runtime value produces a warning and uses
+the corresponding default instead; `configure` rejects the same invalid value without
+changing machine configuration. The timeout accepts Go duration syntax such as `500ms`,
+`30s`, or `1m`.
+
+Use temporary process overrides for scripts and CI:
+
+```sh
+AI_AGENT_TELEMETRY_BUFFER_CAP=1000 \
+AI_AGENT_TELEMETRY_FLUSH_TIMEOUT=30s \
+ai-agent-telemetry flush
+```
+
+Run `ai-agent-telemetry status --verbose` to inspect the effective values. Compact status
+output omits them.
+
 ## Repository scope
 
 Set repository scope in `repo-allow`, or write it through repeatable `configure --repo-allow`,
@@ -178,7 +204,7 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 | Location | Path | Holds |
 | --- | --- | --- |
 | **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the installer so the hook resolves it by bare name |
-| **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
+| **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token, and delivery settings), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush`, `.last_delivery_error`, and `.flush.lock`), `offsets/` (per-session transcript offsets) |
 | **Claude Code hook** | `~/.claude/settings.json` | Global `PreToolUse` registration merged with unrelated settings |
 | **Codex hook** | `~/.codex/hooks.json` | Global `Stop` registration merged with unrelated hooks |

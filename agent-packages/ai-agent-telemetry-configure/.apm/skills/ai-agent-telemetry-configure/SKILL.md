@@ -17,10 +17,12 @@ write. Never put the token in your own output.
 ## What "working" means
 
 - `ai-agent-telemetry status` — read-only state: binary version, config dir, endpoint, CA,
-  repository scope, spool backlog, last flush attempt, and global hook registration.
+  repository scope, spool backlog, last flush attempt, and global hook registration. Add
+  `--verbose` to inspect effective buffer capacity and flush timeout.
 - `ai-agent-telemetry selftest` — sends one real, marked probe event and reports whether the
   collector accepted it and the event left the spool.
-- Config lives under the config dir that `status` prints: `env` (endpoint, token),
+- Config lives under the config dir that `status` prints: `env` (endpoint, token, buffer
+  capacity, and flush timeout),
   `repo-allow` (repository allowlist), and an optional `ca.crt`. These are the binary's
   to write — don't hand-edit them.
 
@@ -164,6 +166,10 @@ enough.
   no-echo prompt: run `ai-agent-telemetry configure` and let them enter the token when asked.
   Don't ask the user to paste the token to you, and don't type it yourself — anything in this
   conversation becomes part of the model's context and would leak the secret.
+- **Outbox capacity or flush timeout needs tuning** — run
+  `ai-agent-telemetry configure --buffer-cap=<events> --flush-timeout=<duration>` with positive
+  values. The defaults are `100` and `2s`. Confirm effective values with
+  `ai-agent-telemetry status --verbose`.
 
 ## Updating
 

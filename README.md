@@ -206,6 +206,15 @@ ai-agent-telemetry configure --endpoint=https://<collector-host>/v1/logs
 # Token (leave empty if none): <paste token, press Enter; input is hidden>
 ```
 
+**Tune local delivery buffering** (optional):
+
+```sh
+ai-agent-telemetry configure --buffer-cap=1000 --flush-timeout=30s
+```
+
+The defaults remain 100 buffered events and a 2-second ordinary flush timeout. Run
+`ai-agent-telemetry status --verbose` to inspect the effective values.
+
 **Limit collection to organization repositories** (recommended for global hooks):
 
 ```sh

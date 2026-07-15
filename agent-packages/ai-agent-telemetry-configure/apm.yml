@@ -1,4 +1,4 @@
 name: ai-agent-telemetry-configure
-version: 2.2.0
+version: 2.3.0
 description: Setup, global-hook repair, and delivery verification for the ai-agent-telemetry CLI.
 author: Netcracker
