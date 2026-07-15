@@ -24,6 +24,8 @@ Windows Command Prompt:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$u='https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/qubership-dev-install.ps1';$s=irm $u;iex ('& {'+$s+'} -ForceUpdate')"
 ```
 
+## Normal update behavior
+
 To use the normal update behavior, omit the force-update option.
 
 macOS or Linux:
@@ -118,8 +120,40 @@ Before activating an existing hooks directory, the installer verifies that it is
 `origin`. A different repository, an ordinary directory, or local changes cause `git-hooks` to fail without changing
 `core.hooksPath`.
 
-`CYBER_FERRET_PASSWORD` is not collected by the installer. When it is missing, installation continues with a warning;
-configure the environment variable before relying on CyberFerret checks.
+## CyberFerret password
+
+CyberFerret reads its password from `CYBER_FERRET_PASSWORD`; it does not accept a password option. The installer does
+not collect or store this value. When it is missing, installation continues with a warning.
+
+On Linux with Bash, save it without putting the password in shell history, then sign out and back in:
+
+```bash
+read -rsp 'CyberFerret password: ' password; echo
+printf '\nexport CYBER_FERRET_PASSWORD=%q\n' "$password" >> "$HOME/.profile"
+unset password
+```
+
+If you use another shell, save the export in that shell's login file instead.
+
+On macOS with the default Zsh, set it for applications started later in the current login session:
+
+```zsh
+read -s 'password?CyberFerret password: '; echo
+launchctl setenv CYBER_FERRET_PASSWORD "$password"
+unset password
+```
+
+Run the macOS command again after signing in or restarting. Start or restart the terminal and IDE after setting the
+variable.
+
+On Windows PowerShell, save it for the current Windows user, then restart the terminal and IDE:
+
+```powershell
+$password = Read-Host 'CyberFerret password' -AsSecureString
+$value = [Net.NetworkCredential]::new('', $password).Password
+[Environment]::SetEnvironmentVariable('CYBER_FERRET_PASSWORD', $value, 'User')
+Remove-Variable password, value
+```
 
 ## Automation
 

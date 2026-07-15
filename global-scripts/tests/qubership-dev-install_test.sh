@@ -340,6 +340,8 @@ test_default_install_runs_every_component() {
   assert_contains "$RUN_OUTPUT" "apm              OK"
   assert_contains "$RUN_OUTPUT" "telemetry        OK"
   assert_contains "$RUN_OUTPUT" "git-hooks        OK"
+  assert_contains "$RUN_OUTPUT" "export CYBER_FERRET_PASSWORD='<password>'"
+  assert_contains "$RUN_OUTPUT" "global-scripts/README.md#cyberferret-password"
   teardown_component_fixture
 }
 

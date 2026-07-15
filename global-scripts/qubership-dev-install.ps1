@@ -332,8 +332,14 @@ function Configure-GitHooks {
     Invoke-Checked 'git' @('config', '--global', 'core.hooksPath', $desiredPath)
   }
   if ([string]::IsNullOrWhiteSpace($env:CYBER_FERRET_PASSWORD)) {
+    [Console]::Error.WriteLine("${Program}: CYBER_FERRET_PASSWORD is not set; CyberFerret checks require it.")
+    [Console]::Error.WriteLine('Set it for your Windows user in PowerShell:')
     [Console]::Error.WriteLine(
-      "${Program}: CYBER_FERRET_PASSWORD is not set; CyberFerret checks will require configuration."
+      "  [Environment]::SetEnvironmentVariable('CYBER_FERRET_PASSWORD', '<password>', 'User')"
+    )
+    [Console]::Error.WriteLine('Then restart your terminal and IDE.')
+    [Console]::Error.WriteLine(
+      'More options: https://github.com/Netcracker/qubership-ai-agent-telemetry/blob/main/global-scripts/README.md#cyberferret-password'
     )
   }
 }
