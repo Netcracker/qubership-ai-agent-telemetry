@@ -320,6 +320,10 @@ function Invoke-Component([string]$Component) {
   }
 }
 
+if ($args.Count -gt 0) {
+  Stop-ArgumentError "unknown option `"$($args[0])`""
+}
+
 if ($Help) {
   Show-Usage
   exit 0

@@ -188,6 +188,18 @@ function Test-InvalidSelectionsFailBeforeInstallation {
   }
 }
 
+function Test-UnknownParameterFailsBeforeInstallation {
+  Setup-ComponentFixture
+  try {
+    $result = Invoke-Installer @('-Componentz', 'telemetry', '-NonInteractive')
+    if ($result.Code -ne 2) { Fail "expected exit 2, got $($result.Code): $($result.Output)" }
+    Assert-Contains $result.Output 'unknown option "-Componentz"'
+    if ((Get-Content -Raw -LiteralPath $env:QDI_TEST_LOG).Length -ne 0) {
+      Fail 'unknown parameter caused component side effects'
+    }
+  } finally { Teardown-ComponentFixture }
+}
+
 function Test-PrerequisitesApplyOnlyToGitHooks {
   $savedPath = $env:PATH
   $emptyPath = Join-Path ([System.IO.Path]::GetTempPath()) "qdi-empty-$([guid]::NewGuid())"
@@ -344,6 +356,7 @@ function Test-GitHooksRejectNonRepositoryAndDivergence {
 
 Test-HelpDescribesPublicOptions
 Test-InvalidSelectionsFailBeforeInstallation
+Test-UnknownParameterFailsBeforeInstallation
 Test-PrerequisitesApplyOnlyToGitHooks
 Test-DefaultInstallRunsEveryComponent
 Test-SelectionAndHarnessesAreForwarded
