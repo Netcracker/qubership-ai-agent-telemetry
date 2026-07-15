@@ -67,10 +67,23 @@ The CLI reads its collector settings from the environment or the provisioned
   stay buffered in the outbox.
 - `AI_AGENT_TELEMETRY_TOKEN` — the optional bearer token, sent as
   `Authorization: Bearer`. Without it the request carries no auth header.
+- `AI_AGENT_TELEMETRY_BUFFER_CAP` — positive local outbox capacity. The default is `100`.
+- `AI_AGENT_TELEMETRY_FLUSH_TIMEOUT` — positive ordinary flush timeout in Go duration syntax.
+  The default is `2s`.
 - `repo-allow` — repository allowlist, one glob per line. `configure` writes
   `github.com/Netcracker/*` by default when the file is absent; pass repeatable
   `--repo-allow <pattern>` values to use a different scope.
 - `AI_AGENT_TELEMETRY_REPO_ALLOW` — optional environment override for scripts and CI.
+
+Persist delivery overrides through the CLI instead of editing `env` directly:
+
+```bash
+ai-agent-telemetry configure --buffer-cap=1000 --flush-timeout=30s
+ai-agent-telemetry status --verbose
+```
+
+Process environment variables override saved values. Invalid runtime values emit a warning
+and use the corresponding default; `configure` rejects invalid values before writing files.
 
 A private CA is optional: place `ca.crt` in the config dir and the CLI appends it
 to the system trust pool. The setup skill can guide this repair when `selftest`

@@ -16,10 +16,8 @@ import (
 var version = "dev"
 
 const (
-	bufferCap       = 100
 	flushCountN     = 10
 	flushIntervalT  = 60 * time.Second
-	flushTimeout    = 2 * time.Second
 	selftestTimeout = 10 * time.Second
 )
 
@@ -67,7 +65,7 @@ func run(args []string, stdout func(string)) int {
 		}
 		endpoint := configureEndpoint(opts.Endpoint)
 		token := readSecret("Collector token (leave blank to skip): ")
-		if err := applyConfigure(cfg, endpoint, opts.CAPath, token, opts.RepoAllow); err != nil {
+		if err := applyConfigure(cfg, endpoint, opts.CAPath, token, opts.RepoAllow, opts.Delivery); err != nil {
 			fmt.Fprintln(os.Stderr, "configure:", err)
 			return 1
 		}
@@ -77,7 +75,8 @@ func run(args []string, stdout func(string)) int {
 			fmt.Fprintln(os.Stderr, "outbox:", err)
 			return 1
 		}
-		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy()), false))
+		settings := resolveDeliverySettings()
+		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy(), settings), false))
 		if err := hookInstallError(results); err != nil {
 			fmt.Fprintln(os.Stderr, "configure hooks:", err)
 			return 1
@@ -152,7 +151,7 @@ func run(args []string, stdout func(string)) int {
 			return 0 // never fail the hook
 		}
 		raw, _ := io.ReadAll(os.Stdin)
-		return ingest(s, agent, endpoint, raw, gitRemote)
+		return ingest(s, agent, endpoint, raw, gitRemote, resolveDeliverySettings())
 	case "flush":
 		_, endpoint := parseFlags(args[1:])
 		endpoint = resolveEndpoint(endpoint)
@@ -165,7 +164,8 @@ func run(args []string, stdout func(string)) int {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "ca:", err)
 		}
-		if _, err := Flush(s, endpoint, resolveToken(), tlsCfg, flushTimeout); err != nil {
+		settings := resolveDeliverySettings()
+		if _, err := Flush(s, endpoint, resolveToken(), tlsCfg, settings.FlushTimeout); err != nil {
 			fmt.Fprintln(os.Stderr, "flush:", err)
 		}
 		return 0
@@ -176,7 +176,11 @@ func run(args []string, stdout func(string)) int {
 			fmt.Fprintln(os.Stderr, "outbox:", err)
 			return 0
 		}
-		stdout(formatStatus(gatherStatus(s, pkgConfigDir(), resolveEndpoint(""), resolveTelemetryPolicy()), verbose))
+		settings := resolveDeliverySettings()
+		stdout(formatStatus(
+			gatherStatus(s, pkgConfigDir(), resolveEndpoint(""), resolveTelemetryPolicy(), settings),
+			verbose,
+		))
 		return 0
 	default:
 		stdout("unknown command: " + args[0] + "\n\n" + rootHelp())
@@ -230,6 +234,36 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 			opts.CAPath = strings.TrimPrefix(a, "--ca=")
 		case strings.HasPrefix(a, "--repo-allow="):
 			repoAllowValues = append(repoAllowValues, strings.TrimPrefix(a, "--repo-allow="))
+		case strings.HasPrefix(a, "--buffer-cap="):
+			value := strings.TrimPrefix(a, "--buffer-cap=")
+			if _, err := parseBufferCap(value); err != nil {
+				return configureOptions{}, fmt.Errorf("invalid --buffer-cap value %q: %w", value, err)
+			}
+			opts.Delivery.BufferCap = value
+		case a == "--buffer-cap":
+			value, err := configureFlagValue(args, &i, a)
+			if err != nil {
+				return configureOptions{}, err
+			}
+			if _, err := parseBufferCap(value); err != nil {
+				return configureOptions{}, fmt.Errorf("invalid --buffer-cap value %q: %w", value, err)
+			}
+			opts.Delivery.BufferCap = value
+		case strings.HasPrefix(a, "--flush-timeout="):
+			value := strings.TrimPrefix(a, "--flush-timeout=")
+			if _, err := parseFlushTimeout(value); err != nil {
+				return configureOptions{}, fmt.Errorf("invalid --flush-timeout value %q: %w", value, err)
+			}
+			opts.Delivery.FlushTimeout = value
+		case a == "--flush-timeout":
+			value, err := configureFlagValue(args, &i, a)
+			if err != nil {
+				return configureOptions{}, err
+			}
+			if _, err := parseFlushTimeout(value); err != nil {
+				return configureOptions{}, fmt.Errorf("invalid --flush-timeout value %q: %w", value, err)
+			}
+			opts.Delivery.FlushTimeout = value
 		case a == "--repo-allow":
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
 				return configureOptions{}, fmt.Errorf("missing value for %q", a)
@@ -265,6 +299,14 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 	}
 	opts.RepoAllow = strings.Join(repoAllowValues, ",")
 	return opts, nil
+}
+
+func configureFlagValue(args []string, index *int, flag string) (string, error) {
+	if *index+1 >= len(args) || strings.HasPrefix(args[*index+1], "--") {
+		return "", fmt.Errorf("missing value for %q", flag)
+	}
+	*index++
+	return args[*index], nil
 }
 
 func configureEndpoint(flag string) string {
@@ -327,7 +369,13 @@ func readSecret(prompt string) string {
 
 // ingest is the per-event path: parse, enqueue, rotate, opportunistic flush.
 // It returns 0 even on error — a hook must never fail the agent turn.
-func ingest(s *Outbox, agent, endpoint string, stdin []byte, remote remoteResolver) int {
+func ingest(
+	s *Outbox,
+	agent, endpoint string,
+	stdin []byte,
+	remote remoteResolver,
+	settings deliverySettings,
+) int {
 	events, err := detect(agent, stdin, remote, time.Now().UTC())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "detect:", err)
@@ -340,7 +388,7 @@ func ingest(s *Outbox, agent, endpoint string, stdin []byte, remote remoteResolv
 			fmt.Fprintln(os.Stderr, "enqueue:", err)
 		}
 	}
-	if _, err := s.Rotate(bufferCap); err != nil {
+	if _, err := s.Rotate(settings.BufferCap); err != nil {
 		fmt.Fprintln(os.Stderr, "rotate:", err)
 	}
 	if shouldFlush(s, flushCountN, flushIntervalT) {
@@ -349,7 +397,7 @@ func ingest(s *Outbox, agent, endpoint string, stdin []byte, remote remoteResolv
 		if cerr != nil {
 			fmt.Fprintln(os.Stderr, "ca:", cerr)
 		}
-		if _, err := Flush(s, endpoint, resolveToken(), tlsCfg, flushTimeout); err != nil {
+		if _, err := Flush(s, endpoint, resolveToken(), tlsCfg, settings.FlushTimeout); err != nil {
 			fmt.Fprintln(os.Stderr, "flush:", err)
 		}
 	}
