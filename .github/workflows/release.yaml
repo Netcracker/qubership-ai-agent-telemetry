@@ -148,10 +148,9 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
-    # These actions expose no token input. tag-action's create-release shells out
-    # to gh (reads GH_TOKEN); assets-action reads process.env.GITHUB_TOKEN and uses
-    # it for its gh upload. Provide both at the job level so neither falls back to
-    # an empty token (which fails with HTTP 401).
+    # These actions expose no token input. release-drafter and assets-action read
+    # the token from the environment. Provide both standard variable names so
+    # neither action falls back to an empty token (which fails with HTTP 401).
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -162,13 +161,13 @@ jobs:
       # artifact archive.
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3 # zizmor: ignore[artipacked]
 
-      - name: Create tag and release
+      - name: Create tag
         uses: netcracker/qubership-workflow-hub/actions/tag-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
         with:
           ref: ${{ github.ref }}
           tag-name: ${{ env.VERSION }}
           create-tag: "true"
-          create-release: "true"
+          create-release: "false"
           tag-message: "Release ${{ env.VERSION }}"
           skip-checkout: "true"
 

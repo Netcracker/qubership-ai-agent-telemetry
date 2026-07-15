@@ -283,6 +283,9 @@ function Test-DefaultInstallRunsEveryComponent {
     Assert-Contains $result.Output 'apm              OK'
     Assert-Contains $result.Output 'telemetry        OK'
     Assert-Contains $result.Output 'git-hooks        OK'
+    Assert-Contains $result.Output "SetEnvironmentVariable('CYBER_FERRET_PASSWORD', '<password>', 'User')"
+    Assert-Contains $result.Output 'restart your terminal and IDE'
+    Assert-Contains $result.Output 'global-scripts/README.md#cyberferret-password'
   } finally { Teardown-ComponentFixture }
 }
 

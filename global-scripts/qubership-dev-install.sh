@@ -382,8 +382,12 @@ git_hooks_configure() {
     git config --global core.hooksPath "$_desired_hooks_path" || return 1
   fi
   if [ -z "${CYBER_FERRET_PASSWORD:-}" ]; then
-    printf '%s: CYBER_FERRET_PASSWORD is not set; CyberFerret checks will require configuration.\n' \
-      "$PROGRAM" >&2
+    printf '%s\n' \
+      "$PROGRAM: CYBER_FERRET_PASSWORD is not set; CyberFerret checks require it." \
+      "Set it in the environment that runs Git, for example:" \
+      "  export CYBER_FERRET_PASSWORD='<password>'" \
+      "Persistent and GUI setup:" \
+      "  https://github.com/Netcracker/qubership-ai-agent-telemetry/blob/main/global-scripts/README.md#cyberferret-password" >&2
   fi
 }
 
