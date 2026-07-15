@@ -67,12 +67,16 @@ bootstrap.ps1
 bootstrap.sh
 install.ps1
 install.sh
+qubership-dev-install.ps1
+qubership-dev-install.sh
 ```
 
 `SHA256SUMS` must include one entry for every asset above except itself. The
 workflow verifies this before upload.
 
 ## Smoke checks
+
+### Telemetry installer
 
 After the workflow succeeds, install the published version on one Unix-like machine:
 
@@ -84,14 +88,41 @@ curl -fsSL "$INSTALLER_URL" | sh -s -- --skip-config --force
 ai-agent-telemetry version
 ```
 
-On Windows PowerShell:
+From Windows Command Prompt:
 
-```powershell
-$env:AI_AGENT_TELEMETRY_INSTALL_VERSION = 'vX.Y.Z'
-$Installer = 'https://github.com/Netcracker/qubership-ai-agent-telemetry'
-$Installer = "$Installer/releases/latest/download/install.ps1"
-iex "& { $(irm $Installer) } -SkipConfig -Force"
-ai-agent-telemetry version
+```bat
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$r='https://github.com/Netcracker';" ^
+  "$r+='/qubership-ai-agent-telemetry/releases/latest/download';" ^
+  "$env:AI_AGENT_TELEMETRY_INSTALL_VERSION='vX.Y.Z';" ^
+  "$s=irm ($r+'/install.ps1');" ^
+  "iex ('& {'+$s+'} -SkipConfig -Force');" ^
+  "& ($env:USERPROFILE+'\.local\bin\ai-agent-telemetry.exe') version"
 ```
 
 Both commands should print `vX.Y.Z`.
+
+### Qubership developer installer
+
+Run the overall installer on a disposable machine. Complete telemetry
+configuration when prompted, and confirm that the summary reports `OK` for
+every component.
+
+On macOS or Linux:
+
+```bash
+REPOSITORY=https://github.com/Netcracker/qubership-ai-agent-telemetry
+RELEASE=$REPOSITORY/releases/latest/download
+curl -fsSL "$RELEASE/qubership-dev-install.sh" \
+  | sh -s -- --force-update
+```
+
+From Windows Command Prompt:
+
+```bat
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$r='https://github.com/Netcracker';" ^
+  "$r+='/qubership-ai-agent-telemetry/releases/latest/download';" ^
+  "$s=irm ($r+'/qubership-dev-install.ps1');" ^
+  "iex ('& {'+$s+'} -ForceUpdate')"
+```
