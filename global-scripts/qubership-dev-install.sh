@@ -1,4 +1,6 @@
 #!/bin/sh
+# Component handlers are invoked dynamically from COMPONENT_REGISTRY.
+# shellcheck disable=SC2317,SC2329
 set -u
 
 PROGRAM=qubership-dev-install.sh

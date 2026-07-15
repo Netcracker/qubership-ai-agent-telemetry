@@ -21,8 +21,16 @@ function Assert-NotContains([string]$Text, [string]$Unexpected) {
 }
 
 function Invoke-Installer([string[]]$Arguments) {
-  $output = & $PowerShell -NoProfile -File $Installer @Arguments 2>&1 | Out-String
-  return @{ Code = $LASTEXITCODE; Output = $output }
+  $savedErrorActionPreference = $ErrorActionPreference
+  try {
+    # Windows PowerShell 5.1 promotes native stderr to a terminating error when this is Stop.
+    $ErrorActionPreference = 'Continue'
+    $output = & $PowerShell -NoProfile -File $Installer @Arguments 2>&1 | Out-String
+    $code = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $savedErrorActionPreference
+  }
+  return @{ Code = $code; Output = $output }
 }
 
 function Assert-LogContains([string]$Expected) {
