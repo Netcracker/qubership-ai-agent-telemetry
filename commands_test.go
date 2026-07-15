@@ -345,7 +345,7 @@ func TestGatherStatusReportsConfiguredState(t *testing.T) {
 	s := &Outbox{Dir: t.TempDir()}
 	seed(t, s, 2)
 
-	r := gatherStatus(s, cfg, "https://otel.example/v1/logs", telemetryPolicy{})
+	r := gatherStatus(s, cfg, "https://otel.example/v1/logs", telemetryPolicy{}, deliverySettings{})
 	if !r.Configured {
 		t.Fatal("want configured when an endpoint is set")
 	}
@@ -368,7 +368,7 @@ func TestGatherStatusReadsLastDeliveryError(t *testing.T) {
 	}
 	seed(t, s, 1)
 
-	r := gatherStatus(s, cfg, "https://otel.example/v1/logs", telemetryPolicy{})
+	r := gatherStatus(s, cfg, "https://otel.example/v1/logs", telemetryPolicy{}, deliverySettings{})
 	if r.LastDeliveryError != "proxyconnect tcp: operation not permitted" {
 		t.Fatalf("last delivery error = %q", r.LastDeliveryError)
 	}
@@ -377,7 +377,7 @@ func TestGatherStatusReadsLastDeliveryError(t *testing.T) {
 func TestGatherStatusNotConfiguredWhenNoEndpoint(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), pkgName)
 	s := &Outbox{Dir: t.TempDir()}
-	r := gatherStatus(s, cfg, "", telemetryPolicy{})
+	r := gatherStatus(s, cfg, "", telemetryPolicy{}, deliverySettings{})
 	if r.Configured {
 		t.Fatal("want not configured when endpoint is empty")
 	}
@@ -428,6 +428,19 @@ func TestFormatStatusVerboseReportsNoRecordedError(t *testing.T) {
 
 	if !strings.Contains(out, "last_delivery_error: none recorded") {
 		t.Fatalf("verbose output should report no recorded delivery error, got:\n%s", out)
+	}
+}
+
+func TestFormatStatusShowsDeliverySettingsOnlyWhenVerbose(t *testing.T) {
+	report := statusReport{BufferCap: 1000, FlushTimeout: 30 * time.Second}
+	if strings.Contains(formatStatus(report, false), "buffer_cap") {
+		t.Fatal("compact status contains delivery settings")
+	}
+	verbose := formatStatus(report, true)
+	for _, want := range []string{"configuration:", "  buffer_cap: 1000", "  flush_timeout: 30s"} {
+		if !strings.Contains(verbose, want) {
+			t.Fatalf("verbose status = %q, want %q", verbose, want)
+		}
 	}
 }
 

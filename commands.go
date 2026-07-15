@@ -184,19 +184,28 @@ type statusReport struct {
 	LastFlush         string
 	LastDeliveryError string
 	Hooks             []hookStatus
+	BufferCap         int
+	FlushTimeout      time.Duration
 }
 
 // gatherStatus inspects the outbox and config dir against an already-resolved
 // endpoint. A machine is configured once it has an endpoint to send to.
-func gatherStatus(s *Outbox, configDir, endpoint string, policy telemetryPolicy) statusReport {
+func gatherStatus(
+	s *Outbox,
+	configDir, endpoint string,
+	policy telemetryPolicy,
+	settings deliverySettings,
+) statusReport {
 	r := statusReport{
-		Version:    version,
-		ConfigDir:  configDir,
-		Endpoint:   endpoint,
-		Configured: endpoint != "",
-		RepoScope:  policy.repoScope(),
-		LastFlush:  "never",
-		Hooks:      gatherHookStatus(userHomeDir()),
+		Version:      version,
+		ConfigDir:    configDir,
+		Endpoint:     endpoint,
+		Configured:   endpoint != "",
+		RepoScope:    policy.repoScope(),
+		LastFlush:    "never",
+		Hooks:        gatherHookStatus(userHomeDir()),
+		BufferCap:    settings.BufferCap,
+		FlushTimeout: settings.FlushTimeout,
 	}
 	if configDir != "" {
 		if _, err := os.Stat(filepath.Join(configDir, caFileName)); err == nil {
@@ -251,6 +260,9 @@ func formatStatus(r statusReport, verbose bool) string {
 		fmt.Fprint(&b, "state: not configured — run `ai-agent-telemetry configure` to set the endpoint\n")
 	}
 	if verbose {
+		fmt.Fprint(&b, "configuration:\n")
+		fmt.Fprintf(&b, "  buffer_cap: %d\n", r.BufferCap)
+		fmt.Fprintf(&b, "  flush_timeout: %s\n", r.FlushTimeout)
 		fmt.Fprint(&b, "diagnostics:\n")
 		if r.LastDeliveryError != "" {
 			fmt.Fprintf(&b, "  last_delivery_error: %s\n", r.LastDeliveryError)

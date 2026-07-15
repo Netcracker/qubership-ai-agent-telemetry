@@ -476,7 +476,10 @@ func TestIngestEnqueuesAndFlushes(t *testing.T) {
 	}
 	stdin, _ := json.Marshal(map[string]any{"session_id": "s1", "transcript_path": tp})
 
-	code := ingest(s, "codex", srv.URL, stdin, func(string) string { return "" })
+	code := ingest(s, "codex", srv.URL, stdin, func(string) string { return "" }, deliverySettings{
+		BufferCap:    defaultBufferCap,
+		FlushTimeout: defaultFlushTimeout,
+	})
 	if code != 0 {
 		t.Fatalf("ingest exit = %d, want 0", code)
 	}
@@ -492,9 +495,75 @@ func TestIngestEnqueuesAndFlushes(t *testing.T) {
 	}
 }
 
+func TestIngestUsesConfiguredBufferCap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	s := &Outbox{Dir: t.TempDir()}
+	for i := 0; i < 2; i++ {
+		if err := s.Enqueue(SkillEvent{Skill: "old", TS: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tp := filepath.Join(t.TempDir(), "r.jsonl")
+	body := `{"type":"session_meta","payload":{"git":{"repository_url":"git@github.com:Netcracker/r.git"}}}` + "\n" +
+		`{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/demo/SKILL.md\"}"}}` + "\n"
+	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{"session_id": "s1", "transcript_path": tp})
+	settings := deliverySettings{BufferCap: 1, FlushTimeout: defaultFlushTimeout}
+
+	if code := ingest(s, "codex", "", stdin, func(string) string { return "" }, settings); code != 0 {
+		t.Fatalf("ingest exit = %d, want 0", code)
+	}
+	files, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("buffered %d events, want configured cap 1", len(files))
+	}
+}
+
+func TestRunFlushUsesConfiguredTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv(envFlushTimeout, "1ms")
+	s, err := DefaultOutbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Enqueue(SkillEvent{Skill: "queued", TS: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := run([]string{"flush", "--endpoint=" + srv.URL}, func(string) {}); code != 0 {
+		t.Fatalf("flush exit = %d, want 0", code)
+	}
+	files, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("buffered %d events, want timeout to preserve the queued event", len(files))
+	}
+}
+
 func TestIngestBadJSONStillSucceeds(t *testing.T) {
 	s := &Outbox{Dir: t.TempDir()}
-	code := ingest(s, "codex", "", []byte("not json"), func(string) string { return "" })
+	code := ingest(s, "codex", "", []byte("not json"), func(string) string { return "" }, deliverySettings{
+		BufferCap:    defaultBufferCap,
+		FlushTimeout: defaultFlushTimeout,
+	})
 	if code != 0 {
 		t.Fatalf("ingest exit = %d, want 0", code)
 	}
@@ -517,7 +586,15 @@ func TestIngestCursorFromTranscript(t *testing.T) {
 
 	// Empty endpoint => Flush is a no-op, so events stay in the outbox to inspect.
 	s := &Outbox{Dir: t.TempDir()}
-	if code := ingest(s, "cursor", "", stdin, func(string) string { return "git@github.com:Netcracker/repo.git" }); code != 0 {
+	settings := deliverySettings{BufferCap: defaultBufferCap, FlushTimeout: defaultFlushTimeout}
+	if code := ingest(
+		s,
+		"cursor",
+		"",
+		stdin,
+		func(string) string { return "git@github.com:Netcracker/repo.git" },
+		settings,
+	); code != 0 {
 		t.Fatalf("ingest exit = %d, want 0", code)
 	}
 
