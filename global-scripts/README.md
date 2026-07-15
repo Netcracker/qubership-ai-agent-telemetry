@@ -87,9 +87,10 @@ requires a telemetry release that supports CLI-managed global hooks.
 
 ## Git and Java prerequisites
 
-Git and Java are required only for the `git-hooks` component. If either command is missing, the interactive installer
-asks once whether you installed it in another terminal, then checks again. A negative response or failed second check
-stops the bootstrap before it changes any component.
+Git and Java 21 or newer are required only for the `git-hooks` component. If Git is missing, or if Java is missing,
+older than version 21, or cannot report its specification version, the interactive installer asks once whether you
+installed or updated the required tools in another terminal. It then checks again. A negative response or failed
+second check stops the bootstrap before it changes any component.
 
 If `core.hooksPath` already points somewhere else, the installer leaves it unchanged and marks `git-hooks` as
 `SKIPPED`. Pass `--force-git-hooks` or `-ForceGitHooks` to replace it explicitly.
