@@ -56,15 +56,19 @@ function Ensure-Path([string]$BinDir) {
   }
 }
 
-function Configure-IfMissing([string]$Bin) {
-  $cfg = Config-Dir
-  $envFile = Join-Path $cfg 'env'
-  $values = Read-EnvFile $envFile
-
-  $endpoint = $values['AI_AGENT_TELEMETRY_ENDPOINT']
+function Configure-OrRefreshHooks([string]$Bin) {
+  $values = Read-EnvFile (Join-Path (Config-Dir) 'env')
+  $endpoint = if ($env:AI_AGENT_TELEMETRY_ENDPOINT) {
+    $env:AI_AGENT_TELEMETRY_ENDPOINT
+  } else {
+    $values['AI_AGENT_TELEMETRY_ENDPOINT']
+  }
   if ([string]::IsNullOrWhiteSpace($endpoint)) {
     & $Bin configure
+  } else {
+    & $Bin hooks install
   }
+  if ($LASTEXITCODE -ne 0) { throw "hook configuration failed with exit code $LASTEXITCODE" }
 }
 
 $binDir = Join-Path $env:USERPROFILE '.local\bin'
@@ -102,5 +106,5 @@ try {
 
 Ensure-Path $binDir
 if (-not $SkipConfig) {
-  Configure-IfMissing $bin
+  Configure-OrRefreshHooks $bin
 }

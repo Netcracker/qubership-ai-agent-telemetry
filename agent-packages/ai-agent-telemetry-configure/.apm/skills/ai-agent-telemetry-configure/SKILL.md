@@ -1,6 +1,6 @@
 ---
 name: ai-agent-telemetry-configure
-description: Set up, repair, and verify skill-usage telemetry on a machine. Use right after installing the ai-agent-telemetry package, when skill events are not reaching the collector, when telemetry "stopped working", or whenever the user asks to provision, onboard, check, or fix skills telemetry — even phrased loosely as "is my telemetry working?" or "set up skills telemetry".
+description: Set up, repair, and verify machine-wide skill-usage telemetry after CLI installation or when configuration, global hooks, or collector delivery fail.
 ---
 
 # Configure AI agent telemetry
@@ -16,9 +16,8 @@ write. Never put the token in your own output.
 
 ## What "working" means
 
-- `ai-agent-telemetry status` — read-only state: binary version, config dir, endpoint, whether a
-  CA file is present, repository scope, spool backlog, last flush attempt, and a
-  configured/not verdict.
+- `ai-agent-telemetry status` — read-only state: binary version, config dir, endpoint, CA,
+  repository scope, spool backlog, last flush attempt, and global hook registration.
 - `ai-agent-telemetry selftest` — sends one real, marked probe event and reports whether the
   collector accepted it and the event left the spool.
 - Config lives under the config dir that `status` prints: `env` (endpoint, token),
@@ -125,12 +124,9 @@ Read state first, close only the gaps it shows, then prove delivery.
    `~/.local/bin` is on `PATH`. Then run `status` by bare name (see "Calling the binary").
 2. Fix each gap `status` reports (next section).
 3. Run `selftest`. Re-run `status` / `selftest` after each fix until it passes.
-4. Confirm the hook is wired for every installed harness (see "Confirm the hook is wired"). **If
-   Codex is a target, also ensure the sandbox execpolicy rule is in place and loads** (see "Codex
-   sandbox rule (check)") — without it Codex silently sends nothing. Then tell the user to
-   restart the agent so the bare-name hook resolves on real skill runs — and be explicit that this
-   means fully quitting the app or closing the terminal tab, not just a new chat (see "Calling the
-   binary" for the exact wording and how to confirm it took).
+4. Repair and verify global hooks (see "Confirm the global hooks"). **If Codex is a target, also
+   ensure the sandbox execpolicy rule is in place and loads** (see "Codex sandbox rule (check)").
+   Tell the user to fully quit the app or close the terminal tab, then restart it.
 5. Report the outcome (see "Verify delivery").
 6. Check for a newer version and offer it (see "Updating"). Do this at the end of every run —
    provisioning, repair, or a plain status check — so the user hears about updates without asking.
@@ -213,125 +209,74 @@ every few sessions) is separate and not wired yet.
 | connection refused / timeout | network or VPN | confirm the user can reach the collector host |
 | 401 / 403 | token missing or rejected | `configure`, enter the token at the no-echo prompt |
 | spool growing, flush failing | one of the above | fix the reported cause, then `selftest` |
-| `selftest` passes but real skill runs send nothing | the harness hook is not wired (never installed) | confirm and repair the hook (see "Confirm the hook is wired") |
-| **Cursor only:** hook is wired but Cursor silently ignores it | `.cursor/hooks.json` is missing the top-level `"version": 1` (apm < 0.21.0 did not add it automatically) | add `"version": 1` at the top level of `.cursor/hooks.json` next to the `"hooks"` key |
-| **Codex UI shows an old hook command** while the package source expects `ai-agent-telemetry ingest --agent=codex` | stale installed hook or stale Codex hook trust state; often the UI is showing another checkout's `.codex/hooks.json` | inspect the active hook path, repair it, clear stale `hooks.state` entries, and fully restart Codex |
-| **Codex only:** `status` / `selftest` report `endpoint: (unset)` / `not configured`, and `update-check` says `latest: unknown` | Codex sandbox hides `~/.config` and blocks egress — not a missing configuration | write the Codex execpolicy rule, then restart Codex (see [references/codex-sandbox.md](references/codex-sandbox.md)) |
+| `selftest` passes but real skill runs send nothing | the global hook is missing, invalid, or not reloaded | run `hooks install`, inspect `status --verbose`, and fully restart the harness |
+| **Cursor only:** hook is missing or invalid | `.cursor/hooks.json` is absent, malformed, or structurally incompatible | run `hooks install --target=cursor`; repair malformed JSON manually only after reviewing the reported path |
+| **Codex UI shows an old hook command** | the global file is stale or Codex has not reviewed the changed command | run `hooks install --target=codex`, inspect the displayed command, approve it if prompted, and fully restart Codex |
+| **Codex only:** `status` / `selftest` report `endpoint: (unset)` / `not configured`, and `update-check` says `latest: unknown` | Codex sandbox hides `~/.config` and blocks egress — not a missing configuration | run `hooks install --target=codex`, then restart Codex (see [references/codex-sandbox.md](references/codex-sandbox.md)) |
 | **Codex false negative:** same `not configured` symptom, but you called the binary by full path or wrapper | that invocation does not match the execpolicy rule, so it ran sandboxed | re-test with `ai-agent-telemetry status` / `ai-agent-telemetry selftest`; don't diagnose from the unmatched call |
 
 `selftest` prints the raw send error (for example an `x509` / `tls` message or an HTTP status);
 map it to a cause above. `status` shows the spool backlog and the configured/not verdict but
 does not itself test the network.
 
-## Confirm the hook is wired
+## Confirm the global hooks
 
-`selftest` proves the binary can reach the collector, but it calls the binary directly — it
-does not prove the harness fires the hook on real skill runs. A green `selftest` with an
-unwired hook looks done yet captures nothing. After `selftest` passes, confirm the telemetry
-hook is registered for every harness the package is installed for in this repository.
+`selftest` proves delivery but does not prove that a harness registered or loaded its hook. Repair
+the CLI-managed global hooks, then read their detailed state:
 
-`apm install --target <harness>` writes the hook into that harness's own config under the
-repository root (`apm compile` only regenerates the instruction layer — `AGENTS.md`,
-`CLAUDE.md`, and friends — and never touches the hook file). The hook calls the binary by its
-bare name, so for every config directory that exists the active hook file must contain the
-command `ai-agent-telemetry ingest --agent=<harness>`:
+```sh
+ai-agent-telemetry hooks install
+ai-agent-telemetry status --verbose
+```
+
+`hooks install` is noninteractive and does not read or change the endpoint, token, CA, or
+repository policy. `status --verbose` reports `installed`, `missing`, or `invalid`, plus the native
+path and parse error when available:
 
 | Harness | Active hook file | Must contain |
 | --- | --- | --- |
-| Claude Code | `.claude/settings.json` | a `PreToolUse` hook matched on `Skill` running `ai-agent-telemetry ingest --agent=claude` |
-| Codex | `.codex/hooks.json` | a `Stop` hook running `ai-agent-telemetry ingest --agent=codex` |
-| Cursor | `.cursor/hooks.json` | an `afterAgentResponse` hook running `ai-agent-telemetry ingest --agent=cursor`, plus a numeric top-level `version` |
+| Claude Code | `~/.claude/settings.json` | a `PreToolUse` hook matched on `Skill` running `ai-agent-telemetry ingest --agent=claude` |
+| Codex | `~/.codex/hooks.json` | a `Stop` hook running `ai-agent-telemetry ingest --agent=codex` |
+| Cursor | `~/.cursor/hooks.json` | an `afterAgentResponse` hook running `ai-agent-telemetry ingest --agent=cursor`, plus a numeric top-level `version` |
 
-A directory present but missing the command means the hook never installed: re-run
-`apm install --target <harness>` then `apm compile`, then re-check.
+A malformed or structurally incompatible file is left byte-for-byte unchanged. Review the path
+and error before repairing user-owned JSON, then rerun the two commands above.
 
-### Codex stale hook UI / trust cache
+### Codex changed-command review
 
-Codex Desktop's Hooks settings can make a stale hook look like an internal harness cache. Treat
-it as file state until proven otherwise. The UI groups hooks by repository root and reads that
-root's active `.codex/hooks.json`; in a worktree session this may be the main checkout, not the
-current worktree. Codex also persists hook enable/trust metadata in
-`~/.codex/config.toml` under `[hooks.state]`, keyed by the absolute hook file path and hook index.
-Those entries do not define the command, but after a hook shape changes they can keep stale
-trust state around and should be cleared for the changed hook path.
-
-When the UI shows an old command, especially a removed bootstrap wrapper such as
-`.codex\hooks\ai-agent-telemetry-configure\scripts\bootstrap.bat ingest --agent=codex`, investigate
-in this order:
-
-1. Read the Codex project/trust state and hook state:
-   - `~/.codex/config.toml`
-   - look for `[projects.'...']` and `[hooks.state.'<absolute .codex/hooks.json>:stop:...']`
-2. Open the exact hook file named in `hooks.state` and the Hooks UI path. On Windows this is
-   usually one of:
-   - `<repo>\.codex\hooks.json`
-   - `<repo>\.claude\worktrees\<name>\.codex\hooks.json`
-3. Compare that active file with the package hook source:
-   - the hook source in the `ai-agent-telemetry` package (Netcracker/qubership-ai-agent-telemetry)
-   - both must contain only `ai-agent-telemetry ingest --agent=codex` for the command; there should
-     be no `commandWindows`, no `.codex/hooks/.../bootstrap.bat`, and no `sh ./scripts/bootstrap.sh`
-     in the Codex hook.
-4. Search broadly before declaring it fixed:
-   - `rg -n "bootstrap\.bat|bootstrap\.sh|commandWindows|ai-agent-telemetry ingest --agent=codex" . ~/.codex`
-   - On Windows, include the main checkout explicitly if the current session is in a worktree.
-5. Repair both the package source and the installed active hook. Prefer `apm install --target codex`
-   from the intended repo root when available; otherwise make the installed `.codex/hooks.json`
-   match the current package source exactly.
-6. Clear only the stale hook-state blocks for that absolute hook path from `~/.codex/config.toml`.
-   Leave unrelated hook state alone. After this, Codex may ask the user to trust/enable the hook
-   again; that is expected because the command hash changed.
-7. Fully restart Codex Desktop. A new chat is not enough; the process must be recreated so the UI
-   and hook runner reload file state.
-
-After repair, prove the command shape directly:
+The CLI owns registration, not Codex's private trust decisions. When a command changes, do not
+delete or rewrite trust hashes automatically. Install the canonical global hook, then ask the user
+to inspect and approve the exact command if Codex prompts:
 
 ```sh
-ai-agent-telemetry status
-ai-agent-telemetry selftest
-ai-agent-telemetry ingest --agent=codex
+ai-agent-telemetry hooks install --target=codex
+ai-agent-telemetry status --verbose
 ```
 
-Then re-open Hooks settings and confirm the displayed command is
-`ai-agent-telemetry ingest --agent=codex`. If the UI still shows the old command, it is almost
-always reading a different `.codex/hooks.json`; go back to the absolute path shown by the UI or
-`~/.codex/config.toml` and patch that file, not the current worktree by assumption.
-
-Harness-specific trap:
-
-- **Claude Code** also writes the command into `.claude/apm-hooks.json`, but that file is
-  APM's provenance ledger, not a trigger — only `.claude/settings.json` arms the hook. Check
-  `settings.json`; a match in `apm-hooks.json` alone is a false positive.
+The approved command is `ai-agent-telemetry ingest --agent=codex`. Fully restart Codex after the
+review. A new chat is not enough.
 
 ## Codex sandbox rule (check)
 
 **Only when Codex is one of the targets on this machine** — skip it otherwise.
 
-Codex sandboxes the hook, so the binary cannot read `~/.config` or reach the network unless an
-execpolicy rule (`~/.codex/rules/ai-agent-telemetry.rules`) lets it out. The tell is a **Codex-only**
-failure: inside Codex `status` reports `endpoint: (unset)` / `not configured` while the same
-binary run from Claude Code or a plain shell is `configured` — not a missing configuration, the
-sandbox just hides the config. Verify the rule, cheapest check first:
+`hooks install` manages the execution-policy rule together with the Codex hook. Run:
 
-1. **Present** — `~/.codex/rules/ai-agent-telemetry.rules` exists (on Windows
-   `%USERPROFILE%\.codex\rules\ai-agent-telemetry.rules`).
-2. **Valid + allows** — inside Codex: `codex execpolicy check --rules
-   ~/.codex/rules/ai-agent-telemetry.rules "ai-agent-telemetry ingest --agent=codex" --pretty` reports
-   `decision: allow`.
-3. **Effective** — from inside Codex (after a restart), **call the binary by its bare name**:
-   `ai-agent-telemetry status` is `provisioned` and `ai-agent-telemetry selftest` delivers.
+```sh
+ai-agent-telemetry hooks install --target=codex
+ai-agent-telemetry status --verbose
+```
 
-**Verify only with the bare-name allowlisted forms.** The rule escapes the sandbox for one precise
-shape — bare `ai-agent-telemetry` / `ai-agent-telemetry.exe` followed by `status`, `selftest`, or
-`ingest --agent=codex`. A full-path call, a `&` wrapper, or a non-allowlisted subcommand
-(`version`, `update-check`) stays sandboxed and reports a **false** `not configured`; in Codex
-`update-check` therefore always reports `latest: unknown`, which is expected. The full enumeration
-and why is in [references/codex-sandbox.md](references/codex-sandbox.md). If the bare-name forms
-still report `not configured` after a restart, the rule is not loading.
+After restarting Codex, run `ai-agent-telemetry status` and `ai-agent-telemetry selftest` by bare
+name. If either command reports missing configuration only inside Codex, follow
+[the sandbox troubleshooting reference](references/codex-sandbox.md).
 
-If the rule is missing or a check fails, write/repair it — full rationale, the exact rule
-content, and the load-vs-trust troubleshooting are in
-[references/codex-sandbox.md](references/codex-sandbox.md). Don't report Codex telemetry working
-until check 3 holds.
+For a direct syntax check, pass the command as separate arguments:
+
+```sh
+codex execpolicy check --rules ~/.codex/rules/ai-agent-telemetry.rules \
+  ai-agent-telemetry ingest --agent=codex --pretty
+```
 
 ## Verify delivery
 
@@ -345,8 +290,7 @@ until check 3 holds.
 
 If the probe stays in the spool, delivery failed: treat it as a gap and diagnose from `status`.
 
-Don't report success without a passing `selftest` and a wired hook. A written config that
-can't reach the collector looks done but sends nothing; a green `selftest` with an unwired
-hook captures nothing on real skill runs. Both must hold. **For Codex, a third must hold:** the
-sandbox execpolicy rule is present and loads (see "Codex sandbox rule (check)") — otherwise
-the sandbox blocks the binary and Codex sends nothing no matter how the hook is wired.
+Don't report success without a passing `selftest` and an `installed` hook status. A written config
+that can't reach the collector looks done but sends nothing; a green `selftest` with an unwired
+hook captures nothing on real skill runs. For Codex, the installed status also validates the
+CLI-managed execution-policy file.

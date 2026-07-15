@@ -7,6 +7,10 @@ from the agent hook on each turn — there is no daemon and no background proces
 To install it, see [Installation in the README](../README.md#installation). This document
 covers the command reference, how it works inside, and where it keeps its files.
 
+For the usual setup, run the platform installer and enter collector details only if prompted.
+It registers Claude Code, Codex, and Cursor automatically. The commands below are primarily for
+customization, diagnostics, and repair.
+
 ## What it does
 
 On each hook run the CLI:
@@ -20,14 +24,15 @@ On each hook run the CLI:
 
 ## Subcommands
 
-The hook calls `ingest`; the installer can call `configure` on first run, and the setup skill
-uses the diagnostic commands, so you rarely run them by hand.
+The hook calls `ingest`. The installer configures a new machine and refreshes hooks during
+upgrades, so these commands rarely need to be run by hand.
 `ai-agent-telemetry <command>`:
 
 | Command | Purpose |
 | --- | --- |
-| `configure` | Write the per-machine config: collector endpoint, repository allowlist (repeatable `--repo-allow <pattern>`, default `github.com/Netcracker/*` when unset), optional CA certificate (`--ca=<path>`), and an optional token read without echo. Idempotent. |
-| `status` | Read-only check: build version, config directory, endpoint, repository scope, whether a CA is present, outbox backlog, last flush attempt, and a configured verdict. Sends nothing. |
+| `configure` | Write the per-machine endpoint, repository policy, optional CA, and optional token. Install all global hooks by default; use `--hooks=all`, `--hooks=none`, or `--hooks=<list>`. |
+| `hooks install` | Install or repair global hooks and required harness policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
+| `status` | Read-only check of configuration, delivery backlog, and each global hook. Sends nothing. Use `--verbose` for native paths and parse errors. |
 | `selftest` | Send one marked probe event and report whether the collector accepted it and it left the outbox. |
 | `ingest` | The hook path: read an agent hook payload on stdin, detect skill use (on Codex the `SKILL.md` reads in the session rollout; on Claude Code the `Skill` tool name in the `PreToolUse` payload; on Cursor the `SKILL.md` reads in the `afterAgentResponse` transcript), queue the events, and flush opportunistically. Always exits 0 so it never fails an agent turn. |
 | `flush` | Send queued events to the collector and delete each on success. |
@@ -35,8 +40,52 @@ uses the diagnostic commands, so you rarely run them by hand.
 | `self-update` | Download the latest release asset for this OS and architecture, verify it against `SHA256SUMS`, and replace the running binary. |
 | `version` | Print the build version. |
 
+Use the built-in help to see a command's current syntax and options:
+
+```sh
+ai-agent-telemetry --help
+ai-agent-telemetry help configure
+ai-agent-telemetry hooks --help
+```
+
+Explicit help prints the requested information and exits without running the command.
+
 When buffered events remain after a failed delivery attempt, `status` points to
 `status --verbose`. The verbose output includes the last recorded delivery error.
+
+## Global hooks
+
+The CLI manages one user-level native file per harness on every supported operating system:
+
+| Harness | File | Registration |
+| --- | --- | --- |
+| Claude Code | `~/.claude/settings.json` | `PreToolUse`, matcher `Skill` |
+| Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` | `Stop` and its execution policy |
+| Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, with numeric top-level `version` |
+
+Normal installation registers all three hooks; no separate hook command is required. For a custom
+target list, `configure` accepts `--hooks=all`, `--hooks=none`, or a comma-separated subset. The
+repair command uses `--target` instead:
+
+```sh
+ai-agent-telemetry configure --hooks=claude,codex
+ai-agent-telemetry hooks install --target=claude,codex
+```
+
+Hook updates preserve unrelated top-level fields, events, matcher groups, handlers, and unknown
+extension fields. They canonicalize only recognized telemetry entries and remove duplicate owned
+entries. Repeating an installation produces no further JSON changes.
+
+If a file contains malformed JSON or an incompatible native structure, the CLI leaves it
+byte-for-byte unchanged and reports that target as failed. It continues with the other selected
+targets and returns a nonzero exit code after reporting every failure.
+
+`status` reports `installed`, `missing`, or `invalid` for each harness. It verifies registration
+and required policy files, not execution or trust. `selftest` verifies collector delivery, not hook
+registration. Fully restart a harness after changing its hook so it reloads the file and refreshed `PATH`.
+
+The CLI does not edit Codex's private trust state. If Codex prompts after installation or a
+command change, inspect and approve exactly `ai-agent-telemetry ingest --agent=codex`.
 
 ## Updating
 
@@ -57,6 +106,9 @@ You can also force a reinstall through the installer:
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --force
 iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
 ```
+
+Re-running the installer updates the binary and refreshes the global hooks without asking for
+collector settings again. The skip-config options leave both machine settings and hooks unchanged.
 
 ## Buffering and delivery
 
@@ -128,6 +180,9 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 | **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the installer so the hook resolves it by bare name |
 | **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush`, `.last_delivery_error`, and `.flush.lock`), `offsets/` (per-session transcript offsets) |
+| **Claude Code hook** | `~/.claude/settings.json` | Global `PreToolUse` registration merged with unrelated settings |
+| **Codex hook** | `~/.codex/hooks.json` | Global `Stop` registration merged with unrelated hooks |
+| **Cursor hook** | `~/.cursor/hooks.json` | Global `afterAgentResponse` registration and numeric `version` |
 
 All three are the same path on every OS, including Windows (`%USERPROFILE%\.config\…`,
 `%USERPROFILE%\.cache\…`). This is deliberate: `os.UserConfigDir()` returns `%AppData%` on

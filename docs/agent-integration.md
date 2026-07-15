@@ -5,17 +5,25 @@ everywhere; what differs is the hook the agent offers and how much it tells us.
 
 ## The shared path
 
-The hooks package
-([`ai-agent-telemetry`](https://github.com/Netcracker/qubership-ai-agent-telemetry/tree/main/agent-packages/ai-agent-telemetry))
-registers one harness-specific hook. The hook calls the `ai-agent-telemetry` CLI by its
-bare name — `ai-agent-telemetry ingest --agent=<name>` — so the binary must be on `PATH`;
-the installer puts it in `~/.local/bin` and adds that directory to `PATH`. A bare command
-name is shell-agnostic, which is what makes one hook work across every harness and OS
-(Git Bash, PowerShell, and `cmd.exe` on Windows; POSIX `sh` elsewhere). The CLI reads the
-agent's payload on stdin, detects any skill that ran,
-queues the event to an on-disk outbox, and flushes opportunistically over OTLP/HTTPS. It
-always exits 0, so it never fails an agent turn. For its internals, see
-[the ai-agent-telemetry CLI](cli.md).
+The CLI registers one global harness-specific hook in each native user configuration:
+
+| Harness | Global file |
+| --- | --- |
+| Claude Code | `~/.claude/settings.json` |
+| Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` |
+| Cursor | `~/.cursor/hooks.json` |
+
+One platform-installer run puts the binary on `PATH` and registers all three hooks, even when a
+harness is not installed yet. Each hook calls the CLI by its bare name,
+`ai-agent-telemetry ingest --agent=<name>`, which works across Git Bash, PowerShell, `cmd.exe`,
+and POSIX `sh`. The Codex policy file allows only the hook and two diagnostic commands to access
+the machine configuration and collector outside its sandbox.
+
+The CLI reads the agent's payload on stdin, detects any skill that ran, queues the event to an
+on-disk outbox, and flushes opportunistically over OTLP/HTTPS. It always exits 0, so it never
+fails an agent turn. For its internals, see [the ai-agent-telemetry CLI](cli.md).
+
+After installation, follow the README's [verification, restart, and trust steps](../README.md#installation).
 
 Detection uses one of two signals, depending on what the agent exposes:
 
@@ -102,10 +110,9 @@ from the hook's `workspace_roots`. The manual-block scan is gated on the block b
 present, not bounded to it, so a stray `Skill Name:` line elsewhere in the same message
 would also match — the cost is a spurious name, never a missed turn.
 
-Cursor requires a numeric top-level `version` in `.cursor/hooks.json`. Early APM releases dropped it on
-install, which silently disabled every project hook; APM >= 0.21.0 writes it automatically and the hooks
-package ships it explicitly, so no manual step is needed. The full record is in
-the [Cursor workaround].
+Cursor requires a numeric top-level `version` in `.cursor/hooks.json`. The CLI preserves an
+existing numeric value and adds `version: 1` when it is absent, so no manual step is needed. The
+historical APM issue is recorded in the [Cursor workaround].
 
 ```json
 {
@@ -124,6 +131,13 @@ OpenCode is not shipped yet. It emits a native event: when skills are managed th
 the `.claude/skills/` compatibility extension, activation is a `use_skill` tool call
 caught by the pre-tool-call hook, with the skill name in its arguments — the same
 native-event path as Claude Code.
+
+## Legacy APM compatibility
+
+The retained `ai-agent-telemetry` APM hook package remains compatible with repositories that
+already consume it. New setups use the machine-wide files created by the platform installer. A
+parity test keeps the package's three command strings aligned with the CLI while existing
+consumers migrate.
 
 [Codex spec]: superpowers/specs/2026-06-16-codex-session-parsing.md
 [Cursor workaround]: superpowers/decisions/2026-06-17-cursor-hooks-version-workaround.md

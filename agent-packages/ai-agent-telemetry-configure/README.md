@@ -1,9 +1,11 @@
 # ai-agent-telemetry-configure
 
-This package delivers the setup, repair, and verification skill for the
-`ai-agent-telemetry` CLI. The standalone installers handle first-run binary
-installation and delegate missing config to the CLI; this package is for
-agent-guided diagnosis and repair.
+This package delivers the optional setup, repair, and verification skill for the
+`ai-agent-telemetry` CLI. The standalone installers handle binary installation,
+configuration, and global hook registration; this package provides agent-guided diagnosis.
+
+Most users only need the standalone installer. Add this package when you want the agent to guide
+repair or collector CA troubleshooting.
 
 Supported agents: Codex, Claude Code, and Cursor. An OpenCode adapter is
 follow-up work.
@@ -40,25 +42,19 @@ apm install --target claude
 enough. Codex and other agents that read `AGENTS.md` additionally need
 `apm compile --target codex` to register the trigger.
 
-Restart your agent and ask it to "set up skills telemetry". The bundled setup
-skill reads the per-machine state, closes missing setup gaps, and verifies
-delivery. Installing is the consent boundary — nothing is sent until the CLI is
-configured with an endpoint.
+Restart your agent and ask it to "set up skills telemetry". The bundled setup skill reads
+per-machine configuration and global hook status, repairs missing setup, and verifies delivery.
 
 ## How it works
 
-On each turn the agent fires the hook the package registered, and the hook runs
-the CLI by its bare name as `ai-agent-telemetry ingest --agent=<agent>`. The CLI
-detects the skill from the agent's payload — a native hook event where the agent
-emits one (Claude Code), the session transcript where it does not (Codex, Cursor).
+On each turn a CLI-managed global hook runs the binary by its bare name as
+`ai-agent-telemetry ingest --agent=<agent>`. The CLI detects the skill from a native hook
+event where available (Claude Code), or from the session transcript (Codex and Cursor).
 
-The hook resolves the binary from `PATH`, so it must be installed there first.
-The standalone installers (`install.sh` on macOS/Linux, `install.ps1` on
-Windows) fetch the `ai-agent-telemetry` Go binary into `~/.local/bin`, add that
-directory to `PATH`, and run `ai-agent-telemetry configure` when no endpoint is
-configured yet. `ingest` reads the hook payload, normalizes the event, and writes
-it to a machine-global outbox. The same run opportunistically flushes buffered
-events to the collector over OTLP/HTTPS. There is no daemon.
+The standalone installer puts the binary on `PATH`, saves the machine configuration, and registers
+all supported hooks. The skill diagnoses and repairs any gaps reported by the CLI. `ingest` writes
+normalized events to a machine-global outbox and opportunistically flushes them over OTLP/HTTPS.
+There is no daemon.
 
 ## Configuration
 
