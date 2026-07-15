@@ -59,7 +59,7 @@ func TestApplyConfigureWritesEndpointTokenAndCA(t *testing.T) {
 	if err := os.WriteFile(src, selfSignedPEM(t), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyConfigure(cfg, "https://otel.example/v1/logs", src, "secret", ""); err != nil {
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", src, "secret", "", deliverySettingOverrides{}); err != nil {
 		t.Fatal(err)
 	}
 	env := loadEnvFile(filepath.Join(cfg, "env"))
@@ -74,10 +74,30 @@ func TestApplyConfigureWritesEndpointTokenAndCA(t *testing.T) {
 	}
 }
 
+func TestApplyConfigureWritesDeliverySettings(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	delivery := deliverySettingOverrides{BufferCap: "1000", FlushTimeout: "30s"}
+	if err := applyConfigure(cfg, "", "", "", "", delivery); err != nil {
+		t.Fatal(err)
+	}
+	env := loadEnvFile(filepath.Join(cfg, "env"))
+	if env[envBufferCap] != "1000" || env[envFlushTimeout] != "30s" {
+		t.Fatalf("delivery settings = %v", env)
+	}
+
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", "", deliverySettingOverrides{}); err != nil {
+		t.Fatal(err)
+	}
+	env = loadEnvFile(filepath.Join(cfg, "env"))
+	if env[envBufferCap] != "1000" || env[envFlushTimeout] != "30s" {
+		t.Fatalf("omitted delivery settings were not preserved: %v", env)
+	}
+}
+
 func TestApplyConfigureWritesRepoAllow(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), pkgName)
 	allow := "github.com/Netcracker/*,gitlab.example.com/qubership/**"
-	if err := applyConfigure(cfg, "", "", "", allow); err != nil {
+	if err := applyConfigure(cfg, "", "", "", allow, deliverySettingOverrides{}); err != nil {
 		t.Fatal(err)
 	}
 	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
@@ -90,7 +110,7 @@ func TestApplyConfigureWritesRepoAllow(t *testing.T) {
 func TestApplyConfigureDefaultsRepoAllowWhenUnset(t *testing.T) {
 	t.Setenv(envRepoAllow, "")
 	cfg := filepath.Join(t.TempDir(), pkgName)
-	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", "", deliverySettingOverrides{}); err != nil {
 		t.Fatal(err)
 	}
 	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
@@ -103,10 +123,10 @@ func TestApplyConfigurePreservesExistingRepoAllow(t *testing.T) {
 	t.Setenv(envRepoAllow, "")
 	cfg := filepath.Join(t.TempDir(), pkgName)
 	allow := "github.com/Qubership/*"
-	if err := applyConfigure(cfg, "", "", "", allow); err != nil {
+	if err := applyConfigure(cfg, "", "", "", allow, deliverySettingOverrides{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", "", deliverySettingOverrides{}); err != nil {
 		t.Fatal(err)
 	}
 	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
@@ -117,7 +137,7 @@ func TestApplyConfigurePreservesExistingRepoAllow(t *testing.T) {
 
 func TestApplyConfigureOnlyWritesProvidedFields(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), pkgName)
-	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", ""); err != nil {
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", "", deliverySettingOverrides{}); err != nil {
 		t.Fatal(err)
 	}
 	env := loadEnvFile(filepath.Join(cfg, "env"))
@@ -163,6 +183,36 @@ func TestParseConfigureFlags(t *testing.T) {
 	wantHooks := []hookTarget{hookClaude, hookCursor}
 	if !reflect.DeepEqual(opts.Hooks, wantHooks) {
 		t.Fatalf("hooks = %v, want %v", opts.Hooks, wantHooks)
+	}
+}
+
+func TestParseConfigureFlagsAcceptsDeliverySettings(t *testing.T) {
+	opts, err := parseConfigureFlags([]string{"--buffer-cap", "1000", "--flush-timeout=30s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Delivery.BufferCap != "1000" || opts.Delivery.FlushTimeout != "30s" {
+		t.Fatalf("delivery settings = %+v", opts.Delivery)
+	}
+}
+
+func TestParseConfigureFlagsRejectsInvalidDeliverySettings(t *testing.T) {
+	tests := [][]string{
+		{"--buffer-cap=0"},
+		{"--buffer-cap=-1"},
+		{"--buffer-cap=many"},
+		{"--flush-timeout=0s"},
+		{"--flush-timeout=-1s"},
+		{"--flush-timeout=long"},
+		{"--buffer-cap"},
+		{"--flush-timeout"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			if _, err := parseConfigureFlags(args); err == nil {
+				t.Fatalf("parseConfigureFlags(%q) succeeded, want error", args)
+			}
+		})
 	}
 }
 

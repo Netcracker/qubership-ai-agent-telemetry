@@ -56,10 +56,44 @@ func TestRunConfigureHelpShowsAcceptedValueForms(t *testing.T) {
 	if code := run([]string{"configure", "--help"}, func(s string) { out += s }); code != 0 {
 		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
 	}
-	for _, want := range []string{"--repo-allow <pattern>", "--hooks <targets>"} {
+	for _, want := range []string{
+		"--repo-allow <pattern>",
+		"--hooks <targets>",
+		"--buffer-cap <events>",
+		"--flush-timeout <duration>",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output = %q, want %q", out, want)
 		}
+	}
+}
+
+func TestRunConfigureRejectsInvalidDeliverySettingsWithoutWritingFiles(t *testing.T) {
+	tests := [][]string{
+		{"configure", "--buffer-cap=0"},
+		{"configure", "--flush-timeout=invalid"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			home, configHome := isolateRunConfigure(t)
+			var out string
+			if code := run(args, func(s string) { out += s }); code != 2 {
+				t.Fatalf("exit code = %d, want 2; output = %q", code, out)
+			}
+			if !strings.Contains(out, "positive") {
+				t.Fatalf("output = %q, want validation error", out)
+			}
+			for _, path := range []string{
+				filepath.Join(configHome, pkgName, "env"),
+				hookPath(home, hookClaude),
+				hookPath(home, hookCodex),
+				hookPath(home, hookCursor),
+			} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("configuration exists after invalid command at %s: %v", path, err)
+				}
+			}
+		})
 	}
 }
 

@@ -25,6 +25,10 @@ var commandHelpEntries = []commandHelpEntry{
 		Options: []helpOption{
 			{Syntax: "--endpoint=<url>", Description: "Set the OTLP/HTTP collector endpoint."},
 			{Syntax: "--ca=<path>", Description: "Install a private CA certificate."},
+			{Syntax: "--buffer-cap=<events>", Description: "Set the positive local event buffer capacity (default: 100)."},
+			{Syntax: "--buffer-cap <events>", Description: "Use the equivalent space-separated form."},
+			{Syntax: "--flush-timeout=<duration>", Description: "Set the positive ordinary flush timeout (default: 2s)."},
+			{Syntax: "--flush-timeout <duration>", Description: "Use the equivalent space-separated form."},
 			{Syntax: "--repo-allow=<pattern>", Description: "Allow a repository pattern; may be repeated."},
 			{Syntax: "--repo-allow <pattern>", Description: "Use the equivalent space-separated form."},
 			{Syntax: "--hooks=<targets>", Description: "Install all, none, or a comma-separated subset of claude,codex,cursor (default: all)."},

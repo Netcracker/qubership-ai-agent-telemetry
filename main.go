@@ -67,7 +67,7 @@ func run(args []string, stdout func(string)) int {
 		}
 		endpoint := configureEndpoint(opts.Endpoint)
 		token := readSecret("Collector token (leave blank to skip): ")
-		if err := applyConfigure(cfg, endpoint, opts.CAPath, token, opts.RepoAllow); err != nil {
+		if err := applyConfigure(cfg, endpoint, opts.CAPath, token, opts.RepoAllow, opts.Delivery); err != nil {
 			fmt.Fprintln(os.Stderr, "configure:", err)
 			return 1
 		}
@@ -230,6 +230,36 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 			opts.CAPath = strings.TrimPrefix(a, "--ca=")
 		case strings.HasPrefix(a, "--repo-allow="):
 			repoAllowValues = append(repoAllowValues, strings.TrimPrefix(a, "--repo-allow="))
+		case strings.HasPrefix(a, "--buffer-cap="):
+			value := strings.TrimPrefix(a, "--buffer-cap=")
+			if _, err := parseBufferCap(value); err != nil {
+				return configureOptions{}, fmt.Errorf("invalid --buffer-cap value %q: %w", value, err)
+			}
+			opts.Delivery.BufferCap = value
+		case a == "--buffer-cap":
+			value, err := configureFlagValue(args, &i, a)
+			if err != nil {
+				return configureOptions{}, err
+			}
+			if _, err := parseBufferCap(value); err != nil {
+				return configureOptions{}, fmt.Errorf("invalid --buffer-cap value %q: %w", value, err)
+			}
+			opts.Delivery.BufferCap = value
+		case strings.HasPrefix(a, "--flush-timeout="):
+			value := strings.TrimPrefix(a, "--flush-timeout=")
+			if _, err := parseFlushTimeout(value); err != nil {
+				return configureOptions{}, fmt.Errorf("invalid --flush-timeout value %q: %w", value, err)
+			}
+			opts.Delivery.FlushTimeout = value
+		case a == "--flush-timeout":
+			value, err := configureFlagValue(args, &i, a)
+			if err != nil {
+				return configureOptions{}, err
+			}
+			if _, err := parseFlushTimeout(value); err != nil {
+				return configureOptions{}, fmt.Errorf("invalid --flush-timeout value %q: %w", value, err)
+			}
+			opts.Delivery.FlushTimeout = value
 		case a == "--repo-allow":
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
 				return configureOptions{}, fmt.Errorf("missing value for %q", a)
@@ -265,6 +295,14 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 	}
 	opts.RepoAllow = strings.Join(repoAllowValues, ",")
 	return opts, nil
+}
+
+func configureFlagValue(args []string, index *int, flag string) (string, error) {
+	if *index+1 >= len(args) || strings.HasPrefix(args[*index+1], "--") {
+		return "", fmt.Errorf("missing value for %q", flag)
+	}
+	*index++
+	return args[*index], nil
 }
 
 func configureEndpoint(flag string) string {

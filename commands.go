@@ -16,13 +16,22 @@ import (
 // the env file (merged, so they can be set in separate runs); repository scope
 // goes into repo-allow; a CA path is validated and copied to ca.crt. Empty
 // fields are left untouched, which keeps re-running configure safe.
-func applyConfigure(configDir, endpoint, caPath, token, repoAllow string) error {
+func applyConfigure(
+	configDir, endpoint, caPath, token, repoAllow string,
+	delivery deliverySettingOverrides,
+) error {
 	updates := map[string]string{}
 	if endpoint != "" {
 		updates["AI_AGENT_TELEMETRY_ENDPOINT"] = endpoint
 	}
 	if token != "" {
 		updates["AI_AGENT_TELEMETRY_TOKEN"] = token
+	}
+	if delivery.BufferCap != "" {
+		updates[envBufferCap] = delivery.BufferCap
+	}
+	if delivery.FlushTimeout != "" {
+		updates[envFlushTimeout] = delivery.FlushTimeout
 	}
 	if repoAllow == "" && repoAllowUnset(configDir) {
 		repoAllow = defaultRepoAllow

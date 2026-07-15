@@ -222,6 +222,12 @@ type configureOptions struct {
 	CAPath    string
 	RepoAllow string
 	Hooks     []hookTarget
+	Delivery  deliverySettingOverrides
+}
+
+type deliverySettingOverrides struct {
+	BufferCap    string
+	FlushTimeout string
 }
 
 func parseHookTargets(raw string) ([]hookTarget, error) {
