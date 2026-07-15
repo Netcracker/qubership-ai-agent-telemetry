@@ -97,19 +97,17 @@ TelemetryEvent
 ├── session_id
 ├── repo_remote
 ├── repo_dir        # local only; never serialized
-├── timestamp
-└── payload         # exactly one typed payload
-    ├── skill
-    ├── command
-    └── mcp
+├── ts
+└── payload         # one shape selected by event_name
 ```
 
 The envelope has these invariants:
 
 - `schema_version` is `1` for the new format.
 - `event_name` is `skill_executed`, `command_invoked`, or `mcp_tool_executed`.
-- Exactly one typed payload is present, and it matches `event_name`.
-- `agent`, `timestamp`, and the payload's primary name are required.
+- `agent` is `claude`, `codex`, or `cursor`.
+- The typed payload is present and its shape matches `event_name`.
+- `agent`, `ts`, and the payload's primary name are required.
 - `repo_dir` is available to local repository-policy code but has `json:"-"` and
   cannot enter the outbox.
 - Optional duration is a non-negative integer number of milliseconds.
@@ -118,11 +116,96 @@ The JSON payloads contain only fields that can leave the process. They use
 separate structs rather than a generic attribute map so a newly decoded harness
 field cannot enter the outbox accidentally.
 
+### Version 1 JSON format
+
+Version 1 uses one top-level envelope and a direct event-specific `payload`
+object. It does not use `payload.skill`, `payload.command`, `payload.mcp`, or
+nullable payload fields. Optional fields are omitted rather than serialized as
+`null`.
+
+Timestamps retain the existing `ts` JSON name. Writers serialize UTC values in
+RFC 3339 with optional fractional seconds, equivalent to Go's
+`time.RFC3339Nano`; readers accept the same format. The canonical skill event
+is:
+
+```json
+{
+  "schema_version": 1,
+  "event_name": "skill_executed",
+  "agent": "codex",
+  "session_id": "session-123",
+  "repo_remote": "github.com/netcracker/project",
+  "ts": "2026-07-16T12:34:56.123456789Z",
+  "payload": {
+    "skill_name": "superpowers:brainstorming"
+  }
+}
+```
+
+The canonical command event is:
+
+```json
+{
+  "schema_version": 1,
+  "event_name": "command_invoked",
+  "agent": "claude",
+  "session_id": "session-123",
+  "repo_remote": "github.com/netcracker/project",
+  "ts": "2026-07-16T12:34:56.123456789Z",
+  "payload": {
+    "command_name": "review-pr",
+    "command_source": "plugin",
+    "expansion_type": "slash_command"
+  }
+}
+```
+
+The canonical MCP event is:
+
+```json
+{
+  "schema_version": 1,
+  "event_name": "mcp_tool_executed",
+  "agent": "claude",
+  "session_id": "session-123",
+  "repo_remote": "github.com/netcracker/project",
+  "ts": "2026-07-16T12:34:56.123456789Z",
+  "payload": {
+    "server_name": "github",
+    "tool_name": "get_issue",
+    "outcome": "succeeded",
+    "duration_ms": 42
+  }
+}
+```
+
+`repo_remote`, `server_name`, and `duration_ms` are optional and are absent
+when unavailable. All other fields shown for the corresponding event are
+required. A present field cannot be `null`. The decoder rejects unknown
+top-level and payload fields, unknown schema versions, payloads that do not
+match `event_name`, and invalid timestamp values.
+
 ### Legacy outbox compatibility
 
 `Outbox.Read` first identifies the stored format. A JSON object without
 `schema_version` and `event_name`, but with the legacy `skill` field, decodes as
 `skill_executed`. New events pass envelope validation before they are returned.
+
+The legacy on-disk shape remains exactly:
+
+```json
+{
+  "agent": "codex",
+  "session_id": "session-123",
+  "repo_remote": "github.com/netcracker/project",
+  "skill": "superpowers:brainstorming",
+  "ts": "2026-07-16T12:34:56.123456789Z"
+}
+```
+
+Legacy `repo_remote` remains optional. The decoder maps this object to an
+in-memory `skill_executed` event and applies the same identifier validation as
+version 1; writers emit only the version 1 format.
 
 No eager migration rewrites buffered files. A mixed batch of legacy and
 versioned files flushes in filename order. Unreadable or invalid entries remain
@@ -191,6 +274,35 @@ with an unreviewed value.
 Missing and negative durations are omitted. The adapters do not infer data from
 URLs, server commands, tool payloads, results, or error strings.
 
+### Identifier validation
+
+Every external identifier is validated before enqueue. Validation applies to
+the exact input: adapters do not trim, truncate, replace characters, or change
+case. This avoids aliasing two harness values to one telemetry dimension.
+
+The accepted profiles are:
+
+| Fields | Length | Pattern |
+| --- | --- | --- |
+| `session_id` | 1–128 | `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$` |
+| `skill_name`, `command_name` | 1–255 | `^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$` |
+| `command_source` | 1–64 | `^[A-Za-z0-9_.-]{1,64}$` |
+| `server_name`, `tool_name` | 1–128 | `^[A-Za-z0-9_.-]{1,128}$` |
+
+Lengths count ASCII characters; the patterns reject non-ASCII text by design.
+The colon in skill and command names preserves namespaced identifiers such as
+`plugin-name:skill-name`; the 255-character limit leaves room for harness and
+plugin namespaces while keeping the value finite. MCP names use the stricter
+character set from the
+[MCP tool-name specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools),
+but enforce its recommendations as telemetry requirements.
+
+Whitespace, control characters, path separators, shell metacharacters, Unicode
+lookalikes, empty values, and values above the limit are invalid. If any
+required identifier is invalid, the adapter emits no event. If an optional MCP
+server name is present but invalid, the whole event is dropped rather than
+silently removing or rewriting the server identity.
+
 ## Hook installation
 
 The CLI-managed global hook files gain these owned entries:
@@ -232,7 +344,8 @@ All event types pass through the existing repository allowlist before enqueue.
 The policy may use `repo_dir` and local git remotes to select an allowed
 normalized remote, but only `repo.remote` is serialized.
 
-The expanded allowlist permits:
+The expanded allowlist permits only values that pass the identifier profiles
+or their fixed enums:
 
 - harness name;
 - session ID;
@@ -259,9 +372,11 @@ The following fields remain excluded even when a hook provides them:
 - arbitrary unrecognized fields.
 
 Command, skill, server, and tool names are identifiers required for the intended
-usage analytics. They are not treated as content fields. A new ADR extends ADR
-0004 with this event-specific allowlist and records that any future content or
-identity field requires another explicit privacy decision.
+usage analytics. The limits bound the size and shape of each dimension value;
+the collector remains responsible for operational limits on the number of
+distinct valid identifiers. These names are not treated as content fields. A
+new ADR extends ADR 0004 with this event-specific allowlist and records that any
+future content or identity field requires another explicit privacy decision.
 
 ## Error handling
 
@@ -271,6 +386,7 @@ errors:
 - malformed JSON emits no event;
 - an unsupported agent or hook event emits no event;
 - a missing required field emits no event;
+- an invalid required or present optional identifier emits no event;
 - an unrecognized MCP name emits no event rather than a guessed identity;
 - an unavailable optional field is omitted;
 - an event outside repository policy is dropped before enqueue;
@@ -287,8 +403,13 @@ documented post-execution hooks are treated as the authoritative signal.
 ### Event and outbox tests
 
 - Round-trip every new event type.
+- Compare serialization with canonical JSON fixtures for all three version 1
+  events and the legacy event.
 - Reject an unknown schema version, event name, outcome, or mismatched payload.
+- Reject unknown envelope and payload fields, explicit `null` values, and
+  invalid timestamp formats.
 - Decode a legacy skill-event file.
+- Reject a legacy skill event whose identifiers fail the version 1 rules.
 - Flush a mixed legacy and versioned batch in order.
 - Apply repository policy to every event type.
 - Preserve local-only `repo_dir` behavior.
@@ -301,6 +422,10 @@ documented post-execution hooks are treated as the authoritative signal.
 - Parse Cursor MCP completion without inventing a server name.
 - Cover malformed JSON, missing names, unsupported expansion types, and invalid
   duration.
+- Cover identifier length boundaries and reject empty, oversized, non-ASCII,
+  whitespace, control-character, path-separator, and shell-metacharacter names.
+- Assert for each rejected identifier that its value reaches neither outbox JSON
+  nor serialized OTLP.
 - Seed fixtures with prompts, arguments, results, errors, paths, URLs, model
   names, and email addresses.
 - Assert that none of those sensitive fixture values reach normalized events.
