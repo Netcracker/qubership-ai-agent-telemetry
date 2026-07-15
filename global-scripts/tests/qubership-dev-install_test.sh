@@ -52,7 +52,6 @@ setup_component_fixture() {
   export XDG_CONFIG_HOME="$FIXTURE_ROOT/config"
   export QDI_TEST_LOG="$FIXTURE_ROOT/commands.log"
   export QDI_GIT_CONFIG="$FIXTURE_ROOT/git-hooks-path"
-  export QDI_APM_STATE="$FIXTURE_ROOT/apm-installed"
   export QDI_MARKETPLACE_STATE="$FIXTURE_ROOT/marketplace-added"
   export QDI_TELEMETRY_INSTALLER="$FIXTURE_ROOT/telemetry-installer.sh"
   export QDI_TELEMETRY_CLI="$FIXTURE_ROOT/ai-agent-telemetry"
@@ -94,10 +93,7 @@ case "$*" in
     : > "$QDI_MARKETPLACE_STATE"
     ;;
   view*)
-    [ -f "$QDI_APM_STATE" ]
-    ;;
-  install*)
-    : > "$QDI_APM_STATE"
+    exit 1
     ;;
 esac
 EOF
@@ -192,7 +188,7 @@ EOF
 
 teardown_component_fixture() {
   rm -rf "$FIXTURE_ROOT"
-  unset FIXTURE_ROOT HOME XDG_DATA_HOME XDG_CONFIG_HOME QDI_TEST_LOG QDI_GIT_CONFIG QDI_APM_STATE
+  unset FIXTURE_ROOT HOME XDG_DATA_HOME XDG_CONFIG_HOME QDI_TEST_LOG QDI_GIT_CONFIG
   unset QDI_MARKETPLACE_STATE QDI_APM_INSTALLER QDI_APM_CLI QDI_TELEMETRY_INSTALLER QDI_TELEMETRY_CLI
   unset QDI_GIT_ORIGIN_FILE QDI_GIT_STATUS QDI_GIT_PULL_FAIL
   unset QUBERSHIP_DEV_APM_INSTALL_URL
@@ -334,6 +330,7 @@ test_default_install_runs_every_component() {
   assert_log_contains "apm self-update"
   assert_log_contains "apm install qubership-global-essentials@qubership-ai-packages -g --target claude,codex,cursor"
   assert_log_contains "apm compile -g"
+  assert_log_contains "apm deps list -g"
   assert_log_contains "telemetry-installer --skip-config"
   assert_log_not_contains "telemetry-installer --skip-config --force"
   assert_log_contains "ai-agent-telemetry hooks install --target=claude,codex,cursor"
@@ -394,7 +391,6 @@ test_selection_and_harnesses_are_forwarded() {
 
 test_force_update_refreshes_selected_components() {
   setup_component_fixture
-  : > "$QDI_APM_STATE"
   : > "$QDI_MARKETPLACE_STATE"
   mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
   printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
@@ -402,7 +398,8 @@ test_force_update_refreshes_selected_components() {
   [ "$RUN_CODE" -eq 0 ] || fail "force update failed: $RUN_OUTPUT"
   assert_log_contains "apm self-update"
   assert_log_contains "apm marketplace update qubership-ai-packages"
-  assert_log_contains "apm update qubership-global-essentials -g --yes --target claude"
+  assert_log_contains \
+    "apm install --update qubership-global-essentials@qubership-ai-packages -g --target claude"
   assert_log_contains "telemetry-installer --skip-config --force"
   assert_log_contains "ai-agent-telemetry hooks install --target=claude"
   assert_log_contains "git -C $QUBERSHIP_DEV_GIT_HOOKS_DIR pull --ff-only"

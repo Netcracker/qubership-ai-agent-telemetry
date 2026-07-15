@@ -196,15 +196,12 @@ function Configure-Apm {
     Invoke-Checked $script:ApmCommand @('marketplace', 'add', 'Netcracker/qubership-ai-packages')
   }
 
-  & $script:ApmCommand view qubership-global-essentials -g *> $null
-  $packageInstalled = $LASTEXITCODE -eq 0
   $targets = $selectedHarnesses -join ','
-  if ($packageInstalled -and $ForceUpdate) {
+  if ($ForceUpdate) {
     Invoke-Checked $script:ApmCommand @(
-      'update', 'qubership-global-essentials', '-g', '--yes', '--target', $targets
+      'install', '--update', 'qubership-global-essentials@qubership-ai-packages',
+      '-g', '--target', $targets
     )
-  } elseif ($packageInstalled) {
-    Invoke-Checked $script:ApmCommand @('install', '-g', '--target', $targets)
   } else {
     Invoke-Checked $script:ApmCommand @(
       'install', 'qubership-global-essentials@qubership-ai-packages', '-g', '--target', $targets
@@ -214,7 +211,7 @@ function Configure-Apm {
 }
 
 function Test-Apm {
-  Invoke-Checked $script:ApmCommand @('view', 'qubership-global-essentials', '-g')
+  Invoke-Checked $script:ApmCommand @('deps', 'list', '-g')
 }
 
 function Install-Telemetry {

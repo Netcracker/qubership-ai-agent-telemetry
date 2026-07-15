@@ -51,7 +51,6 @@ function Setup-ComponentFixture {
   $env:LOCALAPPDATA = Join-Path $FixtureRoot 'local-app-data'
   $env:QDI_TEST_LOG = Join-Path $FixtureRoot 'commands.log'
   $env:QDI_GIT_CONFIG = Join-Path $FixtureRoot 'git-hooks-path'
-  $env:QDI_APM_STATE = Join-Path $FixtureRoot 'apm-installed'
   $env:QDI_MARKETPLACE_STATE = Join-Path $FixtureRoot 'marketplace-added'
   $env:QDI_GIT_ORIGIN_FILE = Join-Path $FixtureRoot 'git-origin'
   $env:QUBERSHIP_DEV_TELEMETRY_INSTALL_URL = Join-Path $FixtureRoot 'telemetry-installer.ps1'
@@ -83,11 +82,9 @@ if ($joined -eq 'marketplace add Netcracker/qubership-ai-packages') {
   exit 0
 }
 if ($args[0] -eq 'view') {
-  if (Test-Path $env:QDI_APM_STATE) { exit 0 }
   exit 1
 }
 if ($args[0] -eq 'install') {
-  New-Item -ItemType File -Force -Path $env:QDI_APM_STATE | Out-Null
   Write-Output 'fake APM install output'
 }
 if ($args[0] -eq 'compile') {
@@ -165,7 +162,7 @@ function Teardown-ComponentFixture {
   $env:PATH = $SavedPath
   Remove-Item -Recurse -Force $FixtureRoot
   foreach ($name in @(
-    'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'QDI_TEST_LOG', 'QDI_GIT_CONFIG', 'QDI_APM_STATE',
+    'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'QDI_TEST_LOG', 'QDI_GIT_CONFIG',
     'QDI_MARKETPLACE_STATE', 'QDI_TELEMETRY_CLI', 'QDI_FAIL_APM_COMMAND', 'QDI_GIT_ORIGIN_FILE',
     'QDI_GIT_STATUS', 'QDI_GIT_PULL_FAIL', 'QDI_TEST_JAVA_EXIT_CODE', 'QDI_TEST_JAVA_SPEC_VERSION',
     'QUBERSHIP_DEV_TELEMETRY_INSTALL_URL', 'QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY',
@@ -276,6 +273,7 @@ function Test-DefaultInstallRunsEveryComponent {
     Assert-LogContains 'apm self-update'
     Assert-LogContains 'apm install qubership-global-essentials@qubership-ai-packages -g --target claude,codex,cursor'
     Assert-LogContains 'apm compile -g'
+    Assert-LogContains 'apm deps list -g'
     Assert-LogContains 'telemetry-installer -SkipConfig'
     Assert-LogNotContains 'telemetry-installer -SkipConfig -Force'
     Assert-LogContains 'ai-agent-telemetry hooks install --target=claude,codex,cursor'
@@ -318,7 +316,7 @@ function Test-SelectionAndHarnessesAreForwarded {
 function Test-ForceUpdateRefreshesSelectedComponents {
   Setup-ComponentFixture
   try {
-    New-Item -ItemType File -Path $env:QDI_APM_STATE, $env:QDI_MARKETPLACE_STATE | Out-Null
+    New-Item -ItemType File -Path $env:QDI_MARKETPLACE_STATE | Out-Null
     New-Item -ItemType Directory -Force -Path `
       (Join-Path $env:QUBERSHIP_DEV_GIT_HOOKS_DIR '.git'), `
       (Join-Path $env:QUBERSHIP_DEV_GIT_HOOKS_DIR 'hooks-global') | Out-Null
@@ -329,7 +327,8 @@ function Test-ForceUpdateRefreshesSelectedComponents {
     if ($result.Code -ne 0) { Fail "force update failed: $($result.Output)" }
     Assert-LogContains 'apm self-update'
     Assert-LogContains 'apm marketplace update qubership-ai-packages'
-    Assert-LogContains 'apm update qubership-global-essentials -g --yes --target claude'
+    Assert-LogContains `
+      'apm install --update qubership-global-essentials@qubership-ai-packages -g --target claude'
     Assert-LogContains 'telemetry-installer -SkipConfig -Force'
     Assert-LogContains 'ai-agent-telemetry hooks install --target=claude'
     Assert-LogContains "git -C $env:QUBERSHIP_DEV_GIT_HOOKS_DIR pull --ff-only"

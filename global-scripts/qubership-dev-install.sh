@@ -251,12 +251,9 @@ apm_configure() {
     apm marketplace add Netcracker/qubership-ai-packages || return 1
   fi
 
-  if apm view qubership-global-essentials -g >/dev/null 2>&1; then
-    if [ "$FORCE_UPDATE" -eq 1 ]; then
-      apm update qubership-global-essentials -g --yes --target "$HARNESSES" || return 1
-    else
-      apm install -g --target "$HARNESSES" || return 1
-    fi
+  if [ "$FORCE_UPDATE" -eq 1 ]; then
+    apm install --update qubership-global-essentials@qubership-ai-packages \
+      -g --target "$HARNESSES" || return 1
   else
     apm install qubership-global-essentials@qubership-ai-packages -g --target "$HARNESSES" || return 1
   fi
@@ -264,7 +261,7 @@ apm_configure() {
 }
 
 apm_verify() {
-  apm view qubership-global-essentials -g >/dev/null
+  apm deps list -g >/dev/null
 }
 
 telemetry_install() {
