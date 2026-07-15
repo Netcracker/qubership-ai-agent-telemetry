@@ -49,21 +49,21 @@ default.
 
 ```go
 func TestResolveDeliverySettingsFromDefaults(t *testing.T) {
-	got := resolveDeliverySettingsFrom(nil, nil, func(string) {})
-	if got.BufferCap != 100 || got.FlushTimeout != 2*time.Second {
-		t.Fatalf("settings = %+v, want buffer 100 and timeout 2s", got)
-	}
+    got := resolveDeliverySettingsFrom(nil, nil, func(string) {})
+    if got.BufferCap != 100 || got.FlushTimeout != 2*time.Second {
+        t.Fatalf("settings = %+v, want buffer 100 and timeout 2s", got)
+    }
 }
 
 func TestResolveDeliverySettingsFromProcessEnvWins(t *testing.T) {
-	got := resolveDeliverySettingsFrom(
-		map[string]string{envBufferCap: "1000", envFlushTimeout: "30s"},
-		map[string]string{envBufferCap: "200", envFlushTimeout: "5s"},
-		func(string) {},
-	)
-	if got.BufferCap != 1000 || got.FlushTimeout != 30*time.Second {
-		t.Fatalf("settings = %+v", got)
-	}
+    got := resolveDeliverySettingsFrom(
+        map[string]string{envBufferCap: "1000", envFlushTimeout: "30s"},
+        map[string]string{envBufferCap: "200", envFlushTimeout: "5s"},
+        func(string) {},
+    )
+    if got.BufferCap != 1000 || got.FlushTimeout != 30*time.Second {
+        t.Fatalf("settings = %+v", got)
+    }
 }
 ```
 
@@ -83,15 +83,15 @@ Add the following focused model to `config.go` and keep OS/environment access in
 
 ```go
 const (
-	envBufferCap       = "AI_AGENT_TELEMETRY_BUFFER_CAP"
-	envFlushTimeout    = "AI_AGENT_TELEMETRY_FLUSH_TIMEOUT"
-	defaultBufferCap   = 100
-	defaultFlushTimeout = 2 * time.Second
+    envBufferCap       = "AI_AGENT_TELEMETRY_BUFFER_CAP"
+    envFlushTimeout    = "AI_AGENT_TELEMETRY_FLUSH_TIMEOUT"
+    defaultBufferCap   = 100
+    defaultFlushTimeout = 2 * time.Second
 )
 
 type deliverySettings struct {
-	BufferCap    int
-	FlushTimeout time.Duration
+    BufferCap    int
+    FlushTimeout time.Duration
 }
 ```
 
@@ -143,13 +143,13 @@ existing keys when a flag is omitted.
 
 ```go
 func TestParseConfigureFlagsAcceptsDeliverySettings(t *testing.T) {
-	opts, err := parseConfigureFlags([]string{"--buffer-cap", "1000", "--flush-timeout=30s"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opts.Delivery.BufferCap != "1000" || opts.Delivery.FlushTimeout != "30s" {
-		t.Fatalf("delivery settings = %+v", opts.Delivery)
-	}
+    opts, err := parseConfigureFlags([]string{"--buffer-cap", "1000", "--flush-timeout=30s"})
+    if err != nil {
+        t.Fatal(err)
+    }
+    if opts.Delivery.BufferCap != "1000" || opts.Delivery.FlushTimeout != "30s" {
+        t.Fatalf("delivery settings = %+v", opts.Delivery)
+    }
 }
 ```
 
@@ -171,10 +171,10 @@ Write only supplied values:
 
 ```go
 if delivery.BufferCap != "" {
-	updates[envBufferCap] = delivery.BufferCap
+    updates[envBufferCap] = delivery.BufferCap
 }
 if delivery.FlushTimeout != "" {
-	updates[envFlushTimeout] = delivery.FlushTimeout
+    updates[envFlushTimeout] = delivery.FlushTimeout
 }
 ```
 
@@ -222,16 +222,16 @@ tests that assert compact output omits the settings and verbose output includes 
 
 ```go
 func TestFormatStatusShowsDeliverySettingsOnlyWhenVerbose(t *testing.T) {
-	report := statusReport{BufferCap: 1000, FlushTimeout: 30 * time.Second}
-	if strings.Contains(formatStatus(report, false), "buffer_cap") {
-		t.Fatal("compact status contains delivery settings")
-	}
-	verbose := formatStatus(report, true)
-	for _, want := range []string{"configuration:", "  buffer_cap: 1000", "  flush_timeout: 30s"} {
-		if !strings.Contains(verbose, want) {
-			t.Fatalf("verbose status = %q, want %q", verbose, want)
-		}
-	}
+    report := statusReport{BufferCap: 1000, FlushTimeout: 30 * time.Second}
+    if strings.Contains(formatStatus(report, false), "buffer_cap") {
+        t.Fatal("compact status contains delivery settings")
+    }
+    verbose := formatStatus(report, true)
+    for _, want := range []string{"configuration:", "  buffer_cap: 1000", "  flush_timeout: 30s"} {
+        if !strings.Contains(verbose, want) {
+            t.Fatalf("verbose status = %q, want %q", verbose, want)
+        }
+    }
 }
 ```
 
