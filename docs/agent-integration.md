@@ -71,10 +71,11 @@ from the `SKILL.md` reads recorded in the rollout transcript named by `transcrip
 Each rollout line has a `type` and a `payload`. The CLI treats a skill read as a shell
 command that opens a `SKILL.md`:
 
-1. keep lines where `type` is `response_item` and the payload is a `function_call` named
-   `exec_command`;
-2. parse the payload's `arguments` (itself a JSON string) and read its `cmd` field;
-3. match `cmd` against the skill path — capture group 1 is the skill name.
+1. keep `response_item` lines for `exec_command` and `shell_command` function calls, or for a
+   `custom_tool_call` that invokes either command tool;
+2. ignore custom tool calls such as `apply_patch`, because their payload can contain skill paths
+   as source-code fixtures without reading those skills;
+3. match the command text against the skill path — capture group 1 is the skill name.
 
 ```text
 (?i)(?:^|[\s"'=/\\])skills[\\/]+(?:[^\\/\s"']+[\\/]+)*([a-z0-9][a-z0-9-]{0,63})[\\/]+SKILL\.md
