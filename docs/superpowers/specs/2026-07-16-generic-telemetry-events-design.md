@@ -105,7 +105,7 @@ The envelope has these invariants:
 
 - `schema_version` is `1` for the new format.
 - `event_name` is `skill_executed`, `command_invoked`, or `mcp_tool_executed`.
-- `agent` is `claude`, `codex`, or `cursor`.
+- A harness event uses `claude`, `codex`, or `cursor` as `agent`.
 - The typed payload is present and its shape matches `event_name`.
 - `agent`, `ts`, and the payload's primary name are required.
 - `repo_dir` is available to local repository-policy code but has `json:"-"` and
@@ -175,6 +175,22 @@ The canonical MCP event is:
     "tool_name": "get_issue",
     "outcome": "succeeded",
     "duration_ms": 42
+  }
+}
+```
+
+The internal selftest probe retains its existing marker values in the version 1
+skill envelope:
+
+```json
+{
+  "schema_version": 1,
+  "event_name": "skill_executed",
+  "agent": "selftest",
+  "session_id": "65ee3934-032f-4b3a-a440-089ae5c053b9",
+  "ts": "2026-07-16T12:34:56.123456789Z",
+  "payload": {
+    "skill_name": "__selftest__"
   }
 }
 ```
@@ -303,6 +319,28 @@ required identifier is invalid, the adapter emits no event. If an optional MCP
 server name is present but invalid, the whole event is dropped rather than
 silently removing or rewriting the server identity.
 
+### Internal selftest probe
+
+`selftest` is a reserved service agent, not a supported harness. The validator
+accepts it only for a `skill_executed` event whose skill name is the internal
+constant `__selftest__`. The probe must have a generated UUID session ID and
+must omit `repo_remote`. All other combinations involving `selftest` or
+`__selftest__` are invalid.
+
+`runSelftest` constructs this event through a dedicated internal constructor;
+adapters use the ordinary validated constructor and cannot select this
+exception. The ingest command continues to accept only `claude`, `codex`, and
+`cursor`, so harness input cannot select the reserved agent. The probe bypasses
+repository policy because it tests machine delivery rather than
+repository-scoped activity. Its constants and generated session ID are the only
+event values.
+
+The OTLP body and attributes remain compatible with the existing probe. The
+collector and dashboards continue to exclude records with the reserved marker
+from skill usage. The legacy decoder recognizes the same exact pair in an
+unversioned buffered event, which lets a probe created before an upgrade flush
+or remain discoverable by `probesRemaining`.
+
 ## Hook installation
 
 The CLI-managed global hook files gain these owned entries:
@@ -340,14 +378,17 @@ documentation must tell the user to restart Codex and review the telemetry hook.
 
 ## Privacy boundary
 
-All event types pass through the existing repository allowlist before enqueue.
-The policy may use `repo_dir` and local git remotes to select an allowed
-normalized remote, but only `repo.remote` is serialized.
+All harness events pass through the existing repository allowlist before
+enqueue. The policy may use `repo_dir` and local git remotes to select an
+allowed normalized remote, but only `repo.remote` is serialized. The internal
+selftest probe follows the narrow exception above and contains no repository
+value.
 
 The expanded allowlist permits only values that pass the identifier profiles
 or their fixed enums:
 
 - harness name;
+- the reserved selftest agent and skill marker only in the internal probe;
 - session ID;
 - normalized repository remote;
 - skill name;
@@ -404,12 +445,14 @@ documented post-execution hooks are treated as the authoritative signal.
 
 - Round-trip every new event type.
 - Compare serialization with canonical JSON fixtures for all three version 1
-  events and the legacy event.
+  event types, the version 1 selftest probe, and the legacy event.
 - Reject an unknown schema version, event name, outcome, or mismatched payload.
 - Reject unknown envelope and payload fields, explicit `null` values, and
   invalid timestamp formats.
 - Decode a legacy skill-event file.
 - Reject a legacy skill event whose identifiers fail the version 1 rules.
+- Decode the exact legacy selftest pair and reject all partial or modified
+  selftest combinations.
 - Flush a mixed legacy and versioned batch in order.
 - Apply repository policy to every event type.
 - Preserve local-only `repo_dir` behavior.
@@ -426,6 +469,8 @@ documented post-execution hooks are treated as the authoritative signal.
   whitespace, control-character, path-separator, and shell-metacharacter names.
 - Assert for each rejected identifier that its value reaches neither outbox JSON
   nor serialized OTLP.
+- Reject `selftest` as an ingest agent and prevent harness adapters from
+  producing either reserved marker.
 - Seed fixtures with prompts, arguments, results, errors, paths, URLs, model
   names, and email addresses.
 - Assert that none of those sensitive fixture values reach normalized events.
@@ -446,6 +491,10 @@ documented post-execution hooks are treated as the authoritative signal.
 - Decode the exported OTLP request and assert body, attribute names, value
   types, and optional fields.
 - Verify that legacy `skill_executed` output is unchanged.
+- Deliver the version 1 selftest probe, preserve its existing OTLP attributes,
+  and clear it after collector acceptance.
+- Retain a rejected probe, find both legacy and version 1 probes with
+  `probesRemaining`, and exclude them from repository policy.
 - Assert that sensitive fixture values do not occur in outbox JSON or serialized
   OTLP requests.
 - Retain collector-error, TLS, lock, and outbox-recovery coverage.
