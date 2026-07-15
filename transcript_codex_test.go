@@ -58,6 +58,14 @@ func TestScanCodexRolloutFindsSkillRead(t *testing.T) {
 	}
 }
 
+func TestScanCodexRolloutFindsBundledSystemSkill(t *testing.T) {
+	roll := codexExecLine("sed -n '1,220p' /home/u/.codex/skills/.system/openai-docs/SKILL.md")
+	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
+	if len(scan.skills) != 1 || scan.skills[0] != "openai-docs" {
+		t.Fatalf("skills = %v, want [openai-docs]", scan.skills)
+	}
+}
+
 func TestScanCodexRolloutFindsDesktopCustomExecSkillRead(t *testing.T) {
 	roll := codexCustomExecLine(`const r = await tools.shell_command({"command":"Get-Content -Raw '.agents\\skills\\ai-agent-telemetry-configure\\SKILL.md'"}); text(r)`)
 	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
@@ -97,7 +105,8 @@ func TestScanCodexRolloutDedupsWithinFile(t *testing.T) {
 
 func TestScanCodexRolloutIgnoresNonSkillReads(t *testing.T) {
 	roll := codexExecLine("cat README.md") +
-		codexExecLine("ls my-skills/foo/SKILL.md") // not a `skills/` dir boundary
+		codexExecLine("ls my-skills/foo/SKILL.md") + // not a `skills/` dir boundary
+		codexExecLine(`awk '/\/skills\/.+\/SKILL.md$/' transcript.jsonl`)
 	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
 	if len(scan.skills) != 0 {
 		t.Fatalf("skills = %v, want 0", scan.skills)

@@ -25,6 +25,16 @@ func TestScanCursorTranscriptReadToolUse(t *testing.T) {
 	}
 }
 
+func TestScanCursorTranscriptNestedSkillRead(t *testing.T) {
+	line := `{"role":"assistant","message":{"content":[` +
+		`{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/shipping/land-it/SKILL.md"}}` +
+		`]}}` + "\n"
+	skills, _ := scanCursorTranscript(strings.NewReader(line), 0)
+	if len(skills) != 1 || skills[0] != "land-it" {
+		t.Fatalf("skills = %v, want [land-it]", skills)
+	}
+}
+
 func TestScanCursorTranscriptManualAttach(t *testing.T) {
 	line := `{"role":"user","message":{"content":[{"type":"text","text":` +
 		`"<manually_attached_skills>\nSkill Name: telemetry-probe\nPath: /x/SKILL.md\n"}]}}` + "\n"
