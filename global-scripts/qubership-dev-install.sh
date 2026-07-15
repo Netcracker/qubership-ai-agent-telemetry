@@ -11,6 +11,7 @@ git-hooks|1|0|git_hooks'
 
 DEFAULT_COMPONENTS=apm,telemetry,git-hooks
 DEFAULT_HARNESSES=claude,codex,cursor
+MINIMUM_JAVA_MAJOR=21
 
 usage() {
   cat <<'EOF'
@@ -103,20 +104,56 @@ remove_items() {
   printf '%s' "$_result"
 }
 
+get_java_major_version() {
+  _java_settings=$(java -XshowSettings:properties -version 2>&1) || return 1
+  _java_specification_version=$(printf '%s\n' "$_java_settings" | awk -F '=' '
+    /^[[:space:]]*java\.specification\.version[[:space:]]*=/ {
+      value = $2
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  ')
+  case $_java_specification_version in
+    1.*) _java_major=${_java_specification_version#1.} ;;
+    *) _java_major=$_java_specification_version ;;
+  esac
+  _java_major=${_java_major%%.*}
+  case $_java_major in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$_java_major"
+}
+
+add_missing_prerequisite() {
+  if [ -n "$MISSING_PREREQUISITES" ]; then
+    MISSING_PREREQUISITES="$MISSING_PREREQUISITES,$1"
+  else
+    MISSING_PREREQUISITES=$1
+  fi
+}
+
 check_git_hook_prerequisites() {
   MISSING_PREREQUISITES=
   if ! command -v git >/dev/null 2>&1; then
     printf '%s: Git is required for the git-hooks component. Install it from https://git-scm.com/install/.\n' \
       "$PROGRAM" >&2
-    MISSING_PREREQUISITES=git
+    add_missing_prerequisite git
   fi
   if ! command -v java >/dev/null 2>&1; then
-    printf '%s: Java is required for the git-hooks component. Install a supported JRE or JDK.\n' "$PROGRAM" >&2
-    if [ -n "$MISSING_PREREQUISITES" ]; then
-      MISSING_PREREQUISITES="$MISSING_PREREQUISITES,java"
-    else
-      MISSING_PREREQUISITES=java
+    printf '%s: Java %s or newer is required for the git-hooks component. Install a supported JRE or JDK.\n' \
+      "$PROGRAM" "$MINIMUM_JAVA_MAJOR" >&2
+    add_missing_prerequisite java
+  elif _java_major=$(get_java_major_version); then
+    if [ "$_java_major" -lt "$MINIMUM_JAVA_MAJOR" ]; then
+      printf '%s: Detected Java %s. Java %s or newer is required for the git-hooks component.\n' \
+        "$PROGRAM" "$_java_major" "$MINIMUM_JAVA_MAJOR" >&2
+      add_missing_prerequisite java
     fi
+  else
+    printf '%s: Could not determine the Java version. Java %s or newer is required for the git-hooks component.\n' \
+      "$PROGRAM" "$MINIMUM_JAVA_MAJOR" >&2
+    add_missing_prerequisite java
   fi
   [ -z "$MISSING_PREREQUISITES" ]
 }
@@ -128,7 +165,7 @@ require_git_hook_prerequisites() {
     return 1
   fi
 
-  printf 'Install the missing tools in another terminal. Have you installed them? [y/N] ' >&2
+  printf 'Install or update the required tools in another terminal. Have you installed them? [y/N] ' >&2
   _answer=
   if [ -r /dev/tty ]; then
     if ! IFS= read -r _answer </dev/tty 2>/dev/null; then

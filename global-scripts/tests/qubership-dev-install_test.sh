@@ -36,6 +36,15 @@ assert_log_contains() {
   }
 }
 
+assert_log_not_contains() {
+  _needle=$1
+  if grep -F "$_needle" "$QDI_TEST_LOG" >/dev/null; then
+    printf 'command log:\n' >&2
+    sed 's/^/  /' "$QDI_TEST_LOG" >&2
+    fail "expected command log not to contain: $_needle"
+  fi
+}
+
 setup_component_fixture() {
   FIXTURE_ROOT=$(mktemp -d)
   export HOME="$FIXTURE_ROOT/home"
@@ -56,6 +65,7 @@ setup_component_fixture() {
   export QUBERSHIP_DEV_GIT_HOOKS_DIR="$XDG_DATA_HOME/qubership/pre-commit-global"
   export PATH="$FIXTURE_ROOT/bin:/usr/bin:/bin"
   unset CYBER_FERRET_PASSWORD QDI_FAIL_APM_COMMAND QDI_GIT_STATUS QDI_GIT_PULL_FAIL
+  unset QDI_TEST_JAVA_EXIT_CODE QDI_TEST_JAVA_SPEC_VERSION
   mkdir -p "$HOME" "$FIXTURE_ROOT/bin" "$XDG_CONFIG_HOME/ai-agent-telemetry"
   printf 'AI_AGENT_TELEMETRY_ENDPOINT=https://telemetry.example.test\n' \
     > "$XDG_CONFIG_HOME/ai-agent-telemetry/env"
@@ -64,6 +74,10 @@ setup_component_fixture() {
   cat > "$FIXTURE_ROOT/bin/java" <<'EOF'
 #!/bin/sh
 printf 'java %s\n' "$*" >> "$QDI_TEST_LOG"
+if [ "${QDI_TEST_JAVA_EXIT_CODE:-0}" -ne 0 ]; then
+  exit "$QDI_TEST_JAVA_EXIT_CODE"
+fi
+printf '    java.specification.version = %s\n' "${QDI_TEST_JAVA_SPEC_VERSION:-21}" >&2
 EOF
 
   cat > "$FIXTURE_ROOT/bin/apm" <<'EOF'
@@ -184,6 +198,7 @@ teardown_component_fixture() {
   unset QUBERSHIP_DEV_APM_INSTALL_URL
   unset QUBERSHIP_DEV_TELEMETRY_INSTALL_URL QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY
   unset QUBERSHIP_DEV_GIT_HOOKS_DIR QDI_FAIL_APM_COMMAND CYBER_FERRET_PASSWORD
+  unset QDI_TEST_JAVA_EXIT_CODE QDI_TEST_JAVA_SPEC_VERSION
   PATH=/usr/bin:/bin
   export PATH
 }
@@ -241,7 +256,7 @@ test_git_hook_prerequisites_fail_non_interactively() {
   rm -rf "$empty_path"
   [ "$code" -eq 1 ] || fail "expected prerequisite exit 1, got $code: $output"
   assert_contains "$output" "Git is required"
-  assert_contains "$output" "Java is required"
+  assert_contains "$output" "Java 21 or newer is required"
 }
 
 test_git_hook_prerequisites_are_not_checked_when_skipped() {
@@ -269,6 +284,47 @@ test_declined_prerequisite_installation_stops_bootstrap() {
     *"Installation stopped"*|*"prerequisite confirmation"*) ;;
     *) fail "expected declined or unavailable-terminal message: $output" ;;
   esac
+}
+
+test_java_20_is_rejected() {
+  setup_component_fixture
+  QDI_TEST_JAVA_SPEC_VERSION=20
+  export QDI_TEST_JAVA_SPEC_VERSION
+  run_fixture_installer --components git-hooks --non-interactive
+  [ "$RUN_CODE" -eq 1 ] || fail "expected Java 20 rejection: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "Detected Java 20"
+  assert_contains "$RUN_OUTPUT" "Java 21 or newer is required"
+  assert_log_not_contains "git clone"
+  teardown_component_fixture
+}
+
+test_java_21_and_newer_are_accepted() {
+  for version in 21 26; do
+    setup_component_fixture
+    QDI_TEST_JAVA_SPEC_VERSION=$version
+    export QDI_TEST_JAVA_SPEC_VERSION
+    run_fixture_installer --components git-hooks --non-interactive
+    [ "$RUN_CODE" -eq 0 ] || fail "expected Java $version acceptance: $RUN_OUTPUT"
+    teardown_component_fixture
+  done
+}
+
+test_unrecognized_or_failing_java_is_rejected() {
+  setup_component_fixture
+  QDI_TEST_JAVA_SPEC_VERSION=unknown
+  export QDI_TEST_JAVA_SPEC_VERSION
+  run_fixture_installer --components git-hooks --non-interactive
+  [ "$RUN_CODE" -eq 1 ] || fail "expected malformed Java rejection: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "Could not determine the Java version"
+  teardown_component_fixture
+
+  setup_component_fixture
+  QDI_TEST_JAVA_EXIT_CODE=1
+  export QDI_TEST_JAVA_EXIT_CODE
+  run_fixture_installer --components git-hooks --non-interactive
+  [ "$RUN_CODE" -eq 1 ] || fail "expected failing Java rejection: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "Could not determine the Java version"
+  teardown_component_fixture
 }
 
 test_default_install_runs_every_component() {
@@ -418,6 +474,9 @@ test_empty_selection_fails_before_installation
 test_git_hook_prerequisites_fail_non_interactively
 test_git_hook_prerequisites_are_not_checked_when_skipped
 test_declined_prerequisite_installation_stops_bootstrap
+test_java_20_is_rejected
+test_java_21_and_newer_are_accepted
+test_unrecognized_or_failing_java_is_rejected
 test_default_install_runs_every_component
 test_missing_apm_uses_official_bootstrap_contract
 test_selection_and_harnesses_are_forwarded
