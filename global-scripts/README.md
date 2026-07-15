@@ -18,12 +18,10 @@ curl -fsSL \
   | sh -s -- --force-update
 ```
 
-Windows PowerShell:
+Windows Command Prompt:
 
-```powershell
-$release = 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download'
-$installer = irm "$release/qubership-dev-install.ps1"
-iex "& { $installer } -ForceUpdate"
+```bat
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$u='https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/qubership-dev-install.ps1';$s=irm $u;iex ('& {'+$s+'} -ForceUpdate')"
 ```
 
 To use the normal update behavior, omit the force-update option.
@@ -36,12 +34,10 @@ curl -fsSL \
   | sh
 ```
 
-Windows PowerShell:
+Windows Command Prompt:
 
-```powershell
-$release = 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download'
-$installer = irm "$release/qubership-dev-install.ps1"
-iex "& { $installer }"
+```bat
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$u='https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/qubership-dev-install.ps1';$s=irm $u;iex ('& {'+$s+'}')"
 ```
 
 Both forms update existing APM and telemetry CLIs before configuration. This ensures the commands used by the

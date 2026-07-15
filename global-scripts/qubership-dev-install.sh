@@ -313,13 +313,22 @@ telemetry_verify() {
   "$TELEMETRY_BIN" selftest
 }
 
+git_hooks_desired_path() (
+  _hooks_path=$GIT_HOOKS_DIR/hooks-global
+  if [ -d "$_hooks_path" ]; then
+    CDPATH='' cd -- "$_hooks_path" && pwd -P
+    exit
+  fi
+  case $_hooks_path in
+    /*) printf '%s\n' "$_hooks_path" ;;
+    *) printf '%s\n' "$PWD/$_hooks_path" ;;
+  esac
+)
+
 git_hooks_install() {
   GIT_HOOKS_DIR=${QUBERSHIP_DEV_GIT_HOOKS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/qubership/pre-commit-global}
   GIT_HOOKS_REPOSITORY=${QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY:-https://github.com/exadmin/pre-commit-global.git}
-  case $GIT_HOOKS_DIR in
-    /*) _prospective_hooks_path=$GIT_HOOKS_DIR/hooks-global ;;
-    *) _prospective_hooks_path=$PWD/$GIT_HOOKS_DIR/hooks-global ;;
-  esac
+  _prospective_hooks_path=$(git_hooks_desired_path) || return 1
   _current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || :)
   if [ -n "$_current_hooks_path" ] && [ "$_current_hooks_path" != "$_prospective_hooks_path" ] && \
     [ "$FORCE_GIT_HOOKS" -ne 1 ]; then
@@ -358,7 +367,7 @@ git_hooks_install() {
 }
 
 git_hooks_configure() {
-  _desired_hooks_path=$(CDPATH='' cd -- "$GIT_HOOKS_DIR/hooks-global" && pwd -P) || return 1
+  _desired_hooks_path=$(git_hooks_desired_path) || return 1
   _current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || :)
   if [ -n "$_current_hooks_path" ] && [ "$_current_hooks_path" != "$_desired_hooks_path" ]; then
     if [ "$FORCE_GIT_HOOKS" -ne 1 ]; then
@@ -380,7 +389,7 @@ git_hooks_configure() {
 
 git_hooks_verify() {
   _configured_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || :)
-  _desired_hooks_path=$(CDPATH='' cd -- "$GIT_HOOKS_DIR/hooks-global" && pwd -P) || return 1
+  _desired_hooks_path=$(git_hooks_desired_path) || return 1
   [ "$_configured_hooks_path" = "$_desired_hooks_path" ]
 }
 

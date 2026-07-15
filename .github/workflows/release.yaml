@@ -198,6 +198,12 @@ jobs:
         run: |
           sed "s|^BINARY_VERSION=.*|BINARY_VERSION=\"${VERSION}\"|" scripts/install.sh > dist/install.sh
           sed "s|^\$BinaryVersion = .*|\$BinaryVersion = '${VERSION}'|" scripts/install.ps1 > dist/install.ps1
+          if [ "$(grep -Fxc "\$BinaryVersion = '${VERSION}'" dist/install.ps1)" -ne 1 ]; then
+            echo "Failed to stamp ${VERSION} into dist/install.ps1" >&2
+            exit 1
+          fi
+          pwsh -NoProfile -Command \
+            "[scriptblock]::Create((Get-Content -Raw dist/install.ps1)) | Out-Null"
           cp dist/install.sh dist/bootstrap.sh
           cp dist/install.ps1 dist/bootstrap.ps1
           cp global-scripts/qubership-dev-install.sh dist/qubership-dev-install.sh

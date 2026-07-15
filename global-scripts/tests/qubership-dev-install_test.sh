@@ -406,6 +406,27 @@ test_force_update_refreshes_selected_components() {
   teardown_component_fixture
 }
 
+test_force_update_refreshes_git_hooks_through_symlink() {
+  setup_component_fixture
+  _physical_data="$FIXTURE_ROOT/physical-data"
+  _linked_data="$FIXTURE_ROOT/linked-data"
+  QUBERSHIP_DEV_GIT_HOOKS_DIR="$_linked_data/qubership/pre-commit-global"
+  export QUBERSHIP_DEV_GIT_HOOKS_DIR
+  mkdir -p \
+    "$_physical_data/qubership/pre-commit-global/.git" \
+    "$_physical_data/qubership/pre-commit-global/hooks-global"
+  ln -s "$_physical_data" "$_linked_data"
+  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
+  (CDPATH='' cd -- "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global" && pwd -P) > "$QDI_GIT_CONFIG"
+
+  run_fixture_installer --components git-hooks --force-update --non-interactive
+
+  [ "$RUN_CODE" -eq 0 ] || fail "symlinked Git hooks update failed: $RUN_OUTPUT"
+  assert_log_contains "git -C $QUBERSHIP_DEV_GIT_HOOKS_DIR pull --ff-only"
+  assert_contains "$RUN_OUTPUT" "git-hooks        OK"
+  teardown_component_fixture
+}
+
 test_existing_unrelated_git_hooks_are_skipped() {
   setup_component_fixture
   printf '/other/hooks\n' > "$QDI_GIT_CONFIG"
@@ -498,6 +519,7 @@ test_missing_apm_uses_official_bootstrap_contract
 test_existing_clis_are_updated_by_default
 test_selection_and_harnesses_are_forwarded
 test_force_update_refreshes_selected_components
+test_force_update_refreshes_git_hooks_through_symlink
 test_existing_unrelated_git_hooks_are_skipped
 test_component_failure_does_not_stop_independent_components
 test_unconfigured_telemetry_fails_non_interactively
