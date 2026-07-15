@@ -25,7 +25,7 @@ function Invoke-Installer([string[]]$Arguments) {
   try {
     # Windows PowerShell 5.1 promotes native stderr to a terminating error when this is Stop.
     $ErrorActionPreference = 'Continue'
-    $output = & $PowerShell -NoProfile -File $Installer @Arguments 2>&1 | Out-String
+    $output = & $PowerShell -NoProfile -File $Installer @Arguments 2>&1 | Out-String -Width 4096
     $code = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $savedErrorActionPreference
