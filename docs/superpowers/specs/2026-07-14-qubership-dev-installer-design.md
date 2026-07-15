@@ -39,19 +39,22 @@ failure.
 Install a missing APM CLI with the official platform bootstrap. Register the `Netcracker/qubership-ai-packages`
 marketplace, install `qubership-global-essentials` globally for the selected harnesses, and run `apm compile -g`.
 
-`--force-update` also runs `apm self-update`, refreshes the marketplace, and updates the installed global umbrella
-package with consent supplied non-interactively.
+When the APM CLI is already installed, run `apm self-update` before using it. This keeps the CLI compatible with the
+commands required by the bootstrap. `--force-update` also refreshes the marketplace and updates the installed global
+umbrella package with consent supplied non-interactively.
 
 ### AI agent telemetry
 
 Run the published telemetry release installer with its supported skip-configuration option. The telemetry installer
 remains owned and tested by its existing files and workflow; this change treats it as an external component contract.
+When the telemetry CLI is already installed, pass the release installer's force option so configuration uses the
+latest binary. A fresh installation does not request a redundant forced replacement.
 For an already configured CLI, install the selected hooks with `ai-agent-telemetry hooks install`. Otherwise,
 interactive mode runs `ai-agent-telemetry configure` with the selected hooks. Non-interactive mode fails promptly
 instead of waiting for configuration input. Verify the installed CLI with `ai-agent-telemetry status` and
 `ai-agent-telemetry selftest`.
 
-`--force-update` maps to the telemetry installer's `--force` or `-Force` option.
+`--force-update` maps to the telemetry installer's `--force` or `-Force` option even when no existing CLI is detected.
 
 ### Global Git hooks
 

@@ -31,7 +31,7 @@ Options:
   -Skip <list>         Exclude components from the selected set.
   -Harnesses <list>    Configure these harnesses: claude, codex, cursor, or all.
   -ForceGitHooks       Replace an existing global Git hooks path.
-  -ForceUpdate         Update selected components even when they are already installed.
+  -ForceUpdate         Force update operations for every selected component.
   -NonInteractive      Do not prompt for missing prerequisites.
   -Help                Show this help text.
 '@
@@ -180,7 +180,7 @@ function Install-Apm {
       throw 'APM installer completed, but apm is not on PATH.'
     }
   }
-  if ($ForceUpdate -and $wasInstalled) {
+  if ($wasInstalled) {
     Invoke-Checked $script:ApmCommand @('self-update')
   }
 }
@@ -218,20 +218,33 @@ function Test-Apm {
 }
 
 function Install-Telemetry {
+  $wasInstalled = -not [string]::IsNullOrWhiteSpace((Find-TelemetryCommand))
   $source = if ($env:QUBERSHIP_DEV_TELEMETRY_INSTALL_URL) {
     $env:QUBERSHIP_DEV_TELEMETRY_INSTALL_URL
   } else {
     'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'
   }
   $parameters = @{ SkipConfig = $true }
-  if ($ForceUpdate) { $parameters.Force = $true }
+  if ($ForceUpdate -or $wasInstalled) { $parameters.Force = $true }
   Invoke-PowerShellInstaller $source $parameters
+}
+
+function Find-TelemetryCommand {
+  $command = (Get-Command ai-agent-telemetry -ErrorAction SilentlyContinue).Source
+  if (-not [string]::IsNullOrWhiteSpace($command)) { return $command }
+
+  $binDir = Join-Path $env:USERPROFILE '.local/bin'
+  foreach ($name in @('ai-agent-telemetry.exe', 'ai-agent-telemetry.ps1', 'ai-agent-telemetry')) {
+    $candidate = Join-Path $binDir $name
+    if (Test-Path -LiteralPath $candidate) { return $candidate }
+  }
+  return $null
 }
 
 function Resolve-TelemetryCommand {
   $binDir = Join-Path $env:USERPROFILE '.local/bin'
   $env:PATH = "$binDir$([System.IO.Path]::PathSeparator)$env:PATH"
-  $script:TelemetryCommand = (Get-Command ai-agent-telemetry -ErrorAction SilentlyContinue).Source
+  $script:TelemetryCommand = Find-TelemetryCommand
   if ([string]::IsNullOrWhiteSpace($script:TelemetryCommand)) {
     throw 'Telemetry installer completed, but ai-agent-telemetry was not found.'
   }

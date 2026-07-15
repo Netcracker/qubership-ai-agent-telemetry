@@ -331,9 +331,11 @@ test_default_install_runs_every_component() {
   setup_component_fixture
   run_fixture_installer --non-interactive
   [ "$RUN_CODE" -eq 0 ] || fail "default install failed: $RUN_OUTPUT"
+  assert_log_contains "apm self-update"
   assert_log_contains "apm install qubership-global-essentials@qubership-ai-packages -g --target claude,codex,cursor"
   assert_log_contains "apm compile -g"
   assert_log_contains "telemetry-installer --skip-config"
+  assert_log_not_contains "telemetry-installer --skip-config --force"
   assert_log_contains "ai-agent-telemetry hooks install --target=claude,codex,cursor"
   assert_log_contains "ai-agent-telemetry status"
   assert_log_contains "ai-agent-telemetry selftest"
@@ -358,7 +360,24 @@ test_missing_apm_uses_official_bootstrap_contract() {
   [ "$RUN_CODE" -eq 0 ] || fail "APM bootstrap failed: $RUN_OUTPUT"
   assert_log_contains "curl -fsSL https://example.test/apm-unix -o"
   assert_log_contains "apm-installer"
+  assert_log_not_contains "apm self-update"
   assert_log_contains "apm install qubership-global-essentials@qubership-ai-packages -g --target cursor"
+  teardown_component_fixture
+}
+
+test_existing_clis_are_updated_by_default() {
+  setup_component_fixture
+  cat > "$FIXTURE_ROOT/bin/ai-agent-telemetry" <<'EOF'
+#!/bin/sh
+printf 'old-ai-agent-telemetry %s\n' "$*" >> "$QDI_TEST_LOG"
+EOF
+  chmod +x "$FIXTURE_ROOT/bin/ai-agent-telemetry"
+  run_fixture_installer --components apm,telemetry --non-interactive
+  [ "$RUN_CODE" -eq 0 ] || fail "existing CLI update failed: $RUN_OUTPUT"
+  assert_log_contains "apm self-update"
+  assert_log_contains "telemetry-installer --skip-config --force"
+  assert_log_not_contains "old-ai-agent-telemetry hooks install"
+  assert_log_contains "ai-agent-telemetry hooks install --target=claude,codex,cursor"
   teardown_component_fixture
 }
 
@@ -479,6 +498,7 @@ test_java_21_and_newer_are_accepted
 test_unrecognized_or_failing_java_is_rejected
 test_default_install_runs_every_component
 test_missing_apm_uses_official_bootstrap_contract
+test_existing_clis_are_updated_by_default
 test_selection_and_harnesses_are_forwarded
 test_force_update_refreshes_selected_components
 test_existing_unrelated_git_hooks_are_skipped

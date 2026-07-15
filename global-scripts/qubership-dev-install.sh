@@ -25,7 +25,7 @@ Options:
   --skip <list>         Exclude components from the selected set.
   --harnesses <list>    Configure these harnesses: claude, codex, cursor, or all.
   --force-git-hooks     Replace an existing global Git hooks path.
-  --force-update        Update selected components even when they are already installed.
+  --force-update        Force update operations for every selected component.
   --non-interactive     Do not prompt for missing prerequisites.
   -h, --help            Show this help text.
 EOF
@@ -237,7 +237,7 @@ apm_install() {
       return 1
     }
   fi
-  if [ "$FORCE_UPDATE" -eq 1 ] && [ "$APM_WAS_INSTALLED" -eq 1 ]; then
+  if [ "$APM_WAS_INSTALLED" -eq 1 ]; then
     apm self-update
   fi
 }
@@ -269,7 +269,11 @@ apm_verify() {
 
 telemetry_install() {
   _telemetry_url=${QUBERSHIP_DEV_TELEMETRY_INSTALL_URL:-https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh}
-  if [ "$FORCE_UPDATE" -eq 1 ]; then
+  _telemetry_was_installed=0
+  if command -v ai-agent-telemetry >/dev/null 2>&1 || [ -x "$HOME/.local/bin/ai-agent-telemetry" ]; then
+    _telemetry_was_installed=1
+  fi
+  if [ "$FORCE_UPDATE" -eq 1 ] || [ "$_telemetry_was_installed" -eq 1 ]; then
     run_shell_installer "$_telemetry_url" --skip-config --force
   else
     run_shell_installer "$_telemetry_url" --skip-config
@@ -277,10 +281,10 @@ telemetry_install() {
 }
 
 resolve_telemetry_bin() {
-  if command -v ai-agent-telemetry >/dev/null 2>&1; then
-    TELEMETRY_BIN=ai-agent-telemetry
-  elif [ -x "$HOME/.local/bin/ai-agent-telemetry" ]; then
+  if [ -x "$HOME/.local/bin/ai-agent-telemetry" ]; then
     TELEMETRY_BIN=$HOME/.local/bin/ai-agent-telemetry
+  elif command -v ai-agent-telemetry >/dev/null 2>&1; then
+    TELEMETRY_BIN=ai-agent-telemetry
   else
     printf '%s: telemetry installer completed, but ai-agent-telemetry was not found.\n' "$PROGRAM" >&2
     return 1

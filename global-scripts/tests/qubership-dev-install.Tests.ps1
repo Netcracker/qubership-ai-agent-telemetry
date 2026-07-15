@@ -158,7 +158,7 @@ Add-Content -LiteralPath $env:QDI_TEST_LOG -Value ("ai-agent-telemetry " + ($arg
 exit 0
 '@ | Set-Content -LiteralPath $env:QDI_TELEMETRY_CLI
 
-  $env:PATH = "$bin$([System.IO.Path]::PathSeparator)$SavedPath"
+  $env:PATH = $bin
 }
 
 function Teardown-ComponentFixture {
@@ -273,9 +273,11 @@ function Test-DefaultInstallRunsEveryComponent {
   try {
     $result = Invoke-Installer @('-NonInteractive')
     if ($result.Code -ne 0) { Fail "default install failed: $($result.Output)" }
+    Assert-LogContains 'apm self-update'
     Assert-LogContains 'apm install qubership-global-essentials@qubership-ai-packages -g --target claude,codex,cursor'
     Assert-LogContains 'apm compile -g'
     Assert-LogContains 'telemetry-installer -SkipConfig'
+    Assert-LogNotContains 'telemetry-installer -SkipConfig -Force'
     Assert-LogContains 'ai-agent-telemetry hooks install --target=claude,codex,cursor'
     Assert-LogContains 'ai-agent-telemetry status'
     Assert-LogContains 'ai-agent-telemetry selftest'
@@ -283,6 +285,18 @@ function Test-DefaultInstallRunsEveryComponent {
     Assert-Contains $result.Output 'apm              OK'
     Assert-Contains $result.Output 'telemetry        OK'
     Assert-Contains $result.Output 'git-hooks        OK'
+  } finally { Teardown-ComponentFixture }
+}
+
+function Test-ExistingClisAreUpdatedByDefault {
+  Setup-ComponentFixture
+  try {
+    $bin = Split-Path -Parent (Get-Command apm).Source
+    Copy-Item -LiteralPath $env:QDI_TELEMETRY_CLI -Destination (Join-Path $bin 'ai-agent-telemetry.ps1')
+    $result = Invoke-Installer @('-Components', 'apm,telemetry', '-NonInteractive')
+    if ($result.Code -ne 0) { Fail "existing CLI update failed: $($result.Output)" }
+    Assert-LogContains 'apm self-update'
+    Assert-LogContains 'telemetry-installer -SkipConfig -Force'
   } finally { Teardown-ComponentFixture }
 }
 
@@ -410,6 +424,7 @@ Test-Java20IsRejected
 Test-Java21AndNewerAreAccepted
 Test-UnrecognizedOrFailingJavaIsRejected
 Test-DefaultInstallRunsEveryComponent
+Test-ExistingClisAreUpdatedByDefault
 Test-SelectionAndHarnessesAreForwarded
 Test-ForceUpdateRefreshesSelectedComponents
 Test-UnrelatedGitHooksAreSkipped

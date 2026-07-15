@@ -6,9 +6,27 @@ summary when it finishes.
 This bootstrap is separate from the AI agent telemetry installer. It calls that installer as one of its components but
 does not replace it.
 
-## Install the default toolset
+## TL;DR
 
-The default run installs all components for Claude Code, Codex, and Cursor.
+Install all components for Claude Code, Codex, and Cursor, and force their update operations.
+
+macOS or Linux:
+
+```sh
+curl -fsSL \
+  https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/qubership-dev-install.sh \
+  | sh -s -- --force-update
+```
+
+Windows PowerShell:
+
+```powershell
+$release = 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download'
+$installer = irm "$release/qubership-dev-install.ps1"
+iex "& { $installer } -ForceUpdate"
+```
+
+To use the normal update behavior, omit the force-update option.
 
 macOS or Linux:
 
@@ -25,6 +43,9 @@ $release = 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/
 $installer = irm "$release/qubership-dev-install.ps1"
 iex "& { $installer }"
 ```
+
+Both forms update existing APM and telemetry CLIs before configuration. This ensures the commands used by the
+bootstrap are available.
 
 The installer adds or configures:
 
@@ -71,14 +92,16 @@ qubership-dev-install.sh --skip git-hooks
 | `--skip <list>` | `-Skip <list>` | Exclude components from the selected set. |
 | `--harnesses <list>` | `-Harnesses <list>` | Select agent harnesses. The default is `all`. |
 | `--force-git-hooks` | `-ForceGitHooks` | Replace an unrelated global `core.hooksPath`. |
-| `--force-update` | `-ForceUpdate` | Update selected components even when they are installed. |
+| `--force-update` | `-ForceUpdate` | Force update operations for every selected component. |
 | `--non-interactive` | `-NonInteractive` | Fail instead of prompting for missing prerequisites. |
 | `-h`, `--help` | `-Help` | Print command help. |
 
-`--force-update` performs the component-specific update:
+Existing APM and telemetry CLIs are updated before configuration on every run. `--force-update` also performs these
+component-specific operations:
 
-- APM updates its CLI, marketplace metadata, and the installed global package.
-- Telemetry replaces its installed binary with the latest release and refreshes selected hooks.
+- APM refreshes marketplace metadata and the installed global package.
+- Telemetry forces the release installation even when no existing binary is detected. Existing binaries select this
+  mode automatically.
 - Global Git hooks run `git pull --ff-only`. Local changes or divergent history cause this component to fail; the
   installer does not discard them.
 
