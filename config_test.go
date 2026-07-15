@@ -40,6 +40,70 @@ func TestResolveEndpointFromNeitherIsEmpty(t *testing.T) {
 	}
 }
 
+func TestResolveDeliverySettingsFromDefaults(t *testing.T) {
+	got := resolveDeliverySettingsFrom(nil, nil, func(string) {})
+	if got.BufferCap != 100 || got.FlushTimeout != 2*time.Second {
+		t.Fatalf("settings = %+v, want buffer 100 and timeout 2s", got)
+	}
+}
+
+func TestResolveDeliverySettingsFromFile(t *testing.T) {
+	got := resolveDeliverySettingsFrom(nil, map[string]string{
+		envBufferCap:    "250",
+		envFlushTimeout: "5s",
+	}, func(string) {})
+	if got.BufferCap != 250 || got.FlushTimeout != 5*time.Second {
+		t.Fatalf("settings = %+v, want buffer 250 and timeout 5s", got)
+	}
+}
+
+func TestResolveDeliverySettingsFromProcessEnvWins(t *testing.T) {
+	got := resolveDeliverySettingsFrom(
+		map[string]string{envBufferCap: "1000", envFlushTimeout: "30s"},
+		map[string]string{envBufferCap: "200", envFlushTimeout: "5s"},
+		func(string) {},
+	)
+	if got.BufferCap != 1000 || got.FlushTimeout != 30*time.Second {
+		t.Fatalf("settings = %+v, want process environment values", got)
+	}
+}
+
+func TestResolveDeliverySettingsFromInvalidOverrideWarnsAndUsesDefaults(t *testing.T) {
+	var warnings []string
+	got := resolveDeliverySettingsFrom(
+		map[string]string{envBufferCap: "zero", envFlushTimeout: "-1s"},
+		map[string]string{envBufferCap: "200", envFlushTimeout: "5s"},
+		func(message string) { warnings = append(warnings, message) },
+	)
+	if got.BufferCap != 100 || got.FlushTimeout != 2*time.Second {
+		t.Fatalf("settings = %+v, want defaults", got)
+	}
+	joined := strings.Join(warnings, "\n")
+	for _, want := range []string{
+		`AI_AGENT_TELEMETRY_BUFFER_CAP value "zero"`,
+		"using default 100",
+		`AI_AGENT_TELEMETRY_FLUSH_TIMEOUT value "-1s"`,
+		"using default 2s",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("warnings = %q, want %q", joined, want)
+		}
+	}
+}
+
+func TestParseDeliverySettingsRejectsNonpositiveAndMalformedValues(t *testing.T) {
+	for _, value := range []string{"", "0", "-1", "many"} {
+		if _, err := parseBufferCap(value); err == nil {
+			t.Fatalf("parseBufferCap(%q) succeeded, want error", value)
+		}
+	}
+	for _, value := range []string{"", "0s", "-1s", "long"} {
+		if _, err := parseFlushTimeout(value); err == nil {
+			t.Fatalf("parseFlushTimeout(%q) succeeded, want error", value)
+		}
+	}
+}
+
 func TestParseEnvReadsKeyValueLines(t *testing.T) {
 	in := []byte("AI_AGENT_TELEMETRY_ENDPOINT=https://otel.example/v1/logs\nAI_AGENT_TELEMETRY_TOKEN=abc123\n")
 	got := parseEnv(in)

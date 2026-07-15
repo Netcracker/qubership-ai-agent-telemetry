@@ -8,10 +8,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const pkgName = "ai-agent-telemetry"
+
+const (
+	envBufferCap        = "AI_AGENT_TELEMETRY_BUFFER_CAP"
+	envFlushTimeout     = "AI_AGENT_TELEMETRY_FLUSH_TIMEOUT"
+	defaultBufferCap    = 100
+	defaultFlushTimeout = 2 * time.Second
+)
+
+type deliverySettings struct {
+	BufferCap    int
+	FlushTimeout time.Duration
+}
 
 // configBase resolves the root under which the package config dir lives. It is
 // the SAME XDG-style path on every OS — $XDG_CONFIG_HOME, else ~/.config — the
@@ -99,6 +113,73 @@ func resolveEndpointFrom(flag, env, fileVal string) string {
 		return env
 	}
 	return fileVal
+}
+
+func resolveDeliverySettings() deliverySettings {
+	processEnv := map[string]string{}
+	for _, name := range []string{envBufferCap, envFlushTimeout} {
+		if value, ok := os.LookupEnv(name); ok {
+			processEnv[name] = value
+		}
+	}
+	return resolveDeliverySettingsFrom(processEnv, pkgEnv(), func(message string) {
+		fmt.Fprintln(os.Stderr, "configuration:", message)
+	})
+}
+
+func resolveDeliverySettingsFrom(processEnv, fileEnv map[string]string, warn func(string)) deliverySettings {
+	settings := deliverySettings{
+		BufferCap:    defaultBufferCap,
+		FlushTimeout: defaultFlushTimeout,
+	}
+	if value, ok := settingValue(envBufferCap, processEnv, fileEnv); ok {
+		parsed, err := parseBufferCap(value)
+		if err != nil {
+			warnInvalidSetting(warn, envBufferCap, value, err, defaultBufferCap)
+		} else {
+			settings.BufferCap = parsed
+		}
+	}
+	if value, ok := settingValue(envFlushTimeout, processEnv, fileEnv); ok {
+		parsed, err := parseFlushTimeout(value)
+		if err != nil {
+			warnInvalidSetting(warn, envFlushTimeout, value, err, defaultFlushTimeout)
+		} else {
+			settings.FlushTimeout = parsed
+		}
+	}
+	return settings
+}
+
+func settingValue(name string, processEnv, fileEnv map[string]string) (string, bool) {
+	if value, ok := processEnv[name]; ok {
+		return value, true
+	}
+	value, ok := fileEnv[name]
+	return value, ok
+}
+
+func parseBufferCap(value string) (int, error) {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, errors.New("expected a positive integer")
+	}
+	return parsed, nil
+}
+
+func parseFlushTimeout(value string) (time.Duration, error) {
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return 0, errors.New("expected a positive Go duration")
+	}
+	return parsed, nil
+}
+
+func warnInvalidSetting(warn func(string), name, value string, err error, fallback any) {
+	if warn == nil {
+		return
+	}
+	warn(fmt.Sprintf("invalid %s value %q: %s; using default %v", name, value, err, fallback))
 }
 
 // parseEnv reads KEY=VALUE lines into a map. Blank lines and lines starting
