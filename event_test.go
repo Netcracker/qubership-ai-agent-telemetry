@@ -325,6 +325,35 @@ func TestTelemetryEventRejects(t *testing.T) {
 	}{
 		{"unknown envelope field", strings.Replace(valid, `"payload":`, `"unexpected":true,"payload":`, 1)},
 		{"unknown payload field", strings.Replace(valid, `"skill_name": "superpowers:brainstorming"`, `"skill_name":"superpowers:brainstorming","unexpected":true`, 1)},
+		{"incorrect envelope field case", strings.Replace(valid, `"agent":`, `"Agent":`, 1)},
+		{"incorrect schema field case", strings.Replace(valid, `"schema_version":`, `"Schema_Version":`, 1)},
+		{"incorrect payload field case", strings.Replace(valid, `"skill_name":`, `"SKILL_NAME":`, 1)},
+		{"duplicate envelope field", strings.Replace(valid, `"agent": "codex"`, `"agent":"codex","agent":"codex"`, 1)},
+		{"duplicate envelope hides null", strings.Replace(valid, `"agent": "codex"`, `"agent":null,"agent":"codex"`, 1)},
+		{"duplicate envelope hides unnormalized remote", strings.Replace(
+			valid,
+			`"repo_remote": "github.com/netcracker/project"`,
+			`"repo_remote":"git@github.com:Netcracker/Project.git","repo_remote":"github.com/netcracker/project"`,
+			1,
+		)},
+		{"duplicate conflicting event name", strings.Replace(
+			valid,
+			`"event_name": "skill_executed"`,
+			`"event_name":"command_invoked","event_name":"skill_executed"`,
+			1,
+		)},
+		{"duplicate payload field", strings.Replace(
+			valid,
+			`"skill_name": "superpowers:brainstorming"`,
+			`"skill_name":"other","skill_name":"superpowers:brainstorming"`,
+			1,
+		)},
+		{"duplicate payload hides null", strings.Replace(
+			valid,
+			`"skill_name": "superpowers:brainstorming"`,
+			`"skill_name":null,"skill_name":"superpowers:brainstorming"`,
+			1,
+		)},
 		{"null envelope field", strings.Replace(valid, `"repo_remote": "github.com/netcracker/project"`, `"repo_remote": null`, 1)},
 		{"null required envelope field", strings.Replace(valid, `"agent": "codex"`, `"agent": null`, 1)},
 		{"null payload", strings.Replace(
@@ -362,6 +391,13 @@ func TestTelemetryEventRejects(t *testing.T) {
 			}
 		})
 	}
+	t.Run("duplicate MCP duration hides null", func(t *testing.T) {
+		var ev TelemetryEvent
+		data := strings.Replace(mcp, `"duration_ms": 42`, `"duration_ms":null,"duration_ms":42`, 1)
+		if err := json.Unmarshal([]byte(data), &ev); err == nil {
+			t.Fatal("json.Unmarshal() accepted duplicate MCP duration")
+		}
+	})
 }
 
 func TestTelemetryEventLegacy(t *testing.T) {
@@ -398,6 +434,16 @@ func TestTelemetryEventLegacy(t *testing.T) {
 		strings.Replace(string(fixture), `"superpowers:brainstorming"`, `"bad/skill"`, 1),
 		strings.Replace(string(fixture), `"github.com/netcracker/project"`, `"git@github.com:Netcracker/Project.git"`, 1),
 		strings.Replace(string(fixture), `"skill":`, `"unexpected":true,"skill":`, 1),
+		strings.Replace(string(fixture), `"agent":`, `"Agent":`, 1),
+		strings.Replace(string(fixture), `"skill":`, `"Skill":`, 1),
+		strings.Replace(string(fixture), `"skill": "superpowers:brainstorming"`, `"skill":"other","skill":"superpowers:brainstorming"`, 1),
+		strings.Replace(string(fixture), `"skill": "superpowers:brainstorming"`, `"skill":null,"skill":"superpowers:brainstorming"`, 1),
+		strings.Replace(
+			string(fixture),
+			`"repo_remote": "github.com/netcracker/project"`,
+			`"repo_remote":"git@github.com:Netcracker/Project.git","repo_remote":"github.com/netcracker/project"`,
+			1,
+		),
 		strings.Replace(validSelftest, `"selftest"`, `"codex"`, 1),
 		strings.Replace(validSelftest, `"__selftest__"`, `"ordinary-skill"`, 1),
 		strings.Replace(validSelftest, `"65ee3934-032f-4b3a-a440-089ae5c053b9"`, `"session-123"`, 1),

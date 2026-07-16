@@ -98,6 +98,21 @@ type legacySkillEvent struct {
 	TS         time.Time `json:"ts"`
 }
 
+var (
+	telemetryEventKeys = []string{
+		"schema_version", "event_name", "agent", "session_id", "repo_remote", "ts", "payload", "skill",
+	}
+	versionedEventKeys = []string{
+		"schema_version", "event_name", "agent", "session_id", "repo_remote", "ts", "payload",
+	}
+	legacyEventKeys    = []string{"agent", "session_id", "repo_remote", "skill", "ts"}
+	skillPayloadKeys   = []string{"skill_name"}
+	commandPayloadKeys = []string{
+		"command_name", "command_source", "expansion_type",
+	}
+	mcpPayloadKeys = []string{"server_name", "tool_name", "outcome", "duration_ms"}
+)
+
 func (ev TelemetryEvent) MarshalJSON() ([]byte, error) {
 	if err := validateSerializableEvent(ev); err != nil {
 		return nil, err
@@ -114,6 +129,9 @@ func (ev TelemetryEvent) MarshalJSON() ([]byte, error) {
 }
 
 func (ev *TelemetryEvent) UnmarshalJSON(data []byte) error {
+	if err := validateJSONObjectKeys(data, telemetryEventKeys...); err != nil {
+		return err
+	}
 	if err := rejectExplicitNulls(data); err != nil {
 		return err
 	}
@@ -131,29 +149,47 @@ func (ev *TelemetryEvent) UnmarshalJSON(data []byte) error {
 		return ev.unmarshalLegacyJSON(data)
 	}
 
+	if err := validateJSONObjectKeys(data, versionedEventKeys...); err != nil {
+		return err
+	}
 	var envelope encodedEventEnvelope
 	if err := decodeStrictJSON(data, &envelope); err != nil {
 		return err
-	}
-	if err := rejectExplicitNulls(envelope.Payload); err != nil {
-		return fmt.Errorf("invalid payload: %w", err)
 	}
 
 	var payload telemetryPayload
 	switch envelope.EventName {
 	case eventSkillExecuted:
+		if err := validateJSONObjectKeys(envelope.Payload, skillPayloadKeys...); err != nil {
+			return fmt.Errorf("invalid skill payload: %w", err)
+		}
+		if err := rejectExplicitNulls(envelope.Payload); err != nil {
+			return fmt.Errorf("invalid skill payload: %w", err)
+		}
 		var decoded SkillPayload
 		if err := decodeStrictJSON(envelope.Payload, &decoded); err != nil {
 			return fmt.Errorf("invalid skill payload: %w", err)
 		}
 		payload = decoded
 	case eventCommandInvoked:
+		if err := validateJSONObjectKeys(envelope.Payload, commandPayloadKeys...); err != nil {
+			return fmt.Errorf("invalid command payload: %w", err)
+		}
+		if err := rejectExplicitNulls(envelope.Payload); err != nil {
+			return fmt.Errorf("invalid command payload: %w", err)
+		}
 		var decoded CommandPayload
 		if err := decodeStrictJSON(envelope.Payload, &decoded); err != nil {
 			return fmt.Errorf("invalid command payload: %w", err)
 		}
 		payload = decoded
 	case eventMCPExecuted:
+		if err := validateJSONObjectKeys(envelope.Payload, mcpPayloadKeys...); err != nil {
+			return fmt.Errorf("invalid MCP payload: %w", err)
+		}
+		if err := rejectExplicitNulls(envelope.Payload); err != nil {
+			return fmt.Errorf("invalid MCP payload: %w", err)
+		}
 		var decoded MCPPayload
 		if err := decodeStrictJSON(envelope.Payload, &decoded); err != nil {
 			return fmt.Errorf("invalid MCP payload: %w", err)
@@ -180,6 +216,9 @@ func (ev *TelemetryEvent) UnmarshalJSON(data []byte) error {
 }
 
 func (ev *TelemetryEvent) unmarshalLegacyJSON(data []byte) error {
+	if err := validateJSONObjectKeys(data, legacyEventKeys...); err != nil {
+		return err
+	}
 	var legacy legacySkillEvent
 	if err := decodeStrictJSON(data, &legacy); err != nil {
 		return err
@@ -197,6 +236,61 @@ func (ev *TelemetryEvent) unmarshalLegacyJSON(data []byte) error {
 		return err
 	}
 	*ev = decoded
+	return nil
+}
+
+func validateJSONObjectKeys(data []byte, allowedKeys ...string) error {
+	allowed := make(map[string]struct{}, len(allowedKeys))
+	for _, key := range allowedKeys {
+		allowed[key] = struct{}{}
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	start, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if delimiter, ok := start.(json.Delim); !ok || delimiter != '{' {
+		return fmt.Errorf("expected JSON object")
+	}
+
+	seen := make(map[string]struct{}, len(allowedKeys))
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return fmt.Errorf("expected JSON object key")
+		}
+		if _, ok := allowed[key]; !ok {
+			return fmt.Errorf("unknown field %q", key)
+		}
+		if _, ok := seen[key]; ok {
+			return fmt.Errorf("duplicate field %q", key)
+		}
+		seen[key] = struct{}{}
+
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+	}
+	end, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if delimiter, ok := end.(json.Delim); !ok || delimiter != '}' {
+		return fmt.Errorf("expected end of JSON object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing JSON value")
+		}
+		return fmt.Errorf("invalid trailing JSON: %w", err)
+	}
 	return nil
 }
 
