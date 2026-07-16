@@ -12,6 +12,7 @@ const (
 	eventCommandInvoked EventName = "command_invoked"
 	eventMCPExecuted    EventName = "mcp_tool_executed"
 	eventSchemaVersion            = 1
+	selftestAgent                 = "selftest"
 )
 
 type MCPOutcome string
@@ -174,7 +175,7 @@ func newSelftestProbe(ts time.Time) TelemetryEvent {
 	return TelemetryEvent{
 		SchemaVersion: eventSchemaVersion,
 		EventName:     eventSkillExecuted,
-		Agent:         "selftest",
+		Agent:         selftestAgent,
 		SessionID:     newUUID(),
 		TS:            ts,
 		Payload:       SkillPayload{SkillName: selftestSkill},
@@ -188,6 +189,11 @@ func validateTelemetryEvent(ev TelemetryEvent) error {
 	if ev.Payload == nil {
 		return fmt.Errorf("missing payload")
 	}
+	switch ev.Payload.(type) {
+	case SkillPayload, CommandPayload, MCPPayload:
+	default:
+		return fmt.Errorf("unknown payload type")
+	}
 	if ev.EventName != ev.Payload.eventName() {
 		return fmt.Errorf("payload does not match event name %q", ev.EventName)
 	}
@@ -198,7 +204,7 @@ func validateTelemetryEvent(ev TelemetryEvent) error {
 		return fmt.Errorf("invalid session ID")
 	}
 
-	if ev.Agent == "selftest" {
+	if ev.Agent == selftestAgent {
 		payload, ok := ev.Payload.(SkillPayload)
 		if !ok || ev.EventName != eventSkillExecuted || payload.SkillName != selftestSkill ||
 			!validUUIDv4(ev.SessionID) || ev.RepoRemote != "" || ev.RepoDir != "" {

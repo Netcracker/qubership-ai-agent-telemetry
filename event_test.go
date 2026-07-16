@@ -15,7 +15,20 @@ func TestTelemetryIdentifiers(t *testing.T) {
 		{"session minimum", "s", sessionIdentifier, true},
 		{"session maximum", strings.Repeat("a", 128), sessionIdentifier, true},
 		{"session oversized", strings.Repeat("a", 129), sessionIdentifier, false},
+		{"session first character", "-session", sessionIdentifier, false},
+		{"session colon", "session:child", sessionIdentifier, true},
 		{"namespaced skill", "plugin-name:skill-name", nameIdentifier, true},
+		{"name maximum", strings.Repeat("a", 255), nameIdentifier, true},
+		{"name oversized", strings.Repeat("a", 256), nameIdentifier, false},
+		{"name first character", ":skill", nameIdentifier, false},
+		{"source maximum", strings.Repeat("a", 64), sourceIdentifier, true},
+		{"source oversized", strings.Repeat("a", 65), sourceIdentifier, false},
+		{"source punctuation first", "_source", sourceIdentifier, true},
+		{"source colon", "plugin:source", sourceIdentifier, false},
+		{"MCP maximum", strings.Repeat("a", 128), mcpIdentifier, true},
+		{"MCP oversized", strings.Repeat("a", 129), mcpIdentifier, false},
+		{"MCP punctuation first", ".github", mcpIdentifier, true},
+		{"MCP colon", "github:tool", mcpIdentifier, false},
 		{"control character", "skill\nname", nameIdentifier, false},
 		{"unicode", "skіll", nameIdentifier, false},
 		{"path", "skills/demo", nameIdentifier, false},
@@ -81,6 +94,13 @@ func TestTelemetryEventValidation(t *testing.T) {
 		{"missing timestamp", withEvent(validSkill, func(ev *TelemetryEvent) { ev.TS = time.Time{} })},
 		{"invalid session", withEvent(validSkill, func(ev *TelemetryEvent) { ev.SessionID = "bad session" })},
 		{"missing payload", withEvent(validSkill, func(ev *TelemetryEvent) { ev.Payload = nil })},
+		{"typed nil payload", withEvent(validSkill, func(ev *TelemetryEvent) {
+			ev.Payload = (*SkillPayload)(nil)
+		})},
+		{"pointer payload", withEvent(validSkill, func(ev *TelemetryEvent) {
+			payload := ev.Payload.(SkillPayload)
+			ev.Payload = &payload
+		})},
 		{"skill payload mismatch", withEvent(validSkill, func(ev *TelemetryEvent) { ev.Payload = validCommand.Payload })},
 		{"invalid skill", withEvent(validSkill, func(ev *TelemetryEvent) { ev.Payload = SkillPayload{SkillName: "bad/skill"} })},
 		{"command payload mismatch", withEvent(validCommand, func(ev *TelemetryEvent) { ev.Payload = validMCP.Payload })},
@@ -111,7 +131,9 @@ func TestTelemetryEventValidation(t *testing.T) {
 			payload.DurationMS = &negative
 			ev.Payload = payload
 		})},
-		{"reserved agent with ordinary skill", withEvent(validSkill, func(ev *TelemetryEvent) { ev.Agent = "selftest" })},
+		{"reserved agent with ordinary skill", withEvent(validSkill, func(ev *TelemetryEvent) {
+			ev.Agent = selftestAgent
+		})},
 		{"reserved skill with ordinary agent", withEvent(validSkill, func(ev *TelemetryEvent) {
 			ev.Payload = SkillPayload{SkillName: selftestSkill}
 		})},
@@ -135,7 +157,7 @@ func TestTelemetryEventValidation(t *testing.T) {
 			t.Fatalf("newSkillEvent(%q): %v", agent, err)
 		}
 	}
-	if _, err := newSkillEvent("selftest", "session-1", "", "", selftestSkill, ts); err == nil {
+	if _, err := newSkillEvent(selftestAgent, "session-1", "", "", selftestSkill, ts); err == nil {
 		t.Fatal("ordinary constructor accepted reserved selftest event")
 	}
 
@@ -143,7 +165,7 @@ func TestTelemetryEventValidation(t *testing.T) {
 	if err := validateTelemetryEvent(probe); err != nil {
 		t.Fatalf("newSelftestProbe validation: %v", err)
 	}
-	if probe.Agent != "selftest" || probe.EventName != eventSkillExecuted ||
+	if probe.Agent != selftestAgent || probe.EventName != eventSkillExecuted ||
 		probe.Payload != (SkillPayload{SkillName: selftestSkill}) ||
 		probe.SessionID == "" || probe.RepoRemote != "" || probe.RepoDir != "" {
 		t.Fatalf("newSelftestProbe() = %#v", probe)
