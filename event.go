@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -65,6 +68,168 @@ type TelemetryEvent struct {
 	RepoDir       string
 	TS            time.Time
 	Payload       telemetryPayload
+}
+
+type eventEnvelope struct {
+	SchemaVersion int              `json:"schema_version"`
+	EventName     EventName        `json:"event_name"`
+	Agent         string           `json:"agent"`
+	SessionID     string           `json:"session_id"`
+	RepoRemote    string           `json:"repo_remote,omitempty"`
+	TS            time.Time        `json:"ts"`
+	Payload       telemetryPayload `json:"payload"`
+}
+
+type encodedEventEnvelope struct {
+	SchemaVersion int             `json:"schema_version"`
+	EventName     EventName       `json:"event_name"`
+	Agent         string          `json:"agent"`
+	SessionID     string          `json:"session_id"`
+	RepoRemote    string          `json:"repo_remote,omitempty"`
+	TS            time.Time       `json:"ts"`
+	Payload       json.RawMessage `json:"payload"`
+}
+
+type legacySkillEvent struct {
+	Agent      string    `json:"agent"`
+	SessionID  string    `json:"session_id"`
+	RepoRemote string    `json:"repo_remote,omitempty"`
+	Skill      string    `json:"skill"`
+	TS         time.Time `json:"ts"`
+}
+
+func (ev TelemetryEvent) MarshalJSON() ([]byte, error) {
+	if err := validateSerializableEvent(ev); err != nil {
+		return nil, err
+	}
+	return json.Marshal(eventEnvelope{
+		SchemaVersion: ev.SchemaVersion,
+		EventName:     ev.EventName,
+		Agent:         ev.Agent,
+		SessionID:     ev.SessionID,
+		RepoRemote:    ev.RepoRemote,
+		TS:            ev.TS.UTC(),
+		Payload:       ev.Payload,
+	})
+}
+
+func (ev *TelemetryEvent) UnmarshalJSON(data []byte) error {
+	if err := rejectExplicitNulls(data); err != nil {
+		return err
+	}
+
+	var fields map[string]json.RawMessage
+	if err := decodeStrictJSON(data, &fields); err != nil {
+		return err
+	}
+	_, hasVersion := fields["schema_version"]
+	_, hasEventName := fields["event_name"]
+	if hasVersion != hasEventName {
+		return fmt.Errorf("partially versioned telemetry event")
+	}
+	if !hasVersion {
+		return ev.unmarshalLegacyJSON(data)
+	}
+
+	var envelope encodedEventEnvelope
+	if err := decodeStrictJSON(data, &envelope); err != nil {
+		return err
+	}
+	if err := rejectExplicitNulls(envelope.Payload); err != nil {
+		return fmt.Errorf("invalid payload: %w", err)
+	}
+
+	var payload telemetryPayload
+	switch envelope.EventName {
+	case eventSkillExecuted:
+		var decoded SkillPayload
+		if err := decodeStrictJSON(envelope.Payload, &decoded); err != nil {
+			return fmt.Errorf("invalid skill payload: %w", err)
+		}
+		payload = decoded
+	case eventCommandInvoked:
+		var decoded CommandPayload
+		if err := decodeStrictJSON(envelope.Payload, &decoded); err != nil {
+			return fmt.Errorf("invalid command payload: %w", err)
+		}
+		payload = decoded
+	case eventMCPExecuted:
+		var decoded MCPPayload
+		if err := decodeStrictJSON(envelope.Payload, &decoded); err != nil {
+			return fmt.Errorf("invalid MCP payload: %w", err)
+		}
+		payload = decoded
+	default:
+		return fmt.Errorf("unknown event name %q", envelope.EventName)
+	}
+
+	decoded := TelemetryEvent{
+		SchemaVersion: envelope.SchemaVersion,
+		EventName:     envelope.EventName,
+		Agent:         envelope.Agent,
+		SessionID:     envelope.SessionID,
+		RepoRemote:    envelope.RepoRemote,
+		TS:            envelope.TS,
+		Payload:       payload,
+	}
+	if err := validateSerializableEvent(decoded); err != nil {
+		return err
+	}
+	*ev = decoded
+	return nil
+}
+
+func (ev *TelemetryEvent) unmarshalLegacyJSON(data []byte) error {
+	var legacy legacySkillEvent
+	if err := decodeStrictJSON(data, &legacy); err != nil {
+		return err
+	}
+	decoded := TelemetryEvent{
+		SchemaVersion: eventSchemaVersion,
+		EventName:     eventSkillExecuted,
+		Agent:         legacy.Agent,
+		SessionID:     legacy.SessionID,
+		RepoRemote:    legacy.RepoRemote,
+		TS:            legacy.TS,
+		Payload:       SkillPayload{SkillName: legacy.Skill},
+	}
+	if err := validateSerializableEvent(decoded); err != nil {
+		return err
+	}
+	*ev = decoded
+	return nil
+}
+
+func decodeStrictJSON(data []byte, dst any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing JSON value")
+		}
+		return fmt.Errorf("invalid trailing JSON: %w", err)
+	}
+	return nil
+}
+
+func rejectExplicitNulls(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := decodeStrictJSON(data, &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return fmt.Errorf("JSON object cannot be null")
+	}
+	for name, raw := range fields {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return fmt.Errorf("field %q cannot be null", name)
+		}
+	}
+	return nil
 }
 
 type identifierProfile struct {

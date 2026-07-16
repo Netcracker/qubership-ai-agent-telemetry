@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "event_name": "skill_executed",
+  "agent": "selftest",
+  "session_id": "65ee3934-032f-4b3a-a440-089ae5c053b9",
+  "ts": "2026-07-16T12:34:56.123456789Z",
+  "payload": {
+    "skill_name": "__selftest__"
+  }
+}
