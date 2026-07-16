@@ -18,7 +18,8 @@ Code/Codex/Cursor JSON hooks, Markdown, and GitHub Actions.
 
 ## Global constraints
 
-- Rebase onto `origin/main` only after the skill-detection hotfix PR #17 merges.
+- Start from a branch that contains merged skill-detection hotfix PR #17
+  (`64384f7`).
 - Preserve `skill_executed` OTLP body and attributes for existing skill events.
 - Write only schema version `1`; read both version `1` and the legacy skill
   shape without rewriting buffered files.
@@ -40,7 +41,7 @@ Code/Codex/Cursor JSON hooks, Markdown, and GitHub Actions.
 
 ---
 
-### Task 1: Rebase and establish the post-hotfix baseline
+### Task 1: Confirm the post-hotfix baseline
 
 **Files:**
 
@@ -51,19 +52,18 @@ Code/Codex/Cursor JSON hooks, Markdown, and GitHub Actions.
 
 **Interfaces:**
 
-- Consumes: merged PR #17 on `origin/main`.
+- Consumes: merged PR #17 at `64384f7`.
 - Produces: a clean feature branch whose skill detection includes nested skill
   paths and ignores non-command Codex payloads.
 
-- [ ] **Step 1: Rebase after PR #17 merges**
+- [ ] **Step 1: Verify the branch contains the merged hotfix**
 
 ```bash
-git fetch origin
-git rebase origin/main
+git merge-base --is-ancestor 64384f7 HEAD
 ```
 
-Expected: the design and plan commits replay without conflicts. If Git reports
-a conflict in either document, keep the feature-branch version.
+Expected: exit code `0`. Stop if it returns a nonzero code; rebase the branch
+onto an updated `origin/main` before changing feature code.
 
 - [ ] **Step 2: Verify the required hotfix behavior exists**
 
@@ -243,8 +243,9 @@ Ordinary constructors accept only `claude`, `codex`, and `cursor`.
 `newSelftestProbe` uses `newUUID()` and reserved constants. The validator
 accepts that exception only as the exact pair from the design. Event validation
 allows an adapter's temporary raw remote before policy. Serializable validation
-also requires a nonempty `RepoRemote` to equal `remoteIdentity(RepoRemote)`, so
-raw URLs, credentials, and unnormalized identities cannot enter JSON.
+allows an empty `RepoRemote` for an explicitly unscoped repository policy. When
+the value is present, it must equal `remoteIdentity(RepoRemote)`, so raw URLs,
+credentials, and unnormalized identities cannot enter JSON.
 
 - [ ] **Step 4: Run the focused tests**
 
@@ -285,9 +286,10 @@ Use the exact examples from the design as golden files. Compare
 `json.MarshalIndent` output after removing the fixture's trailing newline.
 Test unknown fields at both levels, `null`, unknown version, partial
 discriminators, wrong payload, invalid timestamp, trailing JSON, and invalid
-legacy identifiers. Reject an unnormalized persisted remote. Accept the legacy
-skill and exact legacy selftest pair. Build the selftest golden with the fixed
-UUID from the design rather than the random selftest constructor.
+legacy identifiers. Accept an absent repository remote, reject an unnormalized
+persisted remote, and accept the legacy skill and exact legacy selftest pair.
+Build the selftest golden with the fixed UUID from the design rather than the
+random selftest constructor.
 
 - [ ] **Step 2: Run the codec tests to verify they fail**
 
@@ -317,8 +319,22 @@ type eventEnvelope struct {
 `RepoDir`.
 `UnmarshalJSON` inspects the discriminator, rejects a partially versioned
 object, decodes with `DisallowUnknownFields`, verifies EOF, selects the concrete
-payload by `event_name`, rejects absent/`null` payloads, and validates. A strict
-legacy struct maps to `skill_executed`; its service exception must be exact.
+payload by `event_name`, and validates. Use these helpers for both envelope and
+payload objects:
+
+```go
+func decodeStrictJSON(data []byte, dst any) error
+func rejectExplicitNulls(data []byte) error
+```
+
+`decodeStrictJSON` uses `json.Decoder.DisallowUnknownFields()` and requires EOF
+after the first value. `rejectExplicitNulls` decodes a
+`map[string]json.RawMessage` and rejects every present field whose trimmed raw
+value is `null`. Apply it separately to the envelope and direct payload before
+typed decoding. This rejects `repo_remote: null`, optional MCP fields set to
+`null`, and required fields set to `null` instead of silently treating them as
+absent. A strict legacy struct maps to `skill_executed`; its service exception
+must be exact.
 
 - [ ] **Step 4: Run the codec tests**
 
@@ -755,21 +771,17 @@ server. Invalid events must create neither an outbox file nor collector
 request. `detect("selftest", ...)` must fail as unsupported while
 `newSelftestProbe` succeeds.
 
-- [ ] **Step 2: Run privacy tests to expose leaks**
+- [ ] **Step 2: Run the completed end-to-end privacy matrix**
 
 ```bash
 go test ./... -run 'TestPrivacy|TestReservedSelftest' -count=1
 ```
 
-Expected: PASS only when every sentinel is absent. Do not weaken a failing
-sentinel.
+Expected: PASS only when every sentinel is absent. If a case fails, return to
+the task that owns the leaking boundary and add the failing case to that task's
+focused tests. Do not weaken or remove a sentinel.
 
-- [ ] **Step 3: Apply only fixes required by a failing case**
-
-Decode fewer hook fields or tighten centralized validation. Do not redact and
-send transformed content; excluded content must never enter the event model.
-
-- [ ] **Step 4: Run all event-pipeline tests**
+- [ ] **Step 3: Run all event-pipeline tests**
 
 ```bash
 gofmt -w privacy_test.go flush_test.go main_test.go
@@ -780,7 +792,7 @@ go test ./... -run \
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit privacy coverage**
+- [ ] **Step 4: Commit privacy coverage**
 
 ```bash
 git add privacy_test.go flush_test.go main_test.go
