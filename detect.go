@@ -38,7 +38,7 @@ type remoteResolver func(cwd string) string
 // detect routes a raw hook payload to the per-harness detector. Claude Code
 // emits a native Skill-tool event; Codex and Cursor are detected from the
 // session transcript.
-func detect(agent string, stdin []byte, remote remoteResolver, now time.Time) ([]SkillEvent, error) {
+func detect(agent string, stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
 	stdin = bytes.TrimPrefix(stdin, utf8BOM)
 	switch agent {
 	case "claude":
@@ -71,10 +71,10 @@ type claudePayload struct {
 }
 
 // claudeAdapter turns a Claude Code PreToolUse hook payload into a single
-// SkillEvent. The hook is registered on the Skill tool, so it fires once per
+// skill event. The hook is registered on the Skill tool, so it fires once per
 // skill activation; tool_input.skill is the skill name (namespace-prefixed for
 // plugin skills, bare for project skills).
-func claudeAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]SkillEvent, error) {
+func claudeAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
 	var p claudePayload
 	if len(stdin) > 0 {
 		// Malformed JSON yields no events rather than an error: a broken turn
@@ -92,14 +92,11 @@ func claudeAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]SkillE
 	if remote != nil && p.Cwd != "" {
 		rem = remote(p.Cwd)
 	}
-	return []SkillEvent{{
-		Agent:      "claude",
-		SessionID:  p.SessionID,
-		RepoRemote: rem,
-		RepoDir:    p.Cwd,
-		Skill:      p.ToolInput.Skill,
-		TS:         now,
-	}}, nil
+	ev, err := newSkillEvent("claude", p.SessionID, rem, p.Cwd, p.ToolInput.Skill, now)
+	if err != nil {
+		return nil, nil
+	}
+	return []TelemetryEvent{ev}, nil
 }
 
 // cursorPayload is the Cursor afterAgentResponse hook envelope. Only the fields

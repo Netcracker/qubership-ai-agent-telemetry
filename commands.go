@@ -138,12 +138,7 @@ func runSelftest(s *Outbox, endpoint, token string, tlsConfig *tls.Config, timeo
 	if endpoint == "" {
 		return selftestResult{}, errors.New("no endpoint: machine is not configured")
 	}
-	probe := SkillEvent{
-		Agent:     "selftest",
-		SessionID: newUUID(),
-		Skill:     selftestSkill,
-		TS:        time.Now().UTC(),
-	}
+	probe := newSelftestProbe(time.Now().UTC())
 	if err := s.Enqueue(probe); err != nil {
 		return selftestResult{}, err
 	}
@@ -163,8 +158,10 @@ func probesRemaining(s *Outbox) int {
 	}
 	n := 0
 	for _, name := range names {
-		if ev, err := s.Read(name); err == nil && ev.Skill == selftestSkill {
-			n++
+		if ev, err := s.Read(name); err == nil && ev.Agent == selftestAgent {
+			if payload, ok := ev.Payload.(SkillPayload); ok && payload.SkillName == selftestSkill {
+				n++
+			}
 		}
 	}
 	return n

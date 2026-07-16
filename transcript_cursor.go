@@ -93,7 +93,7 @@ func processCursorLine(line string, skills *[]string, seen map[string]bool) {
 // payload carries a session id, only reads beyond the stored byte offset are
 // emitted, and the offset advances to the end of the file. The remote is
 // resolved from workspace_roots, since the transcript carries no git data.
-func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteResolver, now time.Time) []SkillEvent {
+func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteResolver, now time.Time) []TelemetryEvent {
 	var p cursorPayload
 	if len(stdin) > 0 {
 		_ = json.Unmarshal(stdin, &p)
@@ -128,23 +128,19 @@ func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteRes
 	if len(p.WorkspaceRoots) > 0 {
 		repoDir = p.WorkspaceRoots[0]
 	}
-	events := make([]SkillEvent, 0, len(skills))
+	events := make([]TelemetryEvent, 0, len(skills))
 	for _, name := range skills {
-		events = append(events, SkillEvent{
-			Agent:      "cursor",
-			SessionID:  p.SessionID,
-			RepoRemote: rem,
-			RepoDir:    repoDir,
-			Skill:      name,
-			TS:         now,
-		})
+		ev, err := newSkillEvent("cursor", p.SessionID, rem, repoDir, name, now)
+		if err == nil {
+			events = append(events, ev)
+		}
 	}
 	return events
 }
 
 // cursorTranscriptEventsAuto wires cursorTranscriptEvents to the default offset
 // store. It skips building the store unless the payload names a transcript.
-func cursorTranscriptEventsAuto(stdin []byte, remote remoteResolver, now time.Time) []SkillEvent {
+func cursorTranscriptEventsAuto(stdin []byte, remote remoteResolver, now time.Time) []TelemetryEvent {
 	var p cursorPayload
 	if len(stdin) > 0 {
 		_ = json.Unmarshal(stdin, &p)

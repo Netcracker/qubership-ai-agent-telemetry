@@ -19,7 +19,7 @@ import (
 // beyond the stored byte offset are emitted, and the offset advances to the end
 // of the file. session_meta is always read for the repo remote, since it sits
 // on the first line, before any offset.
-func codexTranscriptEvents(stdin []byte, offsets *OffsetStore, now time.Time) []SkillEvent {
+func codexTranscriptEvents(stdin []byte, offsets *OffsetStore, now time.Time) []TelemetryEvent {
 	var p codexPayload
 	if len(stdin) > 0 {
 		_ = json.Unmarshal(stdin, &p)
@@ -49,16 +49,14 @@ func codexTranscriptEvents(stdin []byte, offsets *OffsetStore, now time.Time) []
 		_ = offsets.Save(key, end)
 	}
 
-	events := make([]SkillEvent, 0, len(scan.skills))
+	events := make([]TelemetryEvent, 0, len(scan.skills))
 	for _, name := range scan.skills {
-		events = append(events, SkillEvent{
-			Agent:      "codex",
-			SessionID:  p.SessionID,
-			RepoRemote: scan.repoRemote,
-			RepoDir:    firstNonEmpty(scan.repoDir, p.Cwd),
-			Skill:      name,
-			TS:         now,
-		})
+		ev, err := newSkillEvent(
+			"codex", p.SessionID, scan.repoRemote, firstNonEmpty(scan.repoDir, p.Cwd), name, now,
+		)
+		if err == nil {
+			events = append(events, ev)
+		}
 	}
 	return events
 }
@@ -66,7 +64,7 @@ func codexTranscriptEvents(stdin []byte, offsets *OffsetStore, now time.Time) []
 // codexTranscriptEventsAuto wires codexTranscriptEvents to the default offset
 // store. It skips building the store unless the payload actually names a
 // transcript, so the marker-only path touches no extra state.
-func codexTranscriptEventsAuto(stdin []byte, now time.Time) []SkillEvent {
+func codexTranscriptEventsAuto(stdin []byte, now time.Time) []TelemetryEvent {
 	var p codexPayload
 	if len(stdin) > 0 {
 		_ = json.Unmarshal(stdin, &p)

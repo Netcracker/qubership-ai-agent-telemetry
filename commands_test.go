@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -301,6 +302,82 @@ func TestSelftestDeliversProbeAndClearsIt(t *testing.T) {
 	files, _ := s.List()
 	if len(files) != 0 {
 		t.Fatalf("probe should have left the outbox: %d remain", len(files))
+	}
+}
+
+func TestSelftestDeliversVersionOneProbeAndClearsIt(t *testing.T) {
+	var version int
+	s := &Outbox{Dir: t.TempDir()}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		names, err := s.List()
+		if err != nil || len(names) != 1 {
+			t.Errorf("probe buffer = %v, err = %v", names, err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		raw, err := os.ReadFile(filepath.Join(s.Dir, names[0]))
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		var envelope struct {
+			SchemaVersion int `json:"schema_version"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		version = envelope.SchemaVersion
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	res, err := runSelftest(s, srv.URL, "", nil, 2*time.Second)
+	if err != nil {
+		t.Fatalf("selftest: %v", err)
+	}
+	if !res.Delivered || version != eventSchemaVersion {
+		t.Fatalf("result = %+v, version = %d", res, version)
+	}
+	if names, _ := s.List(); len(names) != 0 {
+		t.Fatalf("probe should be cleared, got %v", names)
+	}
+}
+
+func TestSelftestFindsLegacyAndVersionOneProbes(t *testing.T) {
+	s := &Outbox{Dir: t.TempDir()}
+	legacy := `{"agent":"selftest","session_id":"123e4567-e89b-42d3-a456-426614174000","skill":"__selftest__","ts":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(s.Dir, "0001.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	probe := newSelftestProbe(time.Unix(2, 0).UTC())
+	raw, err := json.Marshal(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir, "0002.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := probesRemaining(s); got != 2 {
+		t.Fatalf("probes remaining = %d, want 2", got)
+	}
+}
+
+func TestSelftestRejectsModifiedReservedPairs(t *testing.T) {
+	s := &Outbox{Dir: t.TempDir()}
+	entries := map[string]string{
+		"0001.json": `{"agent":"selftest","session_id":"123e4567-e89b-42d3-a456-426614174000","skill":"brainstorming","ts":"2026-01-01T00:00:00Z"}`,
+		"0002.json": `{"agent":"codex","session_id":"s1","skill":"__selftest__","ts":"2026-01-01T00:00:00Z"}`,
+	}
+	for name, raw := range entries {
+		if err := os.WriteFile(filepath.Join(s.Dir, name), []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := probesRemaining(s); got != 0 {
+		t.Fatalf("probes remaining = %d, want 0", got)
 	}
 }
 

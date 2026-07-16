@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,7 +11,130 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	collectlogsv1 "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
+	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
+	"google.golang.org/protobuf/proto"
 )
+
+func TestFlushPreservesSkillOTLPSchema(t *testing.T) {
+	records := flushRecords(t, []TelemetryEvent{mustSkillEvent(t, "codex", "s1", "brainstorming")})
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+	if got := records[0].Body.GetStringValue(); got != "skill_executed" {
+		t.Fatalf("body = %q", got)
+	}
+	assertOTLPAttrs(t, records[0].Attributes, map[string]any{
+		"agent": "codex", "session.id": "s1", "repo.remote": "",
+		"skill.name": "brainstorming",
+	})
+}
+
+func TestFlushMapsAllTypedPayloads(t *testing.T) {
+	duration := int64(42)
+	ts := time.Unix(1, 0).UTC()
+	skill, _ := newSkillEvent("codex", "s1", "", "", "brainstorming", ts)
+	command, _ := newCommandEvent("codex", "s2", "", "", CommandPayload{
+		CommandName: "review-pr", CommandSource: "plugin", ExpansionType: "slash_command",
+	}, ts)
+	mcp, _ := newMCPEvent("codex", "s3", "", "", MCPPayload{
+		ServerName: "github", ToolName: "get_issue", Outcome: mcpSucceeded, DurationMS: &duration,
+	}, ts)
+	records := flushRecords(t, []TelemetryEvent{skill, command, mcp})
+	wantAttrs := map[EventName]map[string]any{
+		eventSkillExecuted: {"skill.name": "brainstorming"},
+		eventCommandInvoked: {
+			"command.name": "review-pr", "command.source": "plugin", "command.expansion_type": "slash_command",
+		},
+		eventMCPExecuted: {
+			"mcp.server.name": "github", "mcp.tool.name": "get_issue", "mcp.outcome": "succeeded",
+			"mcp.duration_ms": int64(42),
+		},
+	}
+	if len(records) != 3 {
+		t.Fatalf("got %d records, want 3", len(records))
+	}
+	for _, record := range records {
+		name := EventName(record.Body.GetStringValue())
+		want := map[string]any{"agent": "codex", "repo.remote": ""}
+		for key, value := range wantAttrs[name] {
+			want[key] = value
+		}
+		assertOTLPAttrs(t, record.Attributes, want)
+	}
+}
+
+func mustSkillEvent(t *testing.T, agent, session, skill string) TelemetryEvent {
+	t.Helper()
+	ev, err := newSkillEvent(agent, session, "", "", skill, time.Unix(1, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ev
+}
+
+func flushRecords(t *testing.T, events []TelemetryEvent) []*logsv1.LogRecord {
+	t.Helper()
+	var requests []*collectlogsv1.ExportLogsServiceRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var request collectlogsv1.ExportLogsServiceRequest
+		if err := proto.Unmarshal(body, &request); err != nil {
+			t.Errorf("decode OTLP request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		requests = append(requests, &request)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s := &Outbox{Dir: t.TempDir()}
+	for _, ev := range events {
+		if err := s.Enqueue(ev); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	var records []*logsv1.LogRecord
+	for _, request := range requests {
+		for _, resourceLogs := range request.ResourceLogs {
+			for _, scopeLogs := range resourceLogs.ScopeLogs {
+				for _, record := range scopeLogs.LogRecords {
+					records = append(records, record)
+				}
+			}
+		}
+	}
+	return records
+}
+
+func assertOTLPAttrs(t *testing.T, attrs []*commonv1.KeyValue, want map[string]any) {
+	t.Helper()
+	got := make(map[string]any, len(attrs))
+	for _, attr := range attrs {
+		switch value := attr.Value.Value.(type) {
+		case *commonv1.AnyValue_StringValue:
+			got[attr.Key] = value.StringValue
+		case *commonv1.AnyValue_IntValue:
+			got[attr.Key] = value.IntValue
+		}
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Errorf("%s = %#v, want %#v", key, got[key], value)
+		}
+	}
+}
 
 func TestResourceAttrsCarriesOSType(t *testing.T) {
 	got := map[string]string{}
@@ -41,7 +165,8 @@ func TestResourceAttrsCarriesOSType(t *testing.T) {
 func seed(t *testing.T, s *Outbox, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		if err := s.Enqueue(SkillEvent{Agent: "codex", Skill: "s", TS: time.Now().UTC()}); err != nil {
+		ev := testSkillEvent(t, "codex", "s1", "", "", "s", time.Now().UTC())
+		if err := s.Enqueue(ev); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(time.Millisecond)

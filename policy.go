@@ -58,7 +58,7 @@ func resolveRepoAllowList(envValue string, fileValues []string) ([]string, bool)
 	return splitList(defaultRepoAllow), true
 }
 
-func filterEventsByPolicy(events []SkillEvent, policy telemetryPolicy, remotes func(string) []string) []SkillEvent {
+func filterEventsByPolicy(events []TelemetryEvent, policy telemetryPolicy, remotes func(string) []string) []TelemetryEvent {
 	if len(events) == 0 {
 		return events
 	}
@@ -72,12 +72,12 @@ func filterEventsByPolicy(events []SkillEvent, policy telemetryPolicy, remotes f
 	return out
 }
 
-func eventAllowed(ev SkillEvent, policy telemetryPolicy, remotes func(string) []string) bool {
+func eventAllowed(ev TelemetryEvent, policy telemetryPolicy, remotes func(string) []string) bool {
 	_, ok := eventAllowedRemote(ev, policy, remotes)
 	return ok
 }
 
-func eventAllowedRemote(ev SkillEvent, policy telemetryPolicy, remotes func(string) []string) (string, bool) {
+func eventAllowedRemote(ev TelemetryEvent, policy telemetryPolicy, remotes func(string) []string) (string, bool) {
 	if policy.Disabled {
 		return "", false
 	}

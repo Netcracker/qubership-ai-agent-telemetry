@@ -228,7 +228,7 @@ func TestCodexTranscriptEventsReadsFile(t *testing.T) {
 		t.Fatalf("got %d events, want 1", len(events))
 	}
 	e := events[0]
-	if e.Agent != "codex" || e.SessionID != "s1" || e.Skill != "adr-authoring" {
+	if e.Agent != "codex" || e.SessionID != "s1" || skillName(t, e) != "adr-authoring" {
 		t.Fatalf("event = %+v", e)
 	}
 	if e.RepoRemote != "https://github.com/o/r" {
@@ -259,7 +259,7 @@ func TestCodexTranscriptEventsOffsetSkipsSeenReads(t *testing.T) {
 	_ = f.Close()
 
 	third := codexTranscriptEvents(stdin, store, time.Unix(3, 0).UTC())
-	if len(third) != 1 || third[0].Skill != "english-us-developer-style" {
+	if len(third) != 1 || skillName(t, third[0]) != "english-us-developer-style" {
 		t.Fatalf("third run = %+v, want one english-us-developer-style", third)
 	}
 }

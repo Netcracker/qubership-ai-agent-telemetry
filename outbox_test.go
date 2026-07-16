@@ -1,30 +1,126 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
 
-func TestSkillEventJSONRoundTrip(t *testing.T) {
-	ts := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
-	in := SkillEvent{
-		Agent:      "codex",
-		SessionID:  "s1",
-		RepoRemote: "git@host:org/repo.git",
-		Skill:      "ops:deploy",
-		TS:         ts,
+func TestOutboxWritesOnlyVersionOne(t *testing.T) {
+	s := &Outbox{Dir: t.TempDir()}
+	ev, err := newSkillEvent("codex", "session-1", "", "", "brainstorming", time.Unix(1, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
 	}
+	if err := s.Enqueue(ev); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	names, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(s.Dir, names[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if string(envelope["schema_version"]) != "1" {
+		t.Fatalf("schema_version = %s, want 1", envelope["schema_version"])
+	}
+	if _, legacy := envelope["skill"]; legacy {
+		t.Fatal("version 1 outbox entry must not contain legacy skill field")
+	}
+}
+
+func TestOutboxReadsMixedLegacyAndVersionOneInOrder(t *testing.T) {
+	s := &Outbox{Dir: t.TempDir()}
+	legacy := `{"agent":"codex","session_id":"legacy-1","skill":"old","ts":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(s.Dir, "0001.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ev, err := newSkillEvent("codex", "versioned-1", "", "", "new", time.Unix(2, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir, "0002.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	names, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, name := range names {
+		read, err := s.Read(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, read.Payload.(SkillPayload).SkillName)
+	}
+	if len(got) != 2 || got[0] != "old" || got[1] != "new" {
+		t.Fatalf("skills = %v, want [old new]", got)
+	}
+}
+
+func TestOutboxKeepsInvalidVersionedEntry(t *testing.T) {
+	s := &Outbox{Dir: t.TempDir()}
+	const invalid = `{"schema_version":1,"event_name":"skill_executed","agent":"codex","session_id":"s1","ts":"2026-01-01T00:00:00Z","payload":{"skill_name":""}}`
+	name := "0001.json"
+	if err := os.WriteFile(filepath.Join(s.Dir, name), []byte(invalid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Read(name); err == nil {
+		t.Fatal("want strict decoder to reject invalid versioned entry")
+	}
+	names, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0] != name {
+		t.Fatalf("buffer = %v, want [%s]", names, name)
+	}
+}
+
+func testSkillEvent(t *testing.T, agent, session, remote, repoDir, skill string, ts time.Time) TelemetryEvent {
+	t.Helper()
+	ev, err := newSkillEvent(agent, session, remoteIdentity(remote), repoDir, skill, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ev
+}
+
+func skillName(t *testing.T, ev TelemetryEvent) string {
+	t.Helper()
+	payload, ok := ev.Payload.(SkillPayload)
+	if !ok {
+		t.Fatalf("payload = %T, want SkillPayload", ev.Payload)
+	}
+	return payload.SkillName
+}
+
+func TestTelemetryEventJSONRoundTrip(t *testing.T) {
+	ts := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	in := testSkillEvent(t, "codex", "s1", "git@host:org/repo.git", "", "ops:deploy", ts)
 	b, err := in.MarshalJSON()
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	var out SkillEvent
+	var out TelemetryEvent
 	if err := out.UnmarshalJSON(b); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out != in {
+	if out.Agent != in.Agent || out.SessionID != in.SessionID || out.RepoRemote != in.RepoRemote ||
+		!out.TS.Equal(in.TS) || skillName(t, out) != skillName(t, in) {
 		t.Fatalf("round trip mismatch:\n got %+v\nwant %+v", out, in)
 	}
 }
@@ -33,7 +129,7 @@ func TestOutboxEnqueueAndList(t *testing.T) {
 	dir := t.TempDir()
 	s := &Outbox{Dir: dir}
 
-	ev := SkillEvent{Agent: "codex", Skill: "a", TS: time.Unix(1, 0).UTC()}
+	ev := testSkillEvent(t, "codex", "s1", "", "", "a", time.Unix(1, 0).UTC())
 	if err := s.Enqueue(ev); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -49,8 +145,8 @@ func TestOutboxEnqueueAndList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	if got.Skill != "a" {
-		t.Fatalf("read skill = %q", got.Skill)
+	if skillName(t, got) != "a" {
+		t.Fatalf("read skill = %q", skillName(t, got))
 	}
 
 	if err := s.Remove(files[0]); err != nil {
@@ -84,7 +180,8 @@ func TestOutboxRotateDropsOldest(t *testing.T) {
 	dir := t.TempDir()
 	s := &Outbox{Dir: dir}
 	for i := 0; i < 5; i++ {
-		if err := s.Enqueue(SkillEvent{Skill: "s", TS: time.Unix(int64(i), 0).UTC()}); err != nil {
+		ev := testSkillEvent(t, "codex", "s1", "", "", "s", time.Unix(int64(i)+1, 0).UTC())
+		if err := s.Enqueue(ev); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(time.Millisecond) // ensure distinct nanos in filenames
@@ -105,7 +202,7 @@ func TestOutboxRotateDropsOldest(t *testing.T) {
 func TestOutboxRotateUnderCapNoop(t *testing.T) {
 	dir := t.TempDir()
 	s := &Outbox{Dir: dir}
-	_ = s.Enqueue(SkillEvent{Skill: "s", TS: time.Unix(1, 0).UTC()})
+	_ = s.Enqueue(testSkillEvent(t, "codex", "s1", "", "", "s", time.Unix(1, 0).UTC()))
 	dropped, err := s.Rotate(100)
 	if err != nil {
 		t.Fatalf("rotate: %v", err)

@@ -3,7 +3,32 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestPolicyAppliesToEveryHarnessEvent(t *testing.T) {
+	ts := time.Unix(1, 0).UTC()
+	skill, _ := newSkillEvent("codex", "s1", "git@github.com:Netcracker/project.git", "/repo", "brainstorming", ts)
+	command, _ := newCommandEvent("claude", "s2", "git@github.com:Netcracker/project.git", "/repo", CommandPayload{
+		CommandName: "review-pr", CommandSource: "plugin", ExpansionType: "slash_command",
+	}, ts)
+	mcp, _ := newMCPEvent("cursor", "s3", "git@github.com:Netcracker/project.git", "/repo", MCPPayload{
+		ServerName: "github", ToolName: "get_issue", Outcome: mcpSucceeded,
+	}, ts)
+	got := filterEventsByPolicy(
+		[]TelemetryEvent{skill, command, mcp},
+		telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}},
+		nil,
+	)
+	if len(got) != 3 {
+		t.Fatalf("got %d events, want 3", len(got))
+	}
+	for _, ev := range got {
+		if ev.RepoRemote != "github.com/netcracker/project" {
+			t.Fatalf("%s repo remote = %q", ev.EventName, ev.RepoRemote)
+		}
+	}
+}
 
 func TestRemoteIdentityNormalizesCommonGitURLs(t *testing.T) {
 	cases := map[string]string{
@@ -49,7 +74,7 @@ func TestRepoAllowedMatchesGitlabNestedGroups(t *testing.T) {
 }
 
 func TestPolicyAllowsPersonalForkWhenAnotherRemoteMatchesAllowlist(t *testing.T) {
-	ev := SkillEvent{RepoRemote: "git@github.com:some-user/project.git", RepoDir: "/repo"}
+	ev := testSkillEvent(t, "codex", "s1", "git@github.com:some-user/project.git", "/repo", "skill", time.Now())
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
 	allowed := eventAllowed(ev, policy, func(cwd string) []string {
 		if cwd != "/repo" {
@@ -66,9 +91,9 @@ func TestPolicyAllowsPersonalForkWhenAnotherRemoteMatchesAllowlist(t *testing.T)
 }
 
 func TestFilterEventsUsesMatchingAllowlistedRemoteForForks(t *testing.T) {
-	ev := SkillEvent{RepoRemote: "git@github.com:some-user/project.git", RepoDir: "/repo"}
+	ev := testSkillEvent(t, "codex", "s1", "git@github.com:some-user/project.git", "/repo", "skill", time.Now())
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	got := filterEventsByPolicy([]SkillEvent{ev}, policy, func(string) []string {
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, policy, func(string) []string {
 		return []string{
 			"git@github.com:some-user/project.git",
 			"git@github.com:Netcracker/project.git",
@@ -83,9 +108,9 @@ func TestFilterEventsUsesMatchingAllowlistedRemoteForForks(t *testing.T) {
 }
 
 func TestPolicyUsesGitRemoteWhenEventRemoteMissing(t *testing.T) {
-	ev := SkillEvent{RepoDir: "/repo"}
+	ev := testSkillEvent(t, "codex", "s1", "", "/repo", "skill", time.Now())
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	got := filterEventsByPolicy([]SkillEvent{ev}, policy, func(cwd string) []string {
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, policy, func(cwd string) []string {
 		if cwd != "/repo" {
 			t.Fatalf("cwd = %q", cwd)
 		}
@@ -101,7 +126,8 @@ func TestPolicyUsesGitRemoteWhenEventRemoteMissing(t *testing.T) {
 
 func TestPolicyWithAllowlistDropsUnknownRemote(t *testing.T) {
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	if eventAllowed(SkillEvent{}, policy, nil) {
+	ev := testSkillEvent(t, "codex", "s1", "", "", "skill", time.Now())
+	if eventAllowed(ev, policy, nil) {
 		t.Fatal("empty remote should be denied when an allowlist is configured")
 	}
 }
@@ -137,7 +163,9 @@ func TestResolveRepoAllowListDefaultsToNetcracker(t *testing.T) {
 }
 
 func TestFilterEventsNormalizesRepoRemoteForTelemetry(t *testing.T) {
-	events := []SkillEvent{{RepoRemote: "git@github.com:Netcracker/Project.git"}}
+	events := []TelemetryEvent{
+		testSkillEvent(t, "codex", "s1", "git@github.com:Netcracker/Project.git", "", "skill", time.Now()),
+	}
 	got := filterEventsByPolicy(events, telemetryPolicy{}, nil)
 	if len(got) != 1 {
 		t.Fatalf("got %d events, want 1", len(got))

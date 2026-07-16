@@ -124,16 +124,10 @@ func Flush(s *Outbox, endpoint, token string, tlsConfig *tls.Config, timeout tim
 		if rerr != nil {
 			continue // skip unreadable file; do not fail the whole batch
 		}
-		var rec otellog.Record
-		rec.SetTimestamp(ev.TS)
-		rec.SetObservedTimestamp(time.Now().UTC())
-		rec.SetBody(otellog.StringValue("skill_executed"))
-		rec.AddAttributes(
-			otellog.String("agent", ev.Agent),
-			otellog.String("session.id", ev.SessionID),
-			otellog.String("repo.remote", ev.RepoRemote),
-			otellog.String("skill.name", ev.Skill),
-		)
+		rec, rerr := eventRecord(ev, time.Now().UTC())
+		if rerr != nil {
+			continue
+		}
 		logger.Emit(ctx, rec)
 		sentNames = append(sentNames, n)
 	}
@@ -150,4 +144,43 @@ func Flush(s *Outbox, endpoint, token string, tlsConfig *tls.Config, timeout tim
 	}
 	clearLastDeliveryError(s)
 	return len(sentNames), nil
+}
+
+func eventRecord(ev TelemetryEvent, observed time.Time) (otellog.Record, error) {
+	if err := validateSerializableEvent(ev); err != nil {
+		return otellog.Record{}, err
+	}
+	var rec otellog.Record
+	rec.SetTimestamp(ev.TS)
+	rec.SetObservedTimestamp(observed)
+	rec.SetBody(otellog.StringValue(string(ev.EventName)))
+	rec.AddAttributes(
+		otellog.String("agent", ev.Agent),
+		otellog.String("session.id", ev.SessionID),
+		otellog.String("repo.remote", ev.RepoRemote),
+	)
+	switch payload := ev.Payload.(type) {
+	case SkillPayload:
+		rec.AddAttributes(otellog.String("skill.name", payload.SkillName))
+	case CommandPayload:
+		rec.AddAttributes(
+			otellog.String("command.name", payload.CommandName),
+			otellog.String("command.source", payload.CommandSource),
+			otellog.String("command.expansion_type", payload.ExpansionType),
+		)
+	case MCPPayload:
+		if payload.ServerName != "" {
+			rec.AddAttributes(otellog.String("mcp.server.name", payload.ServerName))
+		}
+		rec.AddAttributes(
+			otellog.String("mcp.tool.name", payload.ToolName),
+			otellog.String("mcp.outcome", string(payload.Outcome)),
+		)
+		if payload.DurationMS != nil {
+			rec.AddAttributes(otellog.Int64("mcp.duration_ms", *payload.DurationMS))
+		}
+	default:
+		return otellog.Record{}, errors.New("unknown telemetry payload")
+	}
+	return rec, nil
 }

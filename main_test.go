@@ -502,7 +502,7 @@ func TestIngestUsesConfiguredBufferCap(t *testing.T) {
 
 	s := &Outbox{Dir: t.TempDir()}
 	for i := 0; i < 2; i++ {
-		if err := s.Enqueue(SkillEvent{Skill: "old", TS: time.Now().UTC()}); err != nil {
+		if err := s.Enqueue(testSkillEvent(t, "codex", "s1", "", "", "old", time.Now().UTC())); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -542,7 +542,7 @@ func TestRunFlushUsesConfiguredTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Enqueue(SkillEvent{Skill: "queued", TS: time.Now().UTC()}); err != nil {
+	if err := s.Enqueue(testSkillEvent(t, "codex", "s1", "", "", "queued", time.Now().UTC())); err != nil {
 		t.Fatal(err)
 	}
 
@@ -613,7 +613,7 @@ func TestShouldFlushThrottle(t *testing.T) {
 	if shouldFlush(s, 10, time.Hour) {
 		t.Fatal("should not flush with empty buffer")
 	}
-	_ = s.Enqueue(SkillEvent{Skill: "x", TS: time.Now().UTC()})
+	_ = s.Enqueue(testSkillEvent(t, "codex", "s1", "", "", "x", time.Now().UTC()))
 	if !shouldFlush(s, 10, time.Hour) {
 		t.Fatal("should flush when no prior attempt")
 	}
@@ -631,9 +631,9 @@ func TestRepoRemoteCacheMemoizesByRepoDir(t *testing.T) {
 	})
 
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	events := []SkillEvent{
-		{RepoDir: "/repo"},
-		{RepoDir: "/repo"},
+	events := []TelemetryEvent{
+		testSkillEvent(t, "codex", "s1", "", "/repo", "skill-a", time.Now()),
+		testSkillEvent(t, "codex", "s2", "", "/repo", "skill-b", time.Now()),
 	}
 	got := filterEventsByPolicy(events, policy, cache.remotesFor)
 	if len(got) != 2 {

@@ -24,7 +24,7 @@ func TestDetectClaudeParsesSkillTool(t *testing.T) {
 		t.Fatalf("got %d events, want 1", len(events))
 	}
 	e := events[0]
-	if e.Agent != "claude" || e.SessionID != "6a35f862" || e.Skill != "superpowers:brainstorming" {
+	if e.Agent != "claude" || e.SessionID != "6a35f862" || skillName(t, e) != "superpowers:brainstorming" {
 		t.Fatalf("event = %+v", e)
 	}
 	if e.RepoRemote != "git@host:org/repo.git" {
@@ -41,7 +41,7 @@ func TestDetectStripsLeadingUTF8BOM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detect: %v", err)
 	}
-	if len(events) != 1 || events[0].Skill != "demo" {
+	if len(events) != 1 || skillName(t, events[0]) != "demo" {
 		t.Fatalf("got %d events (%+v), want 1 for demo", len(events), events)
 	}
 }
@@ -86,7 +86,7 @@ func TestDetectCodexFromTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detect: %v", err)
 	}
-	if len(events) != 1 || events[0].Agent != "codex" || events[0].Skill != "demo" {
+	if len(events) != 1 || events[0].Agent != "codex" || skillName(t, events[0]) != "demo" {
 		t.Fatalf("events = %+v", events)
 	}
 	if events[0].RepoRemote != "git@host:o/r.git" {
@@ -107,7 +107,7 @@ func TestDetectCursorFromTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detect: %v", err)
 	}
-	if len(events) != 1 || events[0].Agent != "cursor" || events[0].Skill != "demo" {
+	if len(events) != 1 || events[0].Agent != "cursor" || skillName(t, events[0]) != "demo" {
 		t.Fatalf("events = %+v", events)
 	}
 	if events[0].RepoRemote != "git@host:o/r.git" {
