@@ -29,6 +29,13 @@ func codexCustomExecLine(input string) string {
 	return string(line) + "\n"
 }
 
+func codexFunctionLine(name string, args map[string]string) string {
+	arguments, _ := json.Marshal(args)
+	payload := map[string]any{"type": "function_call", "name": name, "arguments": string(arguments)}
+	line, _ := json.Marshal(map[string]any{"type": "response_item", "payload": payload})
+	return string(line) + "\n"
+}
+
 func codexMetaLine(repo string) string {
 	payload := map[string]any{"id": "s1", "cwd": "/repo", "git": map[string]string{"repository_url": repo}}
 	line, _ := json.Marshal(map[string]any{"type": "session_meta", "payload": payload})
@@ -58,11 +65,91 @@ func TestScanCodexRolloutFindsSkillRead(t *testing.T) {
 	}
 }
 
+func TestScanCodexRolloutFindsBundledSystemSkill(t *testing.T) {
+	roll := codexExecLine("sed -n '1,220p' /home/u/.codex/skills/.system/openai-docs/SKILL.md")
+	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
+	if len(scan.skills) != 1 || scan.skills[0] != "openai-docs" {
+		t.Fatalf("skills = %v, want [openai-docs]", scan.skills)
+	}
+}
+
 func TestScanCodexRolloutFindsDesktopCustomExecSkillRead(t *testing.T) {
 	roll := codexCustomExecLine(`const r = await tools.shell_command({"command":"Get-Content -Raw '.agents\\skills\\ai-agent-telemetry-configure\\SKILL.md'"}); text(r)`)
 	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
 	if len(scan.skills) != 1 || scan.skills[0] != "ai-agent-telemetry-configure" {
 		t.Fatalf("skills = %v, want [ai-agent-telemetry-configure]", scan.skills)
+	}
+}
+
+func TestScanCodexRolloutIgnoresApplyPatchSkillPaths(t *testing.T) {
+	roll := codexCustomExecLine(
+		`const patch = "add /repo/skills/foo/SKILL.md fixture"; text(await tools.apply_patch(patch));`,
+	)
+	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
+	if len(scan.skills) != 0 {
+		t.Fatalf("skills = %v, want 0", scan.skills)
+	}
+}
+
+func TestScanCodexRolloutScansOnlyCommandInMixedCustomExec(t *testing.T) {
+	roll := codexCustomExecLine(
+		`const patch = "add /repo/skills/foo/SKILL.md fixture"; ` +
+			`await Promise.all([tools.apply_patch(patch), tools.exec_command({cmd: "git status"})]);`,
+	)
+	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
+	if len(scan.skills) != 0 {
+		t.Fatalf("skills = %v, want 0", scan.skills)
+	}
+}
+
+func TestScanCodexRolloutIgnoresCommandSyntaxInsidePatch(t *testing.T) {
+	roll := codexCustomExecLine(
+		`const patch = "tools.exec_command({cmd: 'cat /repo/skills/foo/SKILL.md'})"; ` +
+			`text(await tools.apply_patch(patch));`,
+	)
+	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
+	if len(scan.skills) != 0 {
+		t.Fatalf("skills = %v, want 0", scan.skills)
+	}
+}
+
+func TestScanCodexRolloutIgnoresUnrelatedFunctionCallArguments(t *testing.T) {
+	roll := codexFunctionLine("send_message", map[string]string{
+		"message": "see /repo/skills/foo/SKILL.md",
+	})
+	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
+	if len(scan.skills) != 0 {
+		t.Fatalf("skills = %v, want 0", scan.skills)
+	}
+}
+
+func TestScanCodexRolloutIgnoresCommandMetadataWithoutCommand(t *testing.T) {
+	roll := codexFunctionLine("exec_command", map[string]string{
+		"justification": "see /repo/skills/foo/SKILL.md",
+	})
+	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
+	if len(scan.skills) != 0 {
+		t.Fatalf("skills = %v, want 0", scan.skills)
+	}
+}
+
+func TestScanCodexRolloutRequiresCustomToolBoundary(t *testing.T) {
+	roll := codexCustomExecLine(
+		`mocktools.exec_command({cmd: "cat /repo/skills/foo/SKILL.md"});`,
+	)
+	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
+	if len(scan.skills) != 0 {
+		t.Fatalf("skills = %v, want 0", scan.skills)
+	}
+}
+
+func TestScanCodexRolloutHandlesCommentsInsideCustomCommand(t *testing.T) {
+	roll := codexCustomExecLine(
+		`tools.exec_command(/* unmatched ) in comment */ {cmd: "cat /repo/skills/foo/SKILL.md"});`,
+	)
+	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
+	if len(scan.skills) != 1 || scan.skills[0] != "foo" {
+		t.Fatalf("skills = %v, want [foo]", scan.skills)
 	}
 }
 
@@ -97,7 +184,8 @@ func TestScanCodexRolloutDedupsWithinFile(t *testing.T) {
 
 func TestScanCodexRolloutIgnoresNonSkillReads(t *testing.T) {
 	roll := codexExecLine("cat README.md") +
-		codexExecLine("ls my-skills/foo/SKILL.md") // not a `skills/` dir boundary
+		codexExecLine("ls my-skills/foo/SKILL.md") + // not a `skills/` dir boundary
+		codexExecLine(`awk '/\/skills\/.+\/SKILL.md$/' transcript.jsonl`)
 	scan, _ := scanCodexRollout(strings.NewReader(roll), 0)
 	if len(scan.skills) != 0 {
 		t.Fatalf("skills = %v, want 0", scan.skills)

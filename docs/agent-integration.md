@@ -71,21 +71,26 @@ from the `SKILL.md` reads recorded in the rollout transcript named by `transcrip
 Each rollout line has a `type` and a `payload`. The CLI treats a skill read as a shell
 command that opens a `SKILL.md`:
 
-1. keep lines where `type` is `response_item` and the payload is a `function_call` named
-   `exec_command`;
-2. parse the payload's `arguments` (itself a JSON string) and read its `cmd` field;
-3. match `cmd` against the skill path — capture group 1 is the skill name.
+1. keep `response_item` lines for `exec_command` and `shell_command` function calls, or for a
+   `custom_tool_call` that invokes either command tool;
+2. ignore custom tool calls such as `apply_patch`, because their payload can contain skill paths
+   as source-code fixtures without reading those skills;
+3. match the command text against the skill path — capture group 1 is the skill name.
 
 ```text
-(?i)(?:^|[\s"'=/\\])skills[\\/]+([^\\/\s"']+)[\\/]+SKILL\.md
+(?i)(?:^|[\s"'=/\\])skills[\\/]+(?:[^\\/\s"']+[\\/]+)*([a-z0-9][a-z0-9-]{0,63})[\\/]+SKILL\.md
 ```
 
 The match is on the path, not the reading command: Codex opens the file with `sed`,
 `cat`, `head`, or `rg`, and the path is absolute in the desktop app but relative under
 `codex exec`. The leading separator stops a directory such as `my-skills/` from
-matching. The repository remote comes from the first line, `session_meta`, field
-`git.repository_url`, which is read regardless of the offset. See the [Codex spec]
-for the full record.
+matching. Intermediate directories support nested skill layouts, including Codex's bundled
+`skills/.system/<name>/SKILL.md` path. The final directory before `SKILL.md` must follow the
+Agent Skills name shape (matched case-insensitively for compatibility), which prevents regex
+and glob fragments in that final segment from becoming skill names. After matching, the CLI
+rejects non-ASCII names and names ending in or containing consecutive hyphens. The repository
+remote comes from the first line, `session_meta`, field `git.repository_url`, which is read
+regardless of the offset. See the [Codex spec] for the full record.
 
 ## Cursor
 
@@ -95,14 +100,14 @@ Like Codex, Cursor has no skill-activation event. The `afterAgentResponse` hook 
 the transcript in `transcript_path`. Each line is a message with a `message.content`
 array, and two content shapes count as a skill load:
 
-- a `tool_use` entry named `Read` whose `input.path` matches a `skills/<name>/SKILL.md`
+- a `tool_use` entry named `Read` whose `input.path` matches a `skills/(<group>/)*<name>/SKILL.md`
   path — an automatic skill load;
 - a `text` entry that contains a `<manually_attached_skills>` block, where each
   `Skill Name: <name>` line is a manually attached skill.
 
 ```text
-(?i)(?:^|[\s"'=/\\])skills[\\/]+([^\\/\s"']+)[\\/]+SKILL\.md  # Read tool_use input.path
-^Skill Name:\s*(\S+)                                           # inside <manually_attached_skills>
+(?i)(?:^|[\s"'=/\\])skills[\\/]+(?:[^\\/\s"']+[\\/]+)*([a-z0-9][a-z0-9-]{0,63})[\\/]+SKILL\.md
+^Skill Name:\s*(\S+)
 ```
 
 Unlike Codex, the transcript carries no git data, so the repository remote is resolved

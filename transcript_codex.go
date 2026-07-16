@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -171,10 +173,7 @@ func firstNonEmpty(vals ...string) string {
 func codexToolTexts(typ, name, arguments, input string) []string {
 	switch {
 	case typ == "custom_tool_call" && name == "exec":
-		if input == "" {
-			return nil
-		}
-		return []string{input}
+		return codexCustomCommandTexts(input)
 	case typ == "function_call":
 		return codexFunctionCallTexts(name, arguments)
 	default:
@@ -182,8 +181,262 @@ func codexToolTexts(typ, name, arguments, input string) []string {
 	}
 }
 
+func codexCustomCommandTexts(input string) []string {
+	markers := []string{"tools.exec_command", "tools.shell_command"}
+	var texts []string
+	for i := 0; i < len(input); {
+		if input[i] == '\'' || input[i] == '"' || input[i] == '`' {
+			i = skipJSString(input, i)
+			continue
+		}
+		if next, ok := skipJSComment(input, i); ok {
+			i = next
+			continue
+		}
+
+		marker := ""
+		for _, candidate := range markers {
+			if validJSToolBoundary(input, i) && strings.HasPrefix(input[i:], candidate) {
+				marker = candidate
+				break
+			}
+		}
+		if marker == "" {
+			i++
+			continue
+		}
+
+		open := i + len(marker)
+		for open < len(input) && isJSSpace(input[open]) {
+			open++
+		}
+		if open >= len(input) || input[open] != '(' {
+			i += len(marker)
+			continue
+		}
+		close, ok := matchingJSParen(input, open)
+		if !ok {
+			break
+		}
+		if command, ok := jsCommandArgument(input[open+1 : close]); ok {
+			texts = append(texts, command)
+		}
+		i = close + 1
+	}
+	return texts
+}
+
+func matchingJSParen(input string, open int) (int, bool) {
+	depth := 1
+	for i := open + 1; i < len(input); {
+		if next, ok := skipJSComment(input, i); ok {
+			i = next
+			continue
+		}
+		switch input[i] {
+		case '\'', '"', '`':
+			i = skipJSString(input, i)
+		case '(':
+			depth++
+			i++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+			i++
+		default:
+			i++
+		}
+	}
+	return 0, false
+}
+
+func jsCommandArgument(args string) (string, bool) {
+	i := skipJSTrivia(args, 0)
+	if i >= len(args) || args[i] != '{' {
+		return "", false
+	}
+	i++
+	for i < len(args) {
+		i = skipJSTrivia(args, i)
+		if i < len(args) && args[i] == ',' {
+			i = skipJSTrivia(args, i+1)
+		}
+		if i >= len(args) || args[i] == '}' {
+			return "", false
+		}
+
+		var key string
+		if args[i] == '\'' || args[i] == '"' || args[i] == '`' {
+			var ok bool
+			key, i, ok = readJSString(args, i)
+			if !ok {
+				return "", false
+			}
+		} else {
+			start := i
+			for i < len(args) && (isJSIdentifier(args[i]) || args[i] == '-') {
+				i++
+			}
+			key = args[start:i]
+		}
+		i = skipJSTrivia(args, i)
+		if i >= len(args) || args[i] != ':' {
+			return "", false
+		}
+		i++
+		i = skipJSTrivia(args, i)
+		if key == "cmd" || key == "command" {
+			if i >= len(args) || (args[i] != '\'' && args[i] != '"' && args[i] != '`') {
+				return "", false
+			}
+			value, _, ok := readJSString(args, i)
+			return value, ok
+		}
+
+		i = skipJSValue(args, i)
+	}
+	return "", false
+}
+
+func skipJSValue(input string, start int) int {
+	braces, brackets, parens := 0, 0, 0
+	for i := start; i < len(input); {
+		if next, ok := skipJSComment(input, i); ok {
+			i = next
+			continue
+		}
+		switch input[i] {
+		case '\'', '"', '`':
+			i = skipJSString(input, i)
+		case '{':
+			braces++
+			i++
+		case '}':
+			if braces == 0 && brackets == 0 && parens == 0 {
+				return i
+			}
+			braces--
+			i++
+		case '[':
+			brackets++
+			i++
+		case ']':
+			brackets--
+			i++
+		case '(':
+			parens++
+			i++
+		case ')':
+			parens--
+			i++
+		case ',':
+			if braces == 0 && brackets == 0 && parens == 0 {
+				return i + 1
+			}
+			i++
+		default:
+			i++
+		}
+	}
+	return len(input)
+}
+
+func skipJSString(input string, start int) int {
+	quote := input[start]
+	for i := start + 1; i < len(input); i++ {
+		if input[i] == '\\' {
+			i++
+			continue
+		}
+		if input[i] == quote {
+			return i + 1
+		}
+	}
+	return len(input)
+}
+
+func skipJSComment(input string, start int) (int, bool) {
+	if strings.HasPrefix(input[start:], "//") {
+		if end := strings.IndexByte(input[start+2:], '\n'); end >= 0 {
+			return start + end + 3, true
+		}
+		return len(input), true
+	}
+	if strings.HasPrefix(input[start:], "/*") {
+		if end := strings.Index(input[start+2:], "*/"); end >= 0 {
+			return start + end + 4, true
+		}
+		return len(input), true
+	}
+	return start, false
+}
+
+func skipJSTrivia(input string, start int) int {
+	for start < len(input) {
+		if isJSSpace(input[start]) {
+			start++
+			continue
+		}
+		if next, ok := skipJSComment(input, start); ok {
+			start = next
+			continue
+		}
+		break
+	}
+	return start
+}
+
+func readJSString(input string, start int) (string, int, bool) {
+	end := skipJSString(input, start)
+	if end > len(input) || end == len(input) && input[end-1] != input[start] {
+		return "", end, false
+	}
+	literal := input[start:end]
+	if input[start] == '"' {
+		value, err := strconv.Unquote(literal)
+		return value, end, err == nil
+	}
+	body := literal[1 : len(literal)-1]
+	value := make([]byte, 0, len(body))
+	for i := 0; i < len(body); i++ {
+		if body[i] != '\\' || i+1 >= len(body) {
+			value = append(value, body[i])
+			continue
+		}
+		i++
+		switch body[i] {
+		case 'n':
+			value = append(value, '\n')
+		case 'r':
+			value = append(value, '\r')
+		case 't':
+			value = append(value, '\t')
+		default:
+			value = append(value, body[i])
+		}
+	}
+	return string(value), end, true
+}
+
+func isJSSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+}
+
+func isJSIdentifier(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '$'
+}
+
+func validJSToolBoundary(input string, start int) bool {
+	return start == 0 || !isJSIdentifier(input[start-1]) && input[start-1] != '.'
+}
+
 func codexFunctionCallTexts(name, arguments string) []string {
 	if arguments == "" {
+		return nil
+	}
+	if name != "exec_command" && name != "shell_command" {
 		return nil
 	}
 	var args map[string]any
@@ -191,23 +444,9 @@ func codexFunctionCallTexts(name, arguments string) []string {
 		return nil
 	}
 
-	var keys []string
-	if name == "exec_command" || name == "shell_command" {
-		keys = []string{"cmd", "command"}
-	}
-
 	var texts []string
-	for _, key := range keys {
+	for _, key := range []string{"cmd", "command"} {
 		if s, ok := args[key].(string); ok && s != "" {
-			texts = append(texts, s)
-		}
-	}
-	if len(texts) > 0 {
-		return texts
-	}
-
-	for _, v := range args {
-		if s, ok := v.(string); ok && s != "" && skillPathRe.MatchString(s) {
 			texts = append(texts, s)
 		}
 	}

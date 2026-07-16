@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -122,7 +123,9 @@ func cursorRemote(p cursorPayload, remote remoteResolver) string {
 	return remote(p.WorkspaceRoots[0])
 }
 
-// skillPathRe matches the tail of a path to a skill body: skills/<name>/SKILL.md.
+// skillPathRe matches a skill body below a skills directory. Organization and
+// implementation directories may appear between skills and the skill itself;
+// the final directory before SKILL.md is the skill name.
 // It is the single source of truth shared by every transcript-scraped harness
 // (Codex, Cursor); Claude gets a structured skill name and never parses a path.
 //
@@ -145,16 +148,32 @@ func cursorRemote(p cursorPayload, remote remoteResolver) string {
 // for the case-insensitive filesystems on Windows (NTFS) and macOS (APFS). The
 // capture group still preserves the skill name's original case, since (?i)
 // affects matching, not the captured substring.
-var skillPathRe = regexp.MustCompile(`(?i)(?:^|[\s"'=/\\])skills[\\/]+([^\\/\s"']+)[\\/]+SKILL\.md`)
+var skillPathRe = regexp.MustCompile(`(?i)(?:^|[\s"'=/\\])skills[\\/]+(?:[^\\/\s"']+[\\/]+)*([a-z0-9][a-z0-9-]{0,63})[\\/]+SKILL\.md`)
 
 // skillNameInPath returns the skill name carried by a single filesystem path, or
 // ("", false) when the path is not a skill body. Use it for a clean path such as
 // a Cursor Read tool's input.path.
 func skillNameInPath(s string) (string, bool) {
-	if m := skillPathRe.FindStringSubmatch(s); m != nil {
+	if m := skillPathRe.FindStringSubmatch(s); m != nil && validDetectedSkillName(m[1]) {
 		return m[1], true
 	}
 	return "", false
+}
+
+// validDetectedSkillName completes the constraints that are awkward to express
+// in Go's RE2 syntax. Uppercase remains accepted for compatibility with the
+// case-insensitive path matching used by earlier releases.
+func validDetectedSkillName(name string) bool {
+	if name == "" || len(name) > 64 || name[0] == '-' || name[len(name)-1] == '-' || strings.Contains(name, "--") {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // skillNamesInText returns every skill name matched in a free-text string, in
@@ -167,7 +186,12 @@ func skillNamesInText(s string) []string {
 	}
 	names := make([]string, 0, len(matches))
 	for _, m := range matches {
-		names = append(names, m[1])
+		if validDetectedSkillName(m[1]) {
+			names = append(names, m[1])
+		}
+	}
+	if len(names) == 0 {
+		return nil
 	}
 	return names
 }

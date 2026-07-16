@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -153,7 +154,19 @@ func TestSkillNameInPath(t *testing.T) {
 		{"cursor legacy windows", `C:\repo\.cursor\skills\foo\SKILL.md`, "foo"},
 		{"global plugin", `C:\Users\u\.claude\plugins\cache\p\6.0.3\skills\brainstorming\SKILL.md`, "brainstorming"},
 		{"global user", "/home/u/.claude/skills/foo/SKILL.md", "foo"},
+		{"codex bundled system", "/home/u/.codex/skills/.system/openai-docs/SKILL.md", "openai-docs"},
+		{"cursor nested group", "/repo/.cursor/skills/shipping/land-it/SKILL.md", "land-it"},
+		{"windows nested group", `C:\repo\.cursor\skills\shipping\land-it\SKILL.md`, "land-it"},
 		{"case-insensitive fs keeps name case", "/x/skills/Foo/skill.md", "Foo"},
+		{"regex fragment is not a skill", `/\/skills\/.+\/SKILL.md$/`, ""},
+		{"glob fragment is not a skill", "/repo/skills/*/SKILL.md", ""},
+		{"arbitrary intermediate directory", "/repo/skills/@team+platform/foo/SKILL.md", "foo"},
+		{"invalid punctuation", "/repo/skills/not_a_skill/SKILL.md", ""},
+		{"trailing hyphen", "/repo/skills/not-a-skill-/SKILL.md", ""},
+		{"consecutive hyphens", "/repo/skills/not--a-skill/SKILL.md", ""},
+		{"unicode case fold is not ASCII", "/repo/skills/ſkill/SKILL.md", ""},
+		{"64 characters", "/repo/skills/" + strings.Repeat("a", 64) + "/SKILL.md", strings.Repeat("a", 64)},
+		{"65 characters", "/repo/skills/" + strings.Repeat("a", 65) + "/SKILL.md", ""},
 		{"my-skills boundary", "my-skills/foo/SKILL.md", ""},
 		{"no skills segment", "/repo/src/main.go", ""},
 	}
