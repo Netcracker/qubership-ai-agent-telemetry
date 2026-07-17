@@ -4,30 +4,31 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-func TestLegacyHookPackageParity(t *testing.T) {
+func TestHookPackageParity(t *testing.T) {
 	tests := []struct {
 		target hookTarget
 		file   string
-		path   []any
+		merge  func(map[string]any) (bool, error)
 	}{
 		{
 			target: hookClaude,
 			file:   "skill-call-claude-hooks.json",
-			path:   []any{"hooks", "PreToolUse", 0, "hooks", 0, "command"},
+			merge:  mergeClaudeHook,
 		},
 		{
 			target: hookCodex,
 			file:   "skill-call-codex-hooks.json",
-			path:   []any{"hooks", "Stop", 0, "hooks", 0, "command"},
+			merge:  mergeCodexHook,
 		},
 		{
 			target: hookCursor,
 			file:   "skill-call-cursor-hooks.json",
-			path:   []any{"hooks", "afterAgentResponse", 0, "command"},
+			merge:  mergeCursorHook,
 		},
 	}
 
@@ -38,16 +39,19 @@ func TestLegacyHookPackageParity(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s hook package %s: %v", tt.target, path, err)
 			}
-			var root any
-			if err := json.Unmarshal(data, &root); err != nil {
+			decoder := json.NewDecoder(strings.NewReader(string(data)))
+			decoder.UseNumber()
+			var packaged map[string]any
+			if err := decoder.Decode(&packaged); err != nil {
 				t.Fatalf("%s hook package %s: decode JSON: %v", tt.target, path, err)
 			}
-			command, ok := jsonPathString(root, tt.path...)
-			if !ok {
-				t.Fatalf("%s hook package %s: command is missing or not a string", tt.target, path)
+			managed := map[string]any{}
+			changed, err := tt.merge(managed)
+			if err != nil || !changed {
+				t.Fatalf("%s managed hooks: changed = %v, error = %v", tt.target, changed, err)
 			}
-			if want := canonicalHookCommand(tt.target); command != want {
-				t.Fatalf("%s hook package %s: command = %q, want %q", tt.target, path, command, want)
+			if !reflect.DeepEqual(packaged, managed) {
+				t.Fatalf("%s hook package %s = %#v, want %#v", tt.target, path, packaged, managed)
 			}
 		})
 	}

@@ -8,30 +8,41 @@ import (
 
 const cursorHookCommand = "ai-agent-telemetry ingest --agent=cursor"
 
+var legacyCursorHookCommands = map[string]bool{
+	"sh ./scripts/bootstrap.sh ingest --agent=cursor": true,
+}
+
 func mergeCursorHook(root map[string]any) (bool, error) {
-	hooks, afterResponse, hasVersion, err := validateCursorHooks(root)
+	hooks, events, hasVersion, err := validateCursorHooks(root)
 	if err != nil {
 		return false, err
 	}
 
-	newAfterResponse := make([]any, 0, len(afterResponse)+1)
-	canonicalPlaced := false
-	for _, value := range afterResponse {
-		entry := value.(map[string]any)
-		if isOwnedCursorHook(entry) {
-			if !canonicalPlaced {
-				newAfterResponse = append(newAfterResponse, newCanonicalCursorHook())
-				canonicalPlaced = true
+	merged := make(map[string][]any, len(cursorHookEvents))
+	changed := !hasVersion || hooks == nil
+	for _, event := range cursorHookEvents {
+		entries := events[event]
+		newEntries := make([]any, 0, len(entries)+1)
+		canonicalPlaced := false
+		for _, value := range entries {
+			entry := value.(map[string]any)
+			if isOwnedCursorHook(entry) {
+				if !canonicalPlaced {
+					newEntries = append(newEntries, newCanonicalCursorHook())
+					canonicalPlaced = true
+				}
+				continue
 			}
-			continue
+			newEntries = append(newEntries, entry)
 		}
-		newAfterResponse = append(newAfterResponse, entry)
-	}
-	if !canonicalPlaced {
-		newAfterResponse = append(newAfterResponse, newCanonicalCursorHook())
+		if !canonicalPlaced {
+			newEntries = append(newEntries, newCanonicalCursorHook())
+		}
+		merged[event] = newEntries
+		changed = changed || !reflect.DeepEqual(entries, newEntries)
 	}
 
-	if hasVersion && hooks != nil && reflect.DeepEqual(afterResponse, newAfterResponse) {
+	if !changed {
 		return false, nil
 	}
 	if !hasVersion {
@@ -41,7 +52,9 @@ func mergeCursorHook(root map[string]any) (bool, error) {
 		hooks = map[string]any{}
 		root["hooks"] = hooks
 	}
-	hooks["afterAgentResponse"] = newAfterResponse
+	for _, event := range cursorHookEvents {
+		hooks[event] = merged[event]
+	}
 	return true, nil
 }
 
@@ -51,7 +64,7 @@ func inspectCursorHook(root map[string]any) bool {
 	return err == nil && !changed
 }
 
-func validateCursorHooks(root map[string]any) (map[string]any, []any, bool, error) {
+func validateCursorHooks(root map[string]any) (map[string]any, map[string][]any, bool, error) {
 	version, hasVersion := root["version"]
 	if hasVersion && !isJSONNumericValue(version) {
 		return nil, nil, false, fmt.Errorf("version must be a number")
@@ -59,26 +72,30 @@ func validateCursorHooks(root map[string]any) (map[string]any, []any, bool, erro
 
 	hooksValue, hasHooks := root["hooks"]
 	if !hasHooks {
-		return nil, nil, hasVersion, nil
+		return nil, map[string][]any{}, hasVersion, nil
 	}
 	hooks, ok := hooksValue.(map[string]any)
 	if !ok {
 		return nil, nil, false, fmt.Errorf("hooks must be an object")
 	}
-	afterValue, hasAfter := hooks["afterAgentResponse"]
-	if !hasAfter {
-		return hooks, nil, hasVersion, nil
-	}
-	afterResponse, ok := afterValue.([]any)
-	if !ok {
-		return nil, nil, false, fmt.Errorf("hooks.afterAgentResponse must be an array")
-	}
-	for i, value := range afterResponse {
-		if _, ok := value.(map[string]any); !ok {
-			return nil, nil, false, fmt.Errorf("hooks.afterAgentResponse[%d] must be an object", i)
+	events := make(map[string][]any, len(cursorHookEvents))
+	for _, event := range cursorHookEvents {
+		value, exists := hooks[event]
+		if !exists {
+			continue
 		}
+		entries, ok := value.([]any)
+		if !ok {
+			return nil, nil, false, fmt.Errorf("hooks.%s must be an array", event)
+		}
+		for i, value := range entries {
+			if _, ok := value.(map[string]any); !ok {
+				return nil, nil, false, fmt.Errorf("hooks.%s[%d] must be an object", event, i)
+			}
+		}
+		events[event] = entries
 	}
-	return hooks, afterResponse, hasVersion, nil
+	return hooks, events, hasVersion, nil
 }
 
 func isJSONNumericValue(value any) bool {
@@ -92,7 +109,8 @@ func isJSONNumericValue(value any) bool {
 }
 
 func isOwnedCursorHook(entry map[string]any) bool {
-	return entry["command"] == cursorHookCommand || entry["_apm_source"] == hookAPMSource
+	command, _ := entry["command"].(string)
+	return command == cursorHookCommand || legacyCursorHookCommands[command] || entry["_apm_source"] == hookAPMSource
 }
 
 func newCanonicalCursorHook() map[string]any {
