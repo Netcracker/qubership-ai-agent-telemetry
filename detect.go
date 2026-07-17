@@ -35,18 +35,16 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 // Injected so detectors stay pure and testable.
 type remoteResolver func(cwd string) string
 
-// detect routes a raw hook payload to the per-harness detector. Claude Code
-// emits native lifecycle events; Codex and Cursor detect skills from the
-// session transcript.
+// detect routes a raw hook payload to the per-harness adapter.
 func detect(agent string, stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
 	stdin = bytes.TrimPrefix(stdin, utf8BOM)
 	switch agent {
 	case "claude":
 		return claudeAdapter(stdin, remote, now)
 	case "codex":
-		return codexTranscriptEventsAuto(stdin, now), nil
+		return codexAdapter(stdin, now)
 	case "cursor":
-		return cursorTranscriptEventsAuto(stdin, remote, now), nil
+		return cursorAdapter(stdin, remote, now)
 	default:
 		return nil, fmt.Errorf("no detector for agent %q", agent)
 	}
@@ -56,6 +54,46 @@ type codexPayload struct {
 	SessionID      string `json:"session_id"`
 	Cwd            string `json:"cwd"`
 	TranscriptPath string `json:"transcript_path"`
+}
+
+type codexHookEnvelope struct {
+	HookEventName string `json:"hook_event_name"`
+}
+
+// codexMCPPayload excludes tool_response because MCP results are unbounded
+// private content and must never enter telemetry.
+type codexMCPPayload struct {
+	SessionID string `json:"session_id"`
+	Cwd       string `json:"cwd"`
+	ToolName  string `json:"tool_name"`
+}
+
+func codexAdapter(stdin []byte, now time.Time) ([]TelemetryEvent, error) {
+	var envelope codexHookEnvelope
+	if len(stdin) == 0 || json.Unmarshal(stdin, &envelope) != nil {
+		return nil, nil
+	}
+	if envelope.HookEventName != "PostToolUse" {
+		return codexTranscriptEventsAuto(stdin, now), nil
+	}
+
+	var p codexMCPPayload
+	if json.Unmarshal(stdin, &p) != nil {
+		return nil, nil
+	}
+	server, tool, ok := normalizeMCPToolName(p.ToolName)
+	if !ok {
+		return nil, nil
+	}
+	ev, err := newMCPEvent("codex", p.SessionID, "", p.Cwd, MCPPayload{
+		ServerName: server,
+		ToolName:   tool,
+		Outcome:    mcpUnknown,
+	}, now)
+	if err != nil {
+		return nil, nil
+	}
+	return []TelemetryEvent{ev}, nil
 }
 
 type claudeHookEnvelope struct {
@@ -217,6 +255,54 @@ type cursorPayload struct {
 	SessionID      string   `json:"session_id"`
 	WorkspaceRoots []string `json:"workspace_roots"`
 	TranscriptPath string   `json:"transcript_path"`
+}
+
+type cursorHookEnvelope struct {
+	HookEventName string `json:"hook_event_name"`
+}
+
+// cursorMCPPayload excludes result_json because MCP results are unbounded
+// private content and must never enter telemetry.
+type cursorMCPPayload struct {
+	SessionID      string   `json:"session_id"`
+	WorkspaceRoots []string `json:"workspace_roots"`
+	ToolName       string   `json:"tool_name"`
+	Duration       *int64   `json:"duration"`
+}
+
+func cursorAdapter(
+	stdin []byte, remote remoteResolver, now time.Time,
+) ([]TelemetryEvent, error) {
+	var envelope cursorHookEnvelope
+	if len(stdin) == 0 || json.Unmarshal(stdin, &envelope) != nil {
+		return nil, nil
+	}
+	if envelope.HookEventName != "afterMCPExecution" {
+		return cursorTranscriptEventsAuto(stdin, remote, now), nil
+	}
+
+	var p cursorMCPPayload
+	if json.Unmarshal(stdin, &p) != nil || !validIdentifier(p.ToolName, mcpIdentifier) {
+		return nil, nil
+	}
+	if p.Duration != nil && *p.Duration < 0 {
+		p.Duration = nil
+	}
+	var repoDir string
+	if len(p.WorkspaceRoots) > 0 {
+		repoDir = p.WorkspaceRoots[0]
+	}
+	ev, err := newMCPEvent("cursor", p.SessionID, cursorRemote(cursorPayload{
+		WorkspaceRoots: p.WorkspaceRoots,
+	}, remote), repoDir, MCPPayload{
+		ToolName:   p.ToolName,
+		Outcome:    mcpUnknown,
+		DurationMS: p.Duration,
+	}, now)
+	if err != nil {
+		return nil, nil
+	}
+	return []TelemetryEvent{ev}, nil
 }
 
 // cursorRemote resolves the git remote from the first workspace root. Cursor
