@@ -11,33 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gofrs/flock"
 )
-
-// SkillEvent is the normalized, agent-independent record produced by an adapter
-// and persisted in the outbox. It is the only shape that leaves this process.
-type SkillEvent struct {
-	Agent      string    `json:"agent"`
-	SessionID  string    `json:"session_id"`
-	RepoRemote string    `json:"repo_remote,omitempty"`
-	RepoDir    string    `json:"-"`
-	Skill      string    `json:"skill"`
-	TS         time.Time `json:"ts"`
-}
-
-func (e SkillEvent) MarshalJSON() ([]byte, error) {
-	type alias SkillEvent
-	return json.Marshal(alias(e))
-}
-
-func (e *SkillEvent) UnmarshalJSON(b []byte) error {
-	type alias SkillEvent
-	var a alias
-	if err := json.Unmarshal(b, &a); err != nil {
-		return err
-	}
-	*e = SkillEvent(a)
-	return nil
-}
 
 const (
 	flushStampName        = ".lastflush"
@@ -78,7 +54,10 @@ func DefaultOutbox() (*Outbox, error) {
 }
 
 // Enqueue writes one event atomically (temp file + rename).
-func (s *Outbox) Enqueue(ev SkillEvent) error {
+func (s *Outbox) Enqueue(ev TelemetryEvent) error {
+	if err := validateSerializableEvent(ev); err != nil {
+		return err
+	}
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return err
@@ -112,8 +91,8 @@ func (s *Outbox) List() ([]string, error) {
 }
 
 // Read decodes one event file by name.
-func (s *Outbox) Read(name string) (SkillEvent, error) {
-	var ev SkillEvent
+func (s *Outbox) Read(name string) (TelemetryEvent, error) {
+	var ev TelemetryEvent
 	b, err := os.ReadFile(filepath.Join(s.Dir, name))
 	if err != nil {
 		return ev, err
@@ -204,6 +183,17 @@ func DefaultOffsetStore() (*OffsetStore, error) {
 func (o *OffsetStore) path(key string) string {
 	safe := strings.NewReplacer("/", "_", "\\", "_", ":", "_", ".", "_").Replace(key)
 	return filepath.Join(o.Dir, safe+".offset")
+}
+
+// lock serializes a complete load-process-save transaction for one transcript
+// session across hook processes. Atomic Save protects the offset file itself,
+// but cannot prevent two processes from reading and processing the same offset.
+func (o *OffsetStore) lock(key string) (release func(), err error) {
+	fl := flock.New(o.path(key) + ".lock")
+	if err := fl.Lock(); err != nil {
+		return nil, err
+	}
+	return func() { _ = fl.Unlock() }, nil
 }
 
 // Load returns the stored byte offset for key, or 0 when none is recorded or

@@ -1,6 +1,6 @@
 # The ai-agent-telemetry CLI
 
-The `ai-agent-telemetry` CLI is the local component that detects skill use, buffers
+The `ai-agent-telemetry` CLI is the local component that detects telemetry events, buffers
 events to a local outbox, and forwards them to the collector over OTLP/HTTPS. It runs
 from the agent hook on each turn — there is no daemon and no background process.
 
@@ -15,9 +15,9 @@ customization, diagnostics, and repair.
 
 On each hook run the CLI:
 
-1. reads the agent's hook payload from stdin and detects any skill that ran (see
+1. reads the agent's hook payload from stdin and routes it by `hook_event_name` (see
    [Agent integration](agent-integration.md));
-2. normalizes the detection into one OpenTelemetry log record per skill run (see
+2. normalizes supported skill, command, and MCP signals into typed events (see
    [Data](../README.md#data));
 3. writes each record to the on-disk outbox;
 4. opportunistically flushes the outbox to the collector over OTLP/HTTPS.
@@ -34,7 +34,7 @@ upgrades, so these commands rarely need to be run by hand.
 | `hooks install` | Install or repair global hooks and required harness policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
 | `status` | Read-only check of configuration, delivery backlog, and each global hook. Sends nothing. Use `--verbose` for native paths and parse errors. |
 | `selftest` | Send one marked probe event and report whether the collector accepted it and it left the outbox. |
-| `ingest` | The hook path: read an agent hook payload on stdin, detect skill use (on Codex the `SKILL.md` reads in the session rollout; on Claude Code the `Skill` tool name in the `PreToolUse` payload; on Cursor the `SKILL.md` reads in the `afterAgentResponse` transcript), queue the events, and flush opportunistically. Always exits 0 so it never fails an agent turn. |
+| `ingest` | Read a harness hook payload, route it by `hook_event_name`, validate and queue supported events, then flush opportunistically. Always exits 0 so it never fails an agent turn. |
 | `flush` | Send queued events to the collector and delete each on success. |
 | `update-check` | Compare the installed version against the latest GitHub release and print `installed:` / `latest:` / `update_available: yes\|no\|unknown`. Network, short timeout, always exits 0 — advisory only. |
 | `self-update` | Download the latest release asset for this OS and architecture, verify it against `SHA256SUMS`, and replace the running binary. |
@@ -60,9 +60,9 @@ The CLI manages one user-level native file per harness on every supported operat
 
 | Harness | File | Registration |
 | --- | --- | --- |
-| Claude Code | `~/.claude/settings.json` | `PreToolUse`, matcher `Skill` |
-| Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` | `Stop` and its execution policy |
-| Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, with numeric top-level `version` |
+| Claude Code | `~/.claude/settings.json` | `PreToolUse`/`Skill`, `UserPromptExpansion`, `PostToolUse`/`mcp__.*`, `PostToolUseFailure`/`mcp__.*` |
+| Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` | `Stop`, `PostToolUse`/`mcp__.*`, and the execution policy |
+| Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, `afterMCPExecution`, and numeric top-level `version` |
 
 Normal installation registers all three hooks; no separate hook command is required. For a custom
 target list, `configure` accepts `--hooks=all`, `--hooks=none`, or a comma-separated subset. The
@@ -83,10 +83,24 @@ targets and returns a nonzero exit code after reporting every failure.
 
 `status` reports `installed`, `missing`, or `invalid` for each harness. It verifies registration
 and required policy files, not execution or trust. `selftest` verifies collector delivery, not hook
-registration. Fully restart a harness after changing its hook so it reloads the file and refreshed `PATH`.
+registration.
 
-The CLI does not edit Codex's private trust state. If Codex prompts after installation or a
-command change, inspect and approve exactly `ai-agent-telemetry ingest --agent=codex`.
+If installation or hook refresh changed the Codex hook definition and hash, fully restart Codex. The CLI does not edit
+Codex's private trust state, so inspect and approve exactly `ai-agent-telemetry ingest --agent=codex` if prompted.
+
+## Event routing and validation
+
+After selecting the adapter with `--agent`, `ingest` routes only by `hook_event_name`. Unsupported hooks, malformed
+JSON, missing required fields, invalid identifiers, and unsupported enum values produce no event. A legacy Claude Code
+payload without `hook_event_name` is treated as `PreToolUse` only when `tool_name` is `Skill`. The CLI does not infer
+other event types from payload fields.
+
+Hook ingestion is fail-open: it reports local enqueue or flush errors to stderr but always exits 0. An invalid event
+therefore cannot fail an agent turn or enter the outbox. Collector failures leave valid buffered files for retry.
+
+The external identifier profiles and excluded content fields are listed in [Data](../README.md#data). Adapters retain
+only the typed allowlist for each event and omit unavailable optional values. They do not trim, truncate, rewrite, or
+infer identifiers.
 
 ## Updating
 
@@ -126,6 +140,37 @@ and returns; delivery happens opportunistically.
   stores a per-session byte offset into the transcript and reads only the lines written
   since the previous run. The key is namespaced per harness (`codex:<session>`), so
   different harnesses do not collide and one skill run counts once.
+
+New outbox writers use schema version `1`, a typed top-level envelope, and one direct event-specific `payload` object:
+
+```json
+{
+  "schema_version": 1,
+  "event_name": "command_invoked",
+  "agent": "claude",
+  "session_id": "session-123",
+  "repo_remote": "github.com/netcracker/project",
+  "ts": "2026-07-16T12:34:56.123456789Z",
+  "payload": {
+    "command_name": "review-pr",
+    "command_source": "plugin",
+    "expansion_type": "slash_command"
+  }
+}
+```
+
+The envelope rejects unknown fields, duplicate fields, explicit `null` values, unknown versions or event names, and a
+payload that does not match `event_name`. Optional `repo_remote`, MCP server, and MCP duration fields are omitted when
+unavailable.
+
+Readers remain compatible with the unversioned skill shape containing top-level `agent`, `session_id`, optional
+`repo_remote`, `skill`, and `ts`. They map it to `skill_executed` in memory and apply the version 1 validation rules.
+Writers never emit the legacy shape, and no eager migration rewrites existing files. In a mixed batch, invalid or
+unreadable files remain buffered while valid legacy and version 1 files continue to flush in filename order.
+
+`selftest` uses a reserved internal exception: `agent=selftest`, event `skill_executed`, skill `__selftest__`, a
+generated UUID v4 session, and no repository value. No harness adapter can create this pair. The probe bypasses
+repository policy because it tests machine delivery, and legacy readers recognize the same exact reserved pair.
 
 The outbox retains at most 100 events by default, and an ordinary flush has a 2-second
 timeout. Configure persistent overrides with positive values:
@@ -206,9 +251,9 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 | **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the installer so the hook resolves it by bare name |
 | **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token, and delivery settings), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush`, `.last_delivery_error`, and `.flush.lock`), `offsets/` (per-session transcript offsets) |
-| **Claude Code hook** | `~/.claude/settings.json` | Global `PreToolUse` registration merged with unrelated settings |
-| **Codex hook** | `~/.codex/hooks.json` | Global `Stop` registration merged with unrelated hooks |
-| **Cursor hook** | `~/.cursor/hooks.json` | Global `afterAgentResponse` registration and numeric `version` |
+| **Claude Code hook** | `~/.claude/settings.json` | Global `PreToolUse`/`Skill`, `UserPromptExpansion`, `PostToolUse`/`mcp__.*`, and `PostToolUseFailure`/`mcp__.*` registrations merged with unrelated settings |
+| **Codex hook** | `~/.codex/hooks.json` | Global `Stop` and `PostToolUse`/`mcp__.*` registrations merged with unrelated hooks |
+| **Cursor hook** | `~/.cursor/hooks.json` | Global `afterAgentResponse` and `afterMCPExecution` registrations, plus numeric `version` |
 
 All three are the same path on every OS, including Windows (`%USERPROFILE%\.config\…`,
 `%USERPROFILE%\.cache\…`). This is deliberate: `os.UserConfigDir()` returns `%AppData%` on

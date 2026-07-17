@@ -474,7 +474,11 @@ func TestIngestEnqueuesAndFlushes(t *testing.T) {
 	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"session_id": "s1", "transcript_path": tp})
+	stdin, _ := json.Marshal(map[string]any{
+		"hook_event_name": "Stop",
+		"session_id":      "s1",
+		"transcript_path": tp,
+	})
 
 	code := ingest(s, "codex", srv.URL, stdin, func(string) string { return "" }, deliverySettings{
 		BufferCap:    defaultBufferCap,
@@ -502,7 +506,7 @@ func TestIngestUsesConfiguredBufferCap(t *testing.T) {
 
 	s := &Outbox{Dir: t.TempDir()}
 	for i := 0; i < 2; i++ {
-		if err := s.Enqueue(SkillEvent{Skill: "old", TS: time.Now().UTC()}); err != nil {
+		if err := s.Enqueue(testSkillEvent(t, "codex", "s1", "", "", "old", time.Now().UTC())); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -512,7 +516,11 @@ func TestIngestUsesConfiguredBufferCap(t *testing.T) {
 	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"session_id": "s1", "transcript_path": tp})
+	stdin, _ := json.Marshal(map[string]any{
+		"hook_event_name": "Stop",
+		"session_id":      "s1",
+		"transcript_path": tp,
+	})
 	settings := deliverySettings{BufferCap: 1, FlushTimeout: defaultFlushTimeout}
 
 	if code := ingest(s, "codex", "", stdin, func(string) string { return "" }, settings); code != 0 {
@@ -542,7 +550,7 @@ func TestRunFlushUsesConfiguredTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Enqueue(SkillEvent{Skill: "queued", TS: time.Now().UTC()}); err != nil {
+	if err := s.Enqueue(testSkillEvent(t, "codex", "s1", "", "", "queued", time.Now().UTC())); err != nil {
 		t.Fatal(err)
 	}
 
@@ -569,6 +577,15 @@ func TestIngestBadJSONStillSucceeds(t *testing.T) {
 	}
 }
 
+func TestReservedSelftestCannotBeSelectedThroughDetect(t *testing.T) {
+	if _, err := detect(selftestAgent, []byte(`{}`), nil, time.Now().UTC()); err == nil {
+		t.Fatal("detect accepted reserved selftest agent")
+	}
+	if err := validateSerializableEvent(newSelftestProbe(time.Now().UTC())); err != nil {
+		t.Fatalf("newSelftestProbe produced invalid event: %v", err)
+	}
+}
+
 func TestIngestCursorFromTranscript(t *testing.T) {
 	// Isolate config/cache dirs so the real machine state and any configured CA
 	// are untouched (DefaultOffsetStore uses the cache dir; caTLSConfig the config dir).
@@ -582,7 +599,12 @@ func TestIngestCursorFromTranscript(t *testing.T) {
 	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"session_id": "c1", "workspace_roots": []string{"/repo"}, "transcript_path": tp})
+	stdin, _ := json.Marshal(map[string]any{
+		"hook_event_name": "afterAgentResponse",
+		"session_id":      "c1",
+		"workspace_roots": []string{"/repo"},
+		"transcript_path": tp,
+	})
 
 	// Empty endpoint => Flush is a no-op, so events stay in the outbox to inspect.
 	s := &Outbox{Dir: t.TempDir()}
@@ -613,7 +635,7 @@ func TestShouldFlushThrottle(t *testing.T) {
 	if shouldFlush(s, 10, time.Hour) {
 		t.Fatal("should not flush with empty buffer")
 	}
-	_ = s.Enqueue(SkillEvent{Skill: "x", TS: time.Now().UTC()})
+	_ = s.Enqueue(testSkillEvent(t, "codex", "s1", "", "", "x", time.Now().UTC()))
 	if !shouldFlush(s, 10, time.Hour) {
 		t.Fatal("should flush when no prior attempt")
 	}
@@ -631,9 +653,9 @@ func TestRepoRemoteCacheMemoizesByRepoDir(t *testing.T) {
 	})
 
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	events := []SkillEvent{
-		{RepoDir: "/repo"},
-		{RepoDir: "/repo"},
+	events := []TelemetryEvent{
+		testSkillEvent(t, "codex", "s1", "", "/repo", "skill-a", time.Now()),
+		testSkillEvent(t, "codex", "s2", "", "/repo", "skill-b", time.Now()),
 	}
 	got := filterEventsByPolicy(events, policy, cache.remotesFor)
 	if len(got) != 2 {

@@ -7,8 +7,30 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 )
+
+type hookSpec struct {
+	event   string
+	matcher string
+}
+
+var claudeHookSpecs = []hookSpec{
+	{event: "PreToolUse", matcher: "Skill"},
+	{event: "UserPromptExpansion"},
+	{event: "PostToolUse", matcher: "mcp__.*"},
+	{event: "PostToolUseFailure", matcher: "mcp__.*"},
+}
+
+var codexHookSpecs = []hookSpec{
+	{event: "Stop"},
+	{event: "PostToolUse", matcher: "mcp__.*"},
+}
+
+var cursorHookEvents = []string{
+	"afterAgentResponse", "afterMCPExecution",
+}
 
 type hookState string
 
@@ -185,6 +207,139 @@ func inspectHookTarget(root map[string]any, target hookTarget) (bool, string) {
 	return installed && !changed, ""
 }
 
+func mergeGroupedHooks(
+	root map[string]any,
+	specs []hookSpec,
+	newHandler func() map[string]any,
+	isOwned func(map[string]any) bool,
+) (bool, error) {
+	hooks, events, err := validateGroupedHooks(root, specs)
+	if err != nil {
+		return false, err
+	}
+
+	merged := make(map[string][]any, len(specs))
+	changed := hooks == nil
+	for _, spec := range specs {
+		groups := events[spec.event]
+		newGroups := make([]any, len(groups))
+		firstMatching := -1
+		preferred := -1
+		for i, value := range groups {
+			group := value.(map[string]any)
+			newGroup := cloneJSONObject(group)
+			matcher, hasMatcher := group["matcher"].(string)
+			matching := hasMatcher && matcher == spec.matcher
+			if spec.matcher == "" {
+				matching = !hasMatcher
+			}
+			if matching && firstMatching < 0 {
+				firstMatching = i
+			}
+
+			handlers, hasHandlers := group["hooks"].([]any)
+			filtered := make([]any, 0, len(handlers)+1)
+			removedOwned := false
+			for _, handlerValue := range handlers {
+				handler := handlerValue.(map[string]any)
+				if isOwned(handler) {
+					removedOwned = true
+					continue
+				}
+				filtered = append(filtered, handler)
+			}
+			ownedGroup := group["_apm_source"] == hookAPMSource
+			if ownedGroup {
+				delete(newGroup, "_apm_source")
+			}
+			if matching && preferred < 0 && (removedOwned || ownedGroup) {
+				preferred = i
+			}
+			if hasHandlers || removedOwned {
+				newGroup["hooks"] = filtered
+			}
+			newGroups[i] = newGroup
+		}
+
+		if preferred < 0 && spec.matcher != "" {
+			preferred = firstMatching
+		}
+		if preferred < 0 {
+			group := map[string]any{"hooks": []any{newHandler()}}
+			if spec.matcher != "" {
+				group["matcher"] = spec.matcher
+			}
+			newGroups = append(newGroups, group)
+		} else {
+			group := newGroups[preferred].(map[string]any)
+			handlers, _ := group["hooks"].([]any)
+			group["hooks"] = append(handlers, newHandler())
+		}
+		merged[spec.event] = newGroups
+		changed = changed || !reflect.DeepEqual(groups, newGroups)
+	}
+
+	if !changed {
+		return false, nil
+	}
+	if hooks == nil {
+		hooks = map[string]any{}
+		root["hooks"] = hooks
+	}
+	for _, spec := range specs {
+		hooks[spec.event] = merged[spec.event]
+	}
+	return true, nil
+}
+
+func validateGroupedHooks(root map[string]any, specs []hookSpec) (map[string]any, map[string][]any, error) {
+	hooksValue, hasHooks := root["hooks"]
+	if !hasHooks {
+		return nil, map[string][]any{}, nil
+	}
+	hooks, ok := hooksValue.(map[string]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("hooks must be an object")
+	}
+	events := make(map[string][]any, len(specs))
+	for _, spec := range specs {
+		value, exists := hooks[spec.event]
+		if !exists {
+			continue
+		}
+		groups, ok := value.([]any)
+		if !ok {
+			return nil, nil, fmt.Errorf("hooks.%s must be an array", spec.event)
+		}
+		for i, groupValue := range groups {
+			group, ok := groupValue.(map[string]any)
+			if !ok {
+				return nil, nil, fmt.Errorf("hooks.%s[%d] must be an object", spec.event, i)
+			}
+			if matcher, exists := group["matcher"]; exists {
+				if _, ok := matcher.(string); !ok {
+					return nil, nil, fmt.Errorf("hooks.%s[%d].matcher must be a string", spec.event, i)
+				}
+			}
+			handlersValue, hasHandlers := group["hooks"]
+			if !hasHandlers {
+				continue
+			}
+			handlers, ok := handlersValue.([]any)
+			if !ok {
+				return nil, nil, fmt.Errorf("hooks.%s[%d].hooks must be an array", spec.event, i)
+			}
+			for j, handler := range handlers {
+				if _, ok := handler.(map[string]any); !ok {
+					return nil, nil, fmt.Errorf("hooks.%s[%d].hooks[%d] must be an object", spec.event, i, j)
+				}
+			}
+		}
+		events[spec.event] = groups
+	}
+	return hooks, events, nil
+}
+
 func codexHookChanged(results []hookInstallResult) bool {
 	for _, result := range results {
 		if result.Target == hookCodex && result.Changed && result.Err == nil {
@@ -203,19 +358,6 @@ const (
 )
 
 var allHookTargets = []hookTarget{hookClaude, hookCodex, hookCursor}
-
-func canonicalHookCommand(target hookTarget) string {
-	switch target {
-	case hookClaude:
-		return claudeHookCommand
-	case hookCodex:
-		return codexHookCommand
-	case hookCursor:
-		return cursorHookCommand
-	default:
-		return ""
-	}
-}
 
 type configureOptions struct {
 	Endpoint  string

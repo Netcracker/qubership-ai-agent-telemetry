@@ -7,6 +7,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -58,7 +59,7 @@ func resolveRepoAllowList(envValue string, fileValues []string) ([]string, bool)
 	return splitList(defaultRepoAllow), true
 }
 
-func filterEventsByPolicy(events []SkillEvent, policy telemetryPolicy, remotes func(string) []string) []SkillEvent {
+func filterEventsByPolicy(events []TelemetryEvent, policy telemetryPolicy, remotes func(string) []string) []TelemetryEvent {
 	if len(events) == 0 {
 		return events
 	}
@@ -72,16 +73,16 @@ func filterEventsByPolicy(events []SkillEvent, policy telemetryPolicy, remotes f
 	return out
 }
 
-func eventAllowed(ev SkillEvent, policy telemetryPolicy, remotes func(string) []string) bool {
+func eventAllowed(ev TelemetryEvent, policy telemetryPolicy, remotes func(string) []string) bool {
 	_, ok := eventAllowedRemote(ev, policy, remotes)
 	return ok
 }
 
-func eventAllowedRemote(ev SkillEvent, policy telemetryPolicy, remotes func(string) []string) (string, bool) {
+func eventAllowedRemote(ev TelemetryEvent, policy telemetryPolicy, remotes func(string) []string) (string, bool) {
 	if policy.Disabled {
 		return "", false
 	}
-	origin := remoteIdentity(ev.RepoRemote)
+	origin := normalizeRawRemote(ev.RepoRemote)
 	if len(policy.RepoAllowList) == 0 {
 		return origin, true
 	}
@@ -97,7 +98,7 @@ func eventAllowedRemote(ev SkillEvent, policy telemetryPolicy, remotes func(stri
 
 func firstAllowedRemote(remotes, allow []string) string {
 	for _, remote := range remotes {
-		id := remoteIdentity(remote)
+		id := normalizeRawRemote(remote)
 		if id == "" {
 			continue
 		}
@@ -114,46 +115,79 @@ func repoAllowed(remote string, allow []string) bool {
 	return firstAllowedRemote([]string{remote}, allow) != ""
 }
 
-func remoteIdentity(raw string) string {
+func normalizeRawRemote(raw string) string {
+	if strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return ""
+	}
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if raw == "" || hasUnsafeRemoteCharacters(raw) || strings.ContainsAny(raw, "*?[") {
 		return ""
 	}
 	if m := scpRemoteRe.FindStringSubmatch(raw); m != nil {
-		return cleanRemoteIdentity(m[1] + "/" + m[2])
+		return normalizeCanonicalIdentity(m[1] + "/" + m[2])
 	}
-	if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
-		return cleanRemoteIdentity(u.Host + "/" + strings.TrimPrefix(u.Path, "/"))
+	if u, err := url.Parse(raw); err == nil && supportedRemoteScheme(u.Scheme) && u.Host != "" &&
+		u.RawQuery == "" && u.Fragment == "" {
+		return normalizeCanonicalIdentity(u.Host + "/" + strings.TrimPrefix(u.Path, "/"))
 	}
-	return cleanRemoteIdentity(raw)
+	return ""
 }
 
 var scpRemoteRe = regexp.MustCompile(`^[^@\s]+@([^:\s]+):(.+)$`)
 
-func cleanRemoteIdentity(s string) string {
-	s = strings.TrimSpace(strings.ReplaceAll(s, "\\", "/"))
-	s = strings.TrimPrefix(s, "/")
+func normalizeCanonicalIdentity(s string) string {
+	s = strings.TrimSpace(s)
+	if hasUnsafeRemoteCharacters(s) || strings.Contains(s, "\\") || strings.HasPrefix(s, "/") {
+		return ""
+	}
 	s = strings.TrimSuffix(s, "/")
 	s = strings.TrimSuffix(s, ".git")
 	parts := strings.Split(s, "/")
-	for len(parts) > 0 && parts[0] == "" {
-		parts = parts[1:]
-	}
-	if len(parts) == 0 {
+	if len(parts) < 2 {
 		return ""
 	}
 	for i := range parts {
+		if parts[i] == "" || parts[i] == "." || parts[i] == ".." {
+			return ""
+		}
 		parts[i] = strings.ToLower(parts[i])
 	}
 	return strings.Join(parts, "/")
 }
 
+func supportedRemoteScheme(scheme string) bool {
+	switch strings.ToLower(scheme) {
+	case "git", "http", "https", "ssh":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasUnsafeRemoteCharacters(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r)
+	}) >= 0
+}
+
 func repoPatternMatch(pattern, id string) bool {
-	pattern = remoteIdentity(pattern)
-	if pattern == "" || id == "" {
+	pattern = normalizeRepoPattern(pattern)
+	if pattern == "" || id == "" || normalizeCanonicalIdentity(id) != id {
 		return false
 	}
 	return matchPathSegments(strings.Split(pattern, "/"), strings.Split(id, "/"))
+}
+
+func normalizeRepoPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if m := scpRemoteRe.FindStringSubmatch(pattern); m != nil {
+		return normalizeCanonicalIdentity(m[1] + "/" + m[2])
+	}
+	if u, err := url.Parse(pattern); err == nil && supportedRemoteScheme(u.Scheme) && u.Host != "" &&
+		u.RawQuery == "" && u.Fragment == "" {
+		return normalizeCanonicalIdentity(u.Host + "/" + strings.TrimPrefix(u.Path, "/"))
+	}
+	return normalizeCanonicalIdentity(pattern)
 }
 
 func matchPathSegments(pattern, id []string) bool {

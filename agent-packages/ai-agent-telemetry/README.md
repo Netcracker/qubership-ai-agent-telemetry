@@ -1,8 +1,8 @@
 # ai-agent-telemetry
 
-This package is only for repositories that already install telemetry hooks through APM. For a new
-machine, use the platform installer in the [root README](../../README.md#installation). It installs
-the CLI and registers Claude Code, Codex, and Cursor for every repository on that machine.
+This retained package is a compatibility surface for repositories that already install telemetry hooks through APM.
+New setups use the platform installer in the [root README](../../README.md#installation), which installs the CLI and
+registers machine-wide hooks.
 
 Supported agents: Claude Code, Codex, and Cursor.
 
@@ -10,14 +10,19 @@ Supported agents: Claude Code, Codex, and Cursor.
 
 Each hook runs `ai-agent-telemetry ingest --agent=<harness>` and always exits 0 so it never blocks the agent.
 
-| Harness | Hook event | Detection method |
+| Harness | Hook event and matcher | Event coverage |
 | --- | --- | --- |
-| Claude Code | `PreToolUse` on the `Skill` tool | Native hook event |
-| Codex | `Stop` | Session transcript |
-| Cursor | `afterAgentResponse` | Session transcript |
+| Claude Code | `PreToolUse` on `Skill` | Skill execution |
+| Claude Code | `UserPromptExpansion` | Command invocation |
+| Claude Code | `PostToolUse` on `mcp__.*` | Successful MCP execution |
+| Claude Code | `PostToolUseFailure` on `mcp__.*` | Failed MCP execution |
+| Codex | `Stop` | Transcript-derived skill execution |
+| Codex | `PostToolUse` on `mcp__.*` | MCP execution with unknown outcome |
+| Cursor | `afterAgentResponse` | Transcript-derived skill execution |
+| Cursor | `afterMCPExecution` | MCP execution with unknown outcome |
 
-The CLI detects the skill from the hook payload, writes the event to a machine-global outbox, and
-opportunistically flushes buffered events to the collector over OTLP/HTTPS. There is no daemon.
+The CLI routes the hook payload, writes typed events to a machine-wide outbox, and opportunistically flushes buffered
+events to the collector over OTLP/HTTPS. There is no daemon.
 
 ## Existing consumers
 
@@ -42,6 +47,9 @@ same APM target already selected by that repository, for example:
 apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
 ```
 
-After the platform installer has refreshed the machine-wide hooks, verify the setup, remove the
-package dependency through the repository's normal APM workflow, and fully restart the harness.
-The CLI canonicalizes recognized APM telemetry entries without removing unrelated hooks.
+After the platform installer has refreshed the machine-wide hooks, verify the setup and remove the package dependency
+through the repository's normal APM workflow. The CLI canonicalizes recognized APM telemetry entries without removing
+unrelated hooks.
+
+After refreshing the Codex hook, fully restart Codex. If prompted, inspect and approve exactly
+`ai-agent-telemetry ingest --agent=codex`.

@@ -16,22 +16,142 @@ func TestMergeClaudeHookAddsCanonicalHandler(t *testing.T) {
 	if !changed {
 		t.Fatal("changed = false, want true")
 	}
-	want := map[string]any{
-		"theme": "dark",
-		"hooks": map[string]any{
-			"PreToolUse": []any{
-				map[string]any{
-					"matcher": "Skill",
-					"hooks":   []any{canonicalClaudeHandler()},
-				},
-			},
-		},
+	want := map[string]any{}
+	if _, err := mergeClaudeHook(want); err != nil {
+		t.Fatal(err)
 	}
+	want["theme"] = "dark"
 	if !reflect.DeepEqual(root, want) {
 		t.Fatalf("root = %#v, want %#v", root, want)
 	}
 	if !inspectClaudeHook(root) {
 		t.Fatal("inspectClaudeHook = false, want true")
+	}
+}
+
+func TestMergeClaudeHookAddsCompleteManagedEventSet(t *testing.T) {
+	root := map[string]any{}
+	changed, err := mergeClaudeHook(root)
+	if err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+	hooks := root["hooks"].(map[string]any)
+	for _, spec := range claudeHookSpecs {
+		groups, ok := hooks[spec.event].([]any)
+		if !ok || len(groups) != 1 {
+			t.Fatalf("hooks[%q] = %#v, want one group", spec.event, hooks[spec.event])
+		}
+		group := groups[0].(map[string]any)
+		if spec.matcher == "" {
+			if _, exists := group["matcher"]; exists {
+				t.Fatalf("hooks[%q] matcher = %#v, want absent", spec.event, group["matcher"])
+			}
+		} else if group["matcher"] != spec.matcher {
+			t.Fatalf("hooks[%q] matcher = %#v, want %q", spec.event, group["matcher"], spec.matcher)
+		}
+		if handlers := group["hooks"].([]any); !reflect.DeepEqual(handlers, []any{canonicalClaudeHandler()}) {
+			t.Fatalf("hooks[%q] handlers = %#v", spec.event, handlers)
+		}
+	}
+}
+
+func TestInspectClaudeHookRequiresCompleteManagedEventSet(t *testing.T) {
+	root := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []any{map[string]any{
+				"matcher": "Skill",
+				"hooks":   []any{canonicalClaudeHandler()},
+			}},
+		},
+	}
+	if inspectClaudeHook(root) {
+		t.Fatal("inspectClaudeHook = true for partial managed event set")
+	}
+	if _, err := mergeClaudeHook(root); err != nil {
+		t.Fatal(err)
+	}
+	if !inspectClaudeHook(root) {
+		t.Fatal("inspectClaudeHook = false for complete managed event set")
+	}
+}
+
+func TestMergeClaudeHookPreservesExplicitEmptyMatcherGroup(t *testing.T) {
+	userHandler := map[string]any{"type": "command", "command": "user-hook", "extension": true}
+	root := map[string]any{
+		"hooks": map[string]any{
+			"UserPromptExpansion": []any{map[string]any{
+				"matcher":        "",
+				"hooks":          []any{canonicalClaudeHandler(), userHandler},
+				"groupExtension": "keep",
+			}},
+		},
+	}
+	if changed, err := mergeClaudeHook(root); err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+	groups := root["hooks"].(map[string]any)["UserPromptExpansion"].([]any)
+	if len(groups) != 2 {
+		t.Fatalf("UserPromptExpansion groups = %#v, want two", groups)
+	}
+	wantExplicit := map[string]any{
+		"matcher":        "",
+		"hooks":          []any{userHandler},
+		"groupExtension": "keep",
+	}
+	if !reflect.DeepEqual(groups[0], wantExplicit) {
+		t.Fatalf("explicit-empty group = %#v, want %#v", groups[0], wantExplicit)
+	}
+	wantCanonical := map[string]any{"hooks": []any{canonicalClaudeHandler()}}
+	if !reflect.DeepEqual(groups[1], wantCanonical) {
+		t.Fatalf("canonical group = %#v, want %#v", groups[1], wantCanonical)
+	}
+}
+
+func TestInspectClaudeHookRejectsExplicitEmptyMatcherForMatcherlessSpec(t *testing.T) {
+	root := map[string]any{}
+	if _, err := mergeClaudeHook(root); err != nil {
+		t.Fatal(err)
+	}
+	group := root["hooks"].(map[string]any)["UserPromptExpansion"].([]any)[0].(map[string]any)
+	group["matcher"] = ""
+	if inspectClaudeHook(root) {
+		t.Fatal("inspectClaudeHook = true with explicit empty matcher")
+	}
+}
+
+func TestMergeClaudeHookCanonicalizesEveryManagedEvent(t *testing.T) {
+	userHandler := map[string]any{"type": "command", "command": "user-hook", "extension": true}
+	hooks := map[string]any{"Stop": []any{map[string]any{"keep": true}}}
+	for _, spec := range claudeHookSpecs {
+		group := map[string]any{
+			"hooks":          []any{canonicalClaudeHandler(), userHandler, canonicalClaudeHandler()},
+			"groupExtension": "keep",
+			"_apm_source":    hookAPMSource,
+		}
+		if spec.matcher != "" {
+			group["matcher"] = spec.matcher
+		}
+		hooks[spec.event] = []any{group}
+	}
+	root := map[string]any{"hooks": hooks}
+	if changed, err := mergeClaudeHook(root); err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+	for _, spec := range claudeHookSpecs {
+		group := hooks[spec.event].([]any)[0].(map[string]any)
+		if _, exists := group["_apm_source"]; exists {
+			t.Fatalf("hooks[%q] retains APM marker", spec.event)
+		}
+		if group["groupExtension"] != "keep" {
+			t.Fatalf("hooks[%q] lost group extension", spec.event)
+		}
+		want := []any{userHandler, canonicalClaudeHandler()}
+		if got := group["hooks"].([]any); !reflect.DeepEqual(got, want) {
+			t.Fatalf("hooks[%q] handlers = %#v, want %#v", spec.event, got, want)
+		}
+	}
+	if !reflect.DeepEqual(hooks["Stop"], []any{map[string]any{"keep": true}}) {
+		t.Fatalf("unrelated event changed: %#v", hooks["Stop"])
 	}
 }
 
@@ -187,6 +307,7 @@ func TestMergeClaudeHookRejectsIncompatibleStructure(t *testing.T) {
 		{name: "matcher", root: map[string]any{"hooks": map[string]any{"PreToolUse": []any{map[string]any{"matcher": true}}}}, want: "hooks.PreToolUse[0].matcher must be a string"},
 		{name: "handlers", root: map[string]any{"hooks": map[string]any{"PreToolUse": []any{map[string]any{"matcher": "Skill", "hooks": map[string]any{}}}}}, want: "hooks.PreToolUse[0].hooks must be an array"},
 		{name: "handler", root: map[string]any{"hooks": map[string]any{"PreToolUse": []any{map[string]any{"matcher": "Skill", "hooks": []any{"bad"}}}}}, want: "hooks.PreToolUse[0].hooks[0] must be an object"},
+		{name: "managed MCP event", root: map[string]any{"hooks": map[string]any{"PostToolUse": map[string]any{}}}, want: "hooks.PostToolUse must be an array"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -207,7 +328,7 @@ func canonicalClaudeHandler() map[string]any {
 		"type":          "command",
 		"command":       "ai-agent-telemetry ingest --agent=claude",
 		"timeout":       json.Number("30"),
-		"statusMessage": "Recording skill telemetry",
+		"statusMessage": "Recording agent telemetry",
 	}
 }
 

@@ -3,7 +3,32 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestPolicyAppliesToEveryHarnessEvent(t *testing.T) {
+	ts := time.Unix(1, 0).UTC()
+	skill, _ := newSkillEvent("codex", "s1", "git@github.com:Netcracker/project.git", "/repo", "brainstorming", ts)
+	command, _ := newCommandEvent("claude", "s2", "git@github.com:Netcracker/project.git", "/repo", CommandPayload{
+		CommandName: "review-pr", CommandSource: "plugin", ExpansionType: "slash_command",
+	}, ts)
+	mcp, _ := newMCPEvent("cursor", "s3", "git@github.com:Netcracker/project.git", "/repo", MCPPayload{
+		ServerName: "github", ToolName: "get_issue", Outcome: mcpSucceeded,
+	}, ts)
+	got := filterEventsByPolicy(
+		[]TelemetryEvent{skill, command, mcp},
+		telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}},
+		nil,
+	)
+	if len(got) != 3 {
+		t.Fatalf("got %d events, want 3", len(got))
+	}
+	for _, ev := range got {
+		if ev.RepoRemote != "github.com/netcracker/project" {
+			t.Fatalf("%s repo remote = %q", ev.EventName, ev.RepoRemote)
+		}
+	}
+}
 
 func TestRemoteIdentityNormalizesCommonGitURLs(t *testing.T) {
 	cases := map[string]string{
@@ -13,9 +38,102 @@ func TestRemoteIdentityNormalizesCommonGitURLs(t *testing.T) {
 		"https://oauth2:token@gitlab.example.com/qubership/platform/service.git": "gitlab.example.com/qubership/platform/service",
 	}
 	for in, want := range cases {
-		if got := remoteIdentity(in); got != want {
-			t.Fatalf("remoteIdentity(%q) = %q, want %q", in, got, want)
+		if got := normalizeRawRemote(in); got != want {
+			t.Fatalf("normalizeRawRemote(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestRemoteIdentityRejectsLocalAndUnsafeValues(t *testing.T) {
+	cases := map[string]string{
+		"Unix absolute path":     "/home/private/project.git",
+		"Unix relative path":     "../private/project.git",
+		"two-part relative path": "private/project.git",
+		"nested relative path":   "repos/private/project.git",
+		"home relative path":     "~/private/project.git",
+		"dot-directory path":     ".cache/project.git",
+		"dotted directory path":  "repos.local/private.git",
+		"dotted nested path":     "source.dir/private/project.git",
+		"Windows drive path":     `C:\\Users\\private\\project.git`,
+		"Windows slash drive":    `C:/Users/private/project.git`,
+		"Windows UNC path":       `\\\\server\\share\\project.git`,
+		"file URL":               "file:///home/private/project.git",
+		"URL traversal":          "https://github.com/Netcracker/../private.git",
+		"encoded URL traversal":  "https://github.com/Netcracker/%2e%2e/private.git",
+		"scp traversal":          "git@github.com:Netcracker/../private.git",
+		"canonical traversal":    "github.com/Netcracker/../private",
+		"control character":      "github.com/Netcracker/pro\x00ject",
+		"leading control":        "\ngithub.com/Netcracker/project",
+		"unsupported raw value":  "private-project",
+		"allowlist pattern":      "github.com/Netcracker/*",
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := normalizeRawRemote(raw); got != "" {
+				t.Fatalf("normalizeRawRemote(%q) = %q, want empty", raw, got)
+			}
+		})
+	}
+}
+
+func TestRemoteIdentityPreservesSupportedNetworkForms(t *testing.T) {
+	cases := map[string]string{
+		"git@github.com:Netcracker/project.git":          "github.com/netcracker/project",
+		"ssh://git@gitlab.example.com/group/project.git": "gitlab.example.com/group/project",
+		"https://github.com/Netcracker/project.git":      "github.com/netcracker/project",
+		"git://example.net/team/project.git":             "example.net/team/project",
+	}
+	for raw, want := range cases {
+		if got := normalizeRawRemote(raw); got != want {
+			t.Errorf("normalizeRawRemote(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestRepoAllowedPreservesSingleLabelHostPatterns(t *testing.T) {
+	if !repoAllowed("git@host:org/project.git", []string{"host/org/*"}) {
+		t.Fatal("want single-label SCP host to match its canonical allowlist pattern")
+	}
+}
+
+func TestNormalizeRepoPatternPreservesSupportedForms(t *testing.T) {
+	cases := map[string]string{
+		"host/org/*":                      "host/org/*",
+		"github.com/Netcracker/**":        "github.com/netcracker/**",
+		"https://github.com/Netcracker/*": "github.com/netcracker/*",
+		"git@github.com:Netcracker/*.git": "github.com/netcracker/*",
+	}
+	for pattern, want := range cases {
+		if got := normalizeRepoPattern(pattern); got != want {
+			t.Errorf("normalizeRepoPattern(%q) = %q, want %q", pattern, got, want)
+		}
+	}
+}
+
+func TestUnscopedPolicyClearsUnsafeRepositoryRemote(t *testing.T) {
+	unsafe := []string{
+		"/home/private/project.git",
+		"private/project.git",
+		"repos/private/project.git",
+		"~/private/project.git",
+		".cache/project.git",
+		"repos.local/private.git",
+		"source.dir/private/project.git",
+	}
+	for _, remote := range unsafe {
+		t.Run(remote, func(t *testing.T) {
+			ev, err := newSkillEvent("codex", "s1", remote, "", "skill", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{}, nil)
+			if len(got) != 1 {
+				t.Fatalf("got %d events, want 1", len(got))
+			}
+			if got[0].RepoRemote != "" {
+				t.Fatalf("repo remote = %q, want empty", got[0].RepoRemote)
+			}
+		})
 	}
 }
 
@@ -49,7 +167,7 @@ func TestRepoAllowedMatchesGitlabNestedGroups(t *testing.T) {
 }
 
 func TestPolicyAllowsPersonalForkWhenAnotherRemoteMatchesAllowlist(t *testing.T) {
-	ev := SkillEvent{RepoRemote: "git@github.com:some-user/project.git", RepoDir: "/repo"}
+	ev := testSkillEvent(t, "codex", "s1", "git@github.com:some-user/project.git", "/repo", "skill", time.Now())
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
 	allowed := eventAllowed(ev, policy, func(cwd string) []string {
 		if cwd != "/repo" {
@@ -66,9 +184,9 @@ func TestPolicyAllowsPersonalForkWhenAnotherRemoteMatchesAllowlist(t *testing.T)
 }
 
 func TestFilterEventsUsesMatchingAllowlistedRemoteForForks(t *testing.T) {
-	ev := SkillEvent{RepoRemote: "git@github.com:some-user/project.git", RepoDir: "/repo"}
+	ev := testSkillEvent(t, "codex", "s1", "git@github.com:some-user/project.git", "/repo", "skill", time.Now())
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	got := filterEventsByPolicy([]SkillEvent{ev}, policy, func(string) []string {
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, policy, func(string) []string {
 		return []string{
 			"git@github.com:some-user/project.git",
 			"git@github.com:Netcracker/project.git",
@@ -83,9 +201,9 @@ func TestFilterEventsUsesMatchingAllowlistedRemoteForForks(t *testing.T) {
 }
 
 func TestPolicyUsesGitRemoteWhenEventRemoteMissing(t *testing.T) {
-	ev := SkillEvent{RepoDir: "/repo"}
+	ev := testSkillEvent(t, "codex", "s1", "", "/repo", "skill", time.Now())
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	got := filterEventsByPolicy([]SkillEvent{ev}, policy, func(cwd string) []string {
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, policy, func(cwd string) []string {
 		if cwd != "/repo" {
 			t.Fatalf("cwd = %q", cwd)
 		}
@@ -101,7 +219,8 @@ func TestPolicyUsesGitRemoteWhenEventRemoteMissing(t *testing.T) {
 
 func TestPolicyWithAllowlistDropsUnknownRemote(t *testing.T) {
 	policy := telemetryPolicy{RepoAllowList: []string{"github.com/Netcracker/*"}}
-	if eventAllowed(SkillEvent{}, policy, nil) {
+	ev := testSkillEvent(t, "codex", "s1", "", "", "skill", time.Now())
+	if eventAllowed(ev, policy, nil) {
 		t.Fatal("empty remote should be denied when an allowlist is configured")
 	}
 }
@@ -137,8 +256,13 @@ func TestResolveRepoAllowListDefaultsToNetcracker(t *testing.T) {
 }
 
 func TestFilterEventsNormalizesRepoRemoteForTelemetry(t *testing.T) {
-	events := []SkillEvent{{RepoRemote: "git@github.com:Netcracker/Project.git"}}
-	got := filterEventsByPolicy(events, telemetryPolicy{}, nil)
+	ev, err := newSkillEvent(
+		"codex", "s1", "git@github.com:Netcracker/Project.git", "", "skill", time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{}, nil)
 	if len(got) != 1 {
 		t.Fatalf("got %d events, want 1", len(got))
 	}

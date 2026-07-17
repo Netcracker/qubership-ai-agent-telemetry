@@ -1,7 +1,7 @@
 # Agent integration
 
-How a skill run is caught in each supported agent. The shared path is the same
-everywhere; what differs is the hook the agent offers and how much it tells us.
+The CLI collects skill runs, command invocations, and MCP tool executions from documented harness hooks. The shared
+delivery path is the same everywhere; each harness exposes a different event set.
 
 ## The shared path
 
@@ -19,13 +19,28 @@ harness is not installed yet. Each hook calls the CLI by its bare name,
 and POSIX `sh`. The Codex policy file allows only the hook and two diagnostic commands to access
 the machine configuration and collector outside its sandbox.
 
-The CLI reads the agent's payload on stdin, detects any skill that ran, queues the event to an
+The CLI reads the agent's payload on stdin, routes it by `hook_event_name`, queues valid events to an
 on-disk outbox, and flushes opportunistically over OTLP/HTTPS. It always exits 0, so it never
 fails an agent turn. For its internals, see [the ai-agent-telemetry CLI](cli.md).
 
 After installation, follow the README's [verification, restart, and trust steps](../README.md#installation).
 
-Detection uses one of two signals, depending on what the agent exposes:
+## Capability matrix
+
+| Harness | Hook and matcher | Event | Captured event fields |
+| --- | --- | --- | --- |
+| Claude Code | `PreToolUse`, matcher `Skill` | `skill_executed` | `skill.name` |
+| Claude Code | `UserPromptExpansion`, no matcher | `command_invoked` | `command.name`, `command.source`, `command.expansion_type` |
+| Claude Code | `PostToolUse`, matcher `mcp__.*` | `mcp_tool_executed` | Server and tool names, `succeeded`, optional duration |
+| Claude Code | `PostToolUseFailure`, matcher `mcp__.*` | `mcp_tool_executed` | Server and tool names, `failed`, optional duration |
+| Codex | `Stop`, no matcher | `skill_executed` | Zero or more transcript-derived skill names |
+| Codex | `PostToolUse`, matcher `mcp__.*` | `mcp_tool_executed` | Server and tool names, `unknown` outcome |
+| Cursor | `afterAgentResponse` | `skill_executed` | Zero or more transcript-derived skill names |
+| Cursor | `afterMCPExecution` | `mcp_tool_executed` | Tool name, `unknown` outcome, optional duration; no server name |
+
+Claude Code is the only supported harness that emits `command_invoked`. Ordinary built-in tools are not collected.
+
+Skill detection uses one of two signals, depending on what the harness exposes:
 
 - **Native event** — the agent names the skill in the hook payload. Exact.
 - **Session transcript** — where there is no native event, the CLI reads the session
@@ -46,11 +61,18 @@ The CLI does not rely on a marker printed into the model's response — see
 
 ## Claude Code
 
-**Hook:** `PreToolUse`, matched on the `Skill` tool.
+**Hooks:** `PreToolUse`, `UserPromptExpansion`, `PostToolUse`, and `PostToolUseFailure`.
 
 Claude Code runs a skill as a tool call, so the hook fires before the tool runs and the
 payload names the skill. This is the native-event path: the CLI reads the skill name
 straight from the tool input and needs no transcript fallback.
+
+`UserPromptExpansion` provides the command name, source, and expansion type. The CLI accepts only `slash_command` and
+`mcp_prompt`; it does not decode the prompt or command arguments. `PostToolUse` and `PostToolUseFailure` accept only
+MCP names shaped as `mcp__<server>__<tool>`. They provide exact `succeeded` and `failed` outcomes, respectively.
+
+An older `PreToolUse` registration without `hook_event_name` remains readable only for the `Skill` tool. The adapter
+does not infer any other event when the discriminator is absent.
 
 ```json
 "PreToolUse": [
@@ -62,7 +84,7 @@ straight from the tool input and needs no transcript fallback.
 
 ## Codex
 
-**Hook:** `Stop`, fired at the end of a turn.
+**Hooks:** `Stop` and `PostToolUse`.
 
 A skill in Codex is not a tool and emits no activation event, so there is nothing to
 intercept mid-turn. The `Stop` hook runs after the turn, and the CLI detects the skill
@@ -92,9 +114,13 @@ rejects non-ASCII names and names ending in or containing consecutive hyphens. T
 remote comes from the first line, `session_meta`, field `git.repository_url`, which is read
 regardless of the offset. See the [Codex spec] for the full record.
 
+`PostToolUse` reports MCP names as `mcp__<server>__<tool>`. The CLI records the server and tool names with outcome
+`unknown`; Codex does not expose a separate documented failure event or duration for this signal. It never inspects
+the tool response.
+
 ## Cursor
 
-**Hook:** `afterAgentResponse`, fired after each response.
+**Hooks:** `afterAgentResponse` and `afterMCPExecution`.
 
 Like Codex, Cursor has no skill-activation event. The `afterAgentResponse` hook names
 the transcript in `transcript_path`. Each line is a message with a `message.content`
@@ -119,11 +145,20 @@ Cursor requires a numeric top-level `version` in `.cursor/hooks.json`. The CLI p
 existing numeric value and adds `version: 1` when it is absent, so no manual step is needed. The
 historical APM issue is recorded in the [Cursor workaround].
 
+These user-level hooks cover local Cursor sessions. Cursor cloud agents do not load
+`~/.cursor/hooks.json`, so the machine-wide installation does not cover cloud-agent runs.
+
+`afterMCPExecution` provides a tool name and optional duration. Cursor does not provide a stable MCP server name or
+outcome, so the CLI omits the server and records `unknown`. It never inspects `result_json`.
+
 ```json
 {
   "version": 1,
   "hooks": {
     "afterAgentResponse": [
+      { "command": "ai-agent-telemetry ingest --agent=cursor" }
+    ],
+    "afterMCPExecution": [
       { "command": "ai-agent-telemetry ingest --agent=cursor" }
     ]
   }
@@ -139,10 +174,9 @@ native-event path as Claude Code.
 
 ## Legacy APM compatibility
 
-The retained `ai-agent-telemetry` APM hook package remains compatible with repositories that
-already consume it. New setups use the machine-wide files created by the platform installer. A
-parity test keeps the package's three command strings aligned with the CLI while existing
-consumers migrate.
+The retained `ai-agent-telemetry` APM hook package remains compatible with repositories that already consume it. New
+setups use the machine-wide files created by the platform installer. A parity test keeps every event registration and
+command aligned with the CLI-managed hooks while existing consumers migrate.
 
 [Codex spec]: superpowers/specs/2026-06-16-codex-session-parsing.md
 [Cursor workaround]: superpowers/decisions/2026-06-17-cursor-hooks-version-workaround.md

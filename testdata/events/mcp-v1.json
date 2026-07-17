@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "event_name": "mcp_tool_executed",
+  "agent": "claude",
+  "session_id": "session-123",
+  "repo_remote": "github.com/netcracker/project",
+  "ts": "2026-07-16T12:34:56.123456789Z",
+  "payload": {
+    "server_name": "github",
+    "tool_name": "get_issue",
+    "outcome": "succeeded",
+    "duration_ms": 42
+  }
+}

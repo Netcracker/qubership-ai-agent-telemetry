@@ -3,6 +3,9 @@
   "hooks": {
     "afterAgentResponse": [
       { "command": "ai-agent-telemetry ingest --agent=cursor" }
+    ],
+    "afterMCPExecution": [
+      { "command": "ai-agent-telemetry ingest --agent=cursor" }
     ]
   }
 }

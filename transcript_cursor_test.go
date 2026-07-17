@@ -112,7 +112,7 @@ func TestCursorTranscriptEventsReadsFileAndResolvesRemote(t *testing.T) {
 		t.Fatalf("got %d events, want 1", len(events))
 	}
 	e := events[0]
-	if e.Agent != "cursor" || e.SessionID != "c1" || e.Skill != "adr-authoring" ||
+	if e.Agent != "cursor" || e.SessionID != "c1" || skillName(t, e) != "adr-authoring" ||
 		e.RepoRemote != "git@host:org/repo.git" {
 		t.Fatalf("event = %+v", e)
 	}
@@ -136,7 +136,7 @@ func TestCursorTranscriptEventsHonorsOffset(t *testing.T) {
 	stdin, _ := json.Marshal(map[string]any{"session_id": "c1", "workspace_roots": []string{"/repo"}, "transcript_path": tp})
 
 	first1 := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime)
-	if len(first1) != 1 || first1[0].Skill != "old" {
+	if len(first1) != 1 || skillName(t, first1[0]) != "old" {
 		t.Fatalf("first pass = %v", first1)
 	}
 	if again := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime); len(again) != 0 {
@@ -153,7 +153,7 @@ func TestCursorTranscriptEventsHonorsOffset(t *testing.T) {
 		t.Fatal(err)
 	}
 	third := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime)
-	if len(third) != 1 || third[0].Skill != "new" {
+	if len(third) != 1 || skillName(t, third[0]) != "new" {
 		t.Fatalf("third pass = %v", third)
 	}
 }

@@ -1,4 +1,5 @@
-VERSION ?= v0.0.0-local
+GIT_SHA := $(shell git rev-parse --short=7 HEAD 2>/dev/null)
+VERSION ?= v0.0.0-local$(if $(GIT_SHA),+$(GIT_SHA))
 LDFLAGS := -s -w -X main.version=$(VERSION)
 DIST := dist
 TARGETS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64 windows/arm64
