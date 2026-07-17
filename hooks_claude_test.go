@@ -75,6 +75,50 @@ func TestInspectClaudeHookRequiresCompleteManagedEventSet(t *testing.T) {
 	}
 }
 
+func TestMergeClaudeHookPreservesExplicitEmptyMatcherGroup(t *testing.T) {
+	userHandler := map[string]any{"type": "command", "command": "user-hook", "extension": true}
+	root := map[string]any{
+		"hooks": map[string]any{
+			"UserPromptExpansion": []any{map[string]any{
+				"matcher":        "",
+				"hooks":          []any{canonicalClaudeHandler(), userHandler},
+				"groupExtension": "keep",
+			}},
+		},
+	}
+	if changed, err := mergeClaudeHook(root); err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+	groups := root["hooks"].(map[string]any)["UserPromptExpansion"].([]any)
+	if len(groups) != 2 {
+		t.Fatalf("UserPromptExpansion groups = %#v, want two", groups)
+	}
+	wantExplicit := map[string]any{
+		"matcher":        "",
+		"hooks":          []any{userHandler},
+		"groupExtension": "keep",
+	}
+	if !reflect.DeepEqual(groups[0], wantExplicit) {
+		t.Fatalf("explicit-empty group = %#v, want %#v", groups[0], wantExplicit)
+	}
+	wantCanonical := map[string]any{"hooks": []any{canonicalClaudeHandler()}}
+	if !reflect.DeepEqual(groups[1], wantCanonical) {
+		t.Fatalf("canonical group = %#v, want %#v", groups[1], wantCanonical)
+	}
+}
+
+func TestInspectClaudeHookRejectsExplicitEmptyMatcherForMatcherlessSpec(t *testing.T) {
+	root := map[string]any{}
+	if _, err := mergeClaudeHook(root); err != nil {
+		t.Fatal(err)
+	}
+	group := root["hooks"].(map[string]any)["UserPromptExpansion"].([]any)[0].(map[string]any)
+	group["matcher"] = ""
+	if inspectClaudeHook(root) {
+		t.Fatal("inspectClaudeHook = true with explicit empty matcher")
+	}
+}
+
 func TestMergeClaudeHookCanonicalizesEveryManagedEvent(t *testing.T) {
 	userHandler := map[string]any{"type": "command", "command": "user-hook", "extension": true}
 	hooks := map[string]any{"Stop": []any{map[string]any{"keep": true}}}

@@ -65,6 +65,50 @@ func TestInspectCodexHookRequiresCompleteManagedEventSet(t *testing.T) {
 	}
 }
 
+func TestMergeCodexHookPreservesExplicitEmptyMatcherGroup(t *testing.T) {
+	userHandler := map[string]any{"type": "command", "command": "user-hook", "extension": true}
+	root := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{
+				"matcher":        "",
+				"hooks":          []any{canonicalCodexHandler(), userHandler},
+				"groupExtension": "keep",
+			}},
+		},
+	}
+	if changed, err := mergeCodexHook(root); err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+	groups := root["hooks"].(map[string]any)["Stop"].([]any)
+	if len(groups) != 2 {
+		t.Fatalf("Stop groups = %#v, want two", groups)
+	}
+	wantExplicit := map[string]any{
+		"matcher":        "",
+		"hooks":          []any{userHandler},
+		"groupExtension": "keep",
+	}
+	if !reflect.DeepEqual(groups[0], wantExplicit) {
+		t.Fatalf("explicit-empty group = %#v, want %#v", groups[0], wantExplicit)
+	}
+	wantCanonical := map[string]any{"hooks": []any{canonicalCodexHandler()}}
+	if !reflect.DeepEqual(groups[1], wantCanonical) {
+		t.Fatalf("canonical group = %#v, want %#v", groups[1], wantCanonical)
+	}
+}
+
+func TestInspectCodexHookRejectsExplicitEmptyMatcherForMatcherlessSpec(t *testing.T) {
+	root := map[string]any{}
+	if _, err := mergeCodexHook(root); err != nil {
+		t.Fatal(err)
+	}
+	group := root["hooks"].(map[string]any)["Stop"].([]any)[0].(map[string]any)
+	group["matcher"] = ""
+	if inspectCodexHook(root) {
+		t.Fatal("inspectCodexHook = true with explicit empty matcher")
+	}
+}
+
 func TestMergeCodexHookCanonicalizesEveryManagedEvent(t *testing.T) {
 	userHandler := map[string]any{"type": "command", "command": "user-hook", "extension": true}
 	hooks := map[string]any{"SessionStart": []any{map[string]any{"keep": true}}}

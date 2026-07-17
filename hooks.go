@@ -228,8 +228,11 @@ func mergeGroupedHooks(
 		for i, value := range groups {
 			group := value.(map[string]any)
 			newGroup := cloneJSONObject(group)
-			matcher, _ := group["matcher"].(string)
-			matching := matcher == spec.matcher
+			matcher, hasMatcher := group["matcher"].(string)
+			matching := hasMatcher && matcher == spec.matcher
+			if spec.matcher == "" {
+				matching = !hasMatcher
+			}
 			if matching && firstMatching < 0 {
 				firstMatching = i
 			}
