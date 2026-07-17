@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -55,6 +56,10 @@ func DefaultOutbox() (*Outbox, error) {
 
 // Enqueue writes one event atomically (temp file + rename).
 func (s *Outbox) Enqueue(ev TelemetryEvent) error {
+	ev.EventID = newUUID()
+	if ev.EventID == "" {
+		return fmt.Errorf("generate event ID: secure random source unavailable")
+	}
 	if err := validateSerializableEvent(ev); err != nil {
 		return err
 	}
@@ -154,6 +159,20 @@ func randHex() string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// eventIDForDelivery returns a validated persisted ID. Legacy or malformed
+// records receive a deterministic UUID derived only from their opaque outbox
+// file name, so retries stay stable without transmitting untrusted content.
+func eventIDForDelivery(ev TelemetryEvent, name string) string {
+	if validUUIDv4(ev.EventID) {
+		return ev.EventID
+	}
+	sum := sha256.Sum256([]byte(name))
+	b := sum[:16]
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // OffsetStore persists a per-session byte offset into a harness transcript, so

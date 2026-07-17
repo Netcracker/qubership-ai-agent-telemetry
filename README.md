@@ -54,6 +54,7 @@ OS. For the CLI internals and file layout, see [the ai-agent-telemetry CLI](docs
 
 Each OpenTelemetry log record has an event name as its body and these common log attributes:
 
+- `event.id` — a random event identifier that stays unchanged across delivery retries.
 - `agent` — the harness (`codex`, `claude`, `cursor`).
 - `session.id` — the agent's session identifier.
 - `repo.remote` — the normalized git remote identity. The only repository label.
@@ -87,7 +88,7 @@ External identifiers use strict ASCII profiles and are rejected rather than trim
 No personal data or unbounded content leaves the machine. The CLI excludes prompts and expanded prompt text, command
 arguments, tool inputs and results, errors and stack traces, local and transcript paths, MCP URLs and launch commands,
 tool-call and turn IDs, model identifiers, user email, and arbitrary unrecognized fields. A repository is identified
-only by its normalized remote, and `machine.id` is never derived from the user or hardware.
+only by its normalized remote. Neither `event.id` nor `machine.id` is derived from the user or hardware.
 
 [ADR 0004](docs/adr/0004-event-schema-and-privacy.md) records the original privacy decision. The expanded typed schema
 and allowlist are in [ADR 0006](docs/adr/0006-generic-event-schema-and-privacy.md).

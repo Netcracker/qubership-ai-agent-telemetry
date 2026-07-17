@@ -158,6 +158,58 @@ func TestOutboxEnqueueAndList(t *testing.T) {
 	}
 }
 
+func TestOutboxEnqueueAssignsUniqueEventIDs(t *testing.T) {
+	s := &Outbox{Dir: t.TempDir()}
+	for i := 0; i < 2; i++ {
+		ev := testSkillEvent(t, "codex", "s1", "", "", "a", time.Unix(int64(i+1), 0).UTC())
+		if err := s.Enqueue(ev); err != nil {
+			t.Fatalf("enqueue event %d: %v", i, err)
+		}
+	}
+
+	files, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Read(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Read(files[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validUUIDv4(first.EventID) || !validUUIDv4(second.EventID) {
+		t.Fatalf("event IDs are not UUID v4 values: %q, %q", first.EventID, second.EventID)
+	}
+	if first.EventID == second.EventID {
+		t.Fatalf("different events have the same event ID %q", first.EventID)
+	}
+}
+
+func TestOutboxEnqueueReplacesUntrustedEventID(t *testing.T) {
+	s := &Outbox{Dir: t.TempDir()}
+	ev := testSkillEvent(t, "codex", "s1", "", "", "a", time.Unix(1, 0).UTC())
+	ev.EventID = "user@example.com\nforged=true"
+	if err := s.Enqueue(ev); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	files, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Read(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validUUIDv4(got.EventID) {
+		t.Fatalf("event ID is not a generated UUID v4: %q", got.EventID)
+	}
+	if got.EventID == ev.EventID {
+		t.Fatal("untrusted event ID was persisted")
+	}
+}
+
 func TestOutboxListIgnoresTmpAndMarker(t *testing.T) {
 	dir := t.TempDir()
 	s := &Outbox{Dir: dir}

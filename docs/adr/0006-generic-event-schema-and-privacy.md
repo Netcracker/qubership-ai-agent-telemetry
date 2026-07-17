@@ -23,8 +23,8 @@ reject accidental fields, preserve existing skill records, and let old buffered 
 
 ## Decision
 
-Use a typed, versioned event envelope with `schema_version`, `event_name`, `agent`, `session_id`, optional
-`repo_remote`, `ts`, and one direct event-specific `payload` object. Version `1` supports `skill_executed`,
+Use a typed, versioned event envelope with `schema_version`, `event_name`, optional `event_id`, `agent`, `session_id`,
+optional `repo_remote`, `ts`, and one direct event-specific `payload` object. Version `1` supports `skill_executed`,
 `command_invoked`, and `mcp_tool_executed`. Optional fields are omitted, never encoded as `null`, and the decoder
 rejects unknown, duplicate, mismatched, or explicitly null fields. Writers emit only version `1`.
 
@@ -34,11 +34,20 @@ Each payload has a fixed shape:
 - `command_invoked` contains `command_name`, `command_source`, and `expansion_type`;
 - `mcp_tool_executed` contains `tool_name` and `outcome`, plus optional `server_name` and `duration_ms`.
 
-Only `server_name` and `duration_ms` are optional in the MCP payload. `repo_remote` is the only optional envelope
-field.
+Only `server_name` and `duration_ms` are optional in the MCP payload. `event_id` and `repo_remote` are optional envelope
+fields so buffered version 1 events written before event IDs were introduced remain readable.
 
 Readers also accept the exact legacy unversioned skill shape with `agent`, `session_id`, optional `repo_remote`,
 `skill`, and `ts`. They map it to `skill_executed` and apply version 1 validation. Existing files are not rewritten.
+
+The CLI generates a random UUID v4 when it enqueues an event and stores it as `event_id`. Every delivery attempt for
+the same outbox file exports that value as `event.id`. Different events receive different identifiers. The ID is
+generated with `crypto/rand` and contains no user, machine, repository, session, event payload, or timestamp data.
+
+Older outbox entries without an ID, and entries with an untrusted malformed ID, receive a deterministic UUID-shaped
+fallback derived only from the opaque outbox filename. This keeps retries stable without exporting arbitrary stored
+content. VictoriaLogs does not deduplicate records automatically by `event.id`; backend processing or analytics
+queries must use the attribute to collapse repeat deliveries.
 
 Apply strict profiles to every external identifier before enqueue:
 
@@ -85,6 +94,7 @@ properties across harnesses and are not part of this schema expansion.
 - Existing `skill_executed` OTLP bodies and attributes remain compatible, while consumers can distinguish the new
   command and MCP event bodies.
 - A mixed outbox can flush valid legacy and version 1 entries without a migration; invalid files remain buffered.
+- Delivery retries have a stable `event.id`, but storage and queries must use it explicitly to remove duplicates.
 - Invalid or unsupported hook data produces no event and cannot fail an agent turn.
 - The typed payloads prevent newly decoded harness fields from entering storage by accident.
 - Analytics cannot use excluded content, user identity, token usage, or inferred outcomes.
