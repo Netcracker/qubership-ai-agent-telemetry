@@ -359,19 +359,6 @@ const (
 
 var allHookTargets = []hookTarget{hookClaude, hookCodex, hookCursor}
 
-func canonicalHookCommand(target hookTarget) string {
-	switch target {
-	case hookClaude:
-		return claudeHookCommand
-	case hookCodex:
-		return codexHookCommand
-	case hookCursor:
-		return cursorHookCommand
-	default:
-		return ""
-	}
-}
-
 type configureOptions struct {
 	Endpoint  string
 	CAPath    string

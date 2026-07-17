@@ -79,30 +79,3 @@ func TestCodexPolicyReferenceParity(t *testing.T) {
 		t.Fatalf("%s rule differs from the CLI-managed policy", path)
 	}
 }
-
-func jsonPathString(root any, path ...any) (string, bool) {
-	value := root
-	for _, part := range path {
-		switch part := part.(type) {
-		case string:
-			object, ok := value.(map[string]any)
-			if !ok {
-				return "", false
-			}
-			value, ok = object[part]
-			if !ok {
-				return "", false
-			}
-		case int:
-			array, ok := value.([]any)
-			if !ok || part < 0 || part >= len(array) {
-				return "", false
-			}
-			value = array[part]
-		default:
-			return "", false
-		}
-	}
-	result, ok := value.(string)
-	return result, ok
-}

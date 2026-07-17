@@ -158,9 +158,7 @@ func capturedRecords(requests []*collectlogsv1.ExportLogsServiceRequest) []*logs
 	for _, request := range requests {
 		for _, resourceLogs := range request.ResourceLogs {
 			for _, scopeLogs := range resourceLogs.ScopeLogs {
-				for _, record := range scopeLogs.LogRecords {
-					records = append(records, record)
-				}
+				records = append(records, scopeLogs.LogRecords...)
 			}
 		}
 	}
