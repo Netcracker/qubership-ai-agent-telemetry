@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -179,11 +181,17 @@ func TestOutboxEnqueueAssignsUniqueEventIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !validUUIDv4(first.EventID) || !validUUIDv4(second.EventID) {
-		t.Fatalf("event IDs are not UUID v4 values: %q, %q", first.EventID, second.EventID)
+	if !validUUIDv7(first.EventID) || !validUUIDv7(second.EventID) {
+		t.Fatalf("event IDs are not UUID v7 values: %q, %q", first.EventID, second.EventID)
 	}
 	if first.EventID == second.EventID {
 		t.Fatalf("different events have the same event ID %q", first.EventID)
+	}
+	if got := uuidV7UnixMilli(t, first.EventID); got != first.TS.UnixMilli() {
+		t.Fatalf("first event ID timestamp = %d, want %d", got, first.TS.UnixMilli())
+	}
+	if got := uuidV7UnixMilli(t, second.EventID); got != second.TS.UnixMilli() {
+		t.Fatalf("second event ID timestamp = %d, want %d", got, second.TS.UnixMilli())
 	}
 }
 
@@ -202,12 +210,25 @@ func TestOutboxEnqueueReplacesUntrustedEventID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !validUUIDv4(got.EventID) {
-		t.Fatalf("event ID is not a generated UUID v4: %q", got.EventID)
+	if !validUUIDv7(got.EventID) {
+		t.Fatalf("event ID is not a generated UUID v7: %q", got.EventID)
 	}
 	if got.EventID == ev.EventID {
 		t.Fatal("untrusted event ID was persisted")
 	}
+}
+
+func uuidV7UnixMilli(t *testing.T, value string) int64 {
+	t.Helper()
+	raw := strings.ReplaceAll(value, "-", "")
+	if len(raw) != 32 {
+		t.Fatalf("invalid UUID %q", value)
+	}
+	millis, err := strconv.ParseUint(raw[:12], 16, 64)
+	if err != nil {
+		t.Fatalf("parse UUID timestamp %q: %v", value, err)
+	}
+	return int64(millis)
 }
 
 func TestOutboxListIgnoresTmpAndMarker(t *testing.T) {

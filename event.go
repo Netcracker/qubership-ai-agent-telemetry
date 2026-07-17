@@ -529,8 +529,16 @@ func validHarnessAgent(agent string) bool {
 }
 
 func validUUIDv4(value string) bool {
+	return validUUIDVersion(value, '4')
+}
+
+func validUUIDv7(value string) bool {
+	return validUUIDVersion(value, '7')
+}
+
+func validUUIDVersion(value string, version byte) bool {
 	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' ||
-		value[14] != '4' || value[19] != '8' && value[19] != '9' && value[19] != 'a' && value[19] != 'b' {
+		value[14] != version || value[19] != '8' && value[19] != '9' && value[19] != 'a' && value[19] != 'b' {
 		return false
 	}
 	for i := 0; i < len(value); i++ {

@@ -198,8 +198,8 @@ func assertOTLPAttrs(t *testing.T, attrs []*commonv1.KeyValue, want map[string]a
 	t.Helper()
 	got := otlpAttrs(t, attrs)
 	eventID, ok := got["event.id"].(string)
-	if !ok || !validUUIDv4(eventID) {
-		t.Errorf("event.id = %#v, want a UUID v4", got["event.id"])
+	if !ok || !validUUIDv7(eventID) {
+		t.Errorf("event.id = %#v, want a UUID v7", got["event.id"])
 	}
 	delete(got, "event.id")
 	if !reflect.DeepEqual(got, want) {
@@ -380,7 +380,7 @@ func TestFlushRetryKeepsEventID(t *testing.T) {
 	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err != nil {
 		t.Fatalf("retry flush: %v", err)
 	}
-	if len(eventIDs) != 2 || !validUUIDv4(eventIDs[0]) || eventIDs[0] != eventIDs[1] {
+	if len(eventIDs) != 2 || !validUUIDv7(eventIDs[0]) || eventIDs[0] != eventIDs[1] {
 		t.Fatalf("event ID was not stable across retry: %v", eventIDs)
 	}
 }
@@ -402,8 +402,12 @@ func TestFlushReplacesMalformedPersistedEventID(t *testing.T) {
 	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
-	if !validUUIDv4(gotID) || gotID == "user@example.com\nforged=true" {
+	if !validUUIDv7(gotID) || gotID == "user@example.com\nforged=true" {
 		t.Fatalf("unsafe replacement event ID %q", gotID)
+	}
+	wantTS := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	if got := uuidV7UnixMilli(t, gotID); got != wantTS {
+		t.Fatalf("replacement event ID timestamp = %d, want %d", got, wantTS)
 	}
 }
 
@@ -433,8 +437,12 @@ func TestFlushLegacyRetryKeepsFallbackEventID(t *testing.T) {
 	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err != nil {
 		t.Fatalf("retry flush: %v", err)
 	}
-	if len(eventIDs) != 2 || !validUUIDv4(eventIDs[0]) || eventIDs[0] != eventIDs[1] {
+	if len(eventIDs) != 2 || !validUUIDv7(eventIDs[0]) || eventIDs[0] != eventIDs[1] {
 		t.Fatalf("legacy event ID was not stable across retry: %v", eventIDs)
+	}
+	wantTS := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	if got := uuidV7UnixMilli(t, eventIDs[0]); got != wantTS {
+		t.Fatalf("legacy event ID timestamp = %d, want %d", got, wantTS)
 	}
 }
 
