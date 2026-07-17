@@ -145,6 +145,9 @@ Cursor requires a numeric top-level `version` in `.cursor/hooks.json`. The CLI p
 existing numeric value and adds `version: 1` when it is absent, so no manual step is needed. The
 historical APM issue is recorded in the [Cursor workaround].
 
+These user-level hooks cover local Cursor sessions. Cursor cloud agents do not load
+`~/.cursor/hooks.json`, so the machine-wide installation does not cover cloud-agent runs.
+
 `afterMCPExecution` provides a tool name and optional duration. Cursor does not provide a stable MCP server name or
 outcome, so the CLI omits the server and records `unknown`. It never inspects `result_json`.
 
@@ -153,6 +156,9 @@ outcome, so the CLI omits the server and records `unknown`. It never inspects `r
   "version": 1,
   "hooks": {
     "afterAgentResponse": [
+      { "command": "ai-agent-telemetry ingest --agent=cursor" }
+    ],
+    "afterMCPExecution": [
       { "command": "ai-agent-telemetry ingest --agent=cursor" }
     ]
   }

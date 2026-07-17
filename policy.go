@@ -7,6 +7,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -115,15 +116,27 @@ func repoAllowed(remote string, allow []string) bool {
 }
 
 func remoteIdentity(raw string) string {
+	if strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return ""
+	}
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if raw == "" || hasUnsafeRemoteCharacters(raw) {
 		return ""
 	}
 	if m := scpRemoteRe.FindStringSubmatch(raw); m != nil {
 		return cleanRemoteIdentity(m[1] + "/" + m[2])
 	}
-	if u, err := url.Parse(raw); err == nil && u.Scheme != "" && u.Host != "" {
+	if u, err := url.Parse(raw); err == nil && supportedRemoteScheme(u.Scheme) && u.Host != "" &&
+		u.RawQuery == "" && u.Fragment == "" {
 		return cleanRemoteIdentity(u.Host + "/" + strings.TrimPrefix(u.Path, "/"))
+	}
+	if strings.Contains(raw, "://") || strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "./") ||
+		strings.HasPrefix(raw, "../") {
+		return ""
+	}
+	host, _, ok := strings.Cut(raw, "/")
+	if !ok || strings.Contains(host, ":") {
+		return ""
 	}
 	return cleanRemoteIdentity(raw)
 }
@@ -131,21 +144,38 @@ func remoteIdentity(raw string) string {
 var scpRemoteRe = regexp.MustCompile(`^[^@\s]+@([^:\s]+):(.+)$`)
 
 func cleanRemoteIdentity(s string) string {
-	s = strings.TrimSpace(strings.ReplaceAll(s, "\\", "/"))
-	s = strings.TrimPrefix(s, "/")
+	s = strings.TrimSpace(s)
+	if hasUnsafeRemoteCharacters(s) || strings.Contains(s, "\\") || strings.HasPrefix(s, "/") {
+		return ""
+	}
 	s = strings.TrimSuffix(s, "/")
 	s = strings.TrimSuffix(s, ".git")
 	parts := strings.Split(s, "/")
-	for len(parts) > 0 && parts[0] == "" {
-		parts = parts[1:]
-	}
-	if len(parts) == 0 {
+	if len(parts) < 2 {
 		return ""
 	}
 	for i := range parts {
+		if parts[i] == "" || parts[i] == "." || parts[i] == ".." {
+			return ""
+		}
 		parts[i] = strings.ToLower(parts[i])
 	}
 	return strings.Join(parts, "/")
+}
+
+func supportedRemoteScheme(scheme string) bool {
+	switch strings.ToLower(scheme) {
+	case "git", "http", "https", "ssh":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasUnsafeRemoteCharacters(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r)
+	}) >= 0
 }
 
 func repoPatternMatch(pattern, id string) bool {

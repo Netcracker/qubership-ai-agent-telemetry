@@ -3,10 +3,13 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -43,26 +46,77 @@ func TestFlushMapsAllTypedPayloads(t *testing.T) {
 		ServerName: "github", ToolName: "get_issue", Outcome: mcpSucceeded, DurationMS: &duration,
 	}, ts)
 	records := flushRecords(t, []TelemetryEvent{skill, command, mcp})
-	wantAttrs := map[EventName]map[string]any{
-		eventSkillExecuted: {"skill.name": "brainstorming"},
-		eventCommandInvoked: {
-			"command.name": "review-pr", "command.source": "plugin", "command.expansion_type": "slash_command",
-		},
-		eventMCPExecuted: {
-			"mcp.server.name": "github", "mcp.tool.name": "get_issue", "mcp.outcome": "succeeded",
-			"mcp.duration_ms": int64(42),
-		},
-	}
 	if len(records) != 3 {
 		t.Fatalf("got %d records, want 3", len(records))
 	}
-	for _, record := range records {
-		name := EventName(record.Body.GetStringValue())
-		want := map[string]any{"agent": "codex", "repo.remote": ""}
-		for key, value := range wantAttrs[name] {
-			want[key] = value
+	want := []struct {
+		body  string
+		attrs map[string]any
+	}{
+		{body: "skill_executed", attrs: map[string]any{
+			"agent": "codex", "session.id": "s1", "repo.remote": "", "skill.name": "brainstorming",
+		}},
+		{body: "command_invoked", attrs: map[string]any{
+			"agent": "codex", "session.id": "s2", "repo.remote": "", "command.name": "review-pr",
+			"command.source": "plugin", "command.expansion_type": "slash_command",
+		}},
+		{body: "mcp_tool_executed", attrs: map[string]any{
+			"agent": "codex", "session.id": "s3", "repo.remote": "", "mcp.server.name": "github",
+			"mcp.tool.name": "get_issue", "mcp.outcome": "succeeded", "mcp.duration_ms": int64(42),
+		}},
+	}
+	for i, record := range records {
+		if got := record.Body.GetStringValue(); got != want[i].body {
+			t.Errorf("record %d body = %q, want %q", i, got, want[i].body)
 		}
-		assertOTLPAttrs(t, record.Attributes, want)
+		assertOTLPAttrs(t, record.Attributes, want[i].attrs)
+	}
+}
+
+func TestFlushMixedBatchSkipsInvalidFileAndPreservesValidOrder(t *testing.T) {
+	isolateConfigCache(t)
+	outbox := &Outbox{Dir: t.TempDir()}
+	first := mustSkillEvent(t, "codex", "s1", "first")
+	last := mustSkillEvent(t, "codex", "s2", "last")
+	for name, value := range map[string]any{
+		"0001.json": first,
+		"0002.json": json.RawMessage(`{"schema_version":1,"event_name":"skill_executed","payload":{}}`),
+		"0003.json": last,
+	} {
+		body, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(outbox.Dir, name), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	capture := newOTLPCapture(t)
+	defer capture.server.Close()
+	sent, err := Flush(outbox, capture.server.URL, "", nil, 2*time.Second)
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if sent != 2 {
+		t.Fatalf("sent = %d, want 2", sent)
+	}
+	records := capturedRecords(capture.requests)
+	if len(records) != 2 {
+		t.Fatalf("records = %d, want 2", len(records))
+	}
+	for i, want := range []string{"first", "last"} {
+		attrs := otlpAttrs(t, records[i].Attributes)
+		if got := attrs["skill.name"]; got != want {
+			t.Errorf("record %d skill.name = %#v, want %q", i, got, want)
+		}
+	}
+	files, err := outbox.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(files, []string{"0002.json"}) {
+		t.Fatalf("remaining files = %v, want [0002.json]", files)
 	}
 }
 
@@ -89,8 +143,12 @@ func flushRecords(t *testing.T, events []TelemetryEvent) []*logsv1.LogRecord {
 	if _, err := Flush(s, capture.server.URL, "", nil, 2*time.Second); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
+	return capturedRecords(capture.requests)
+}
+
+func capturedRecords(requests []*collectlogsv1.ExportLogsServiceRequest) []*logsv1.LogRecord {
 	var records []*logsv1.LogRecord
-	for _, request := range capture.requests {
+	for _, request := range requests {
 		for _, resourceLogs := range request.ResourceLogs {
 			for _, scopeLogs := range resourceLogs.ScopeLogs {
 				for _, record := range scopeLogs.LogRecords {
@@ -133,6 +191,14 @@ func newOTLPCapture(t *testing.T) *otlpCapture {
 
 func assertOTLPAttrs(t *testing.T, attrs []*commonv1.KeyValue, want map[string]any) {
 	t.Helper()
+	got := otlpAttrs(t, attrs)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("attributes = %#v, want %#v", got, want)
+	}
+}
+
+func otlpAttrs(t *testing.T, attrs []*commonv1.KeyValue) map[string]any {
+	t.Helper()
 	got := make(map[string]any, len(attrs))
 	for _, attr := range attrs {
 		switch value := attr.Value.Value.(type) {
@@ -140,13 +206,11 @@ func assertOTLPAttrs(t *testing.T, attrs []*commonv1.KeyValue, want map[string]a
 			got[attr.Key] = value.StringValue
 		case *commonv1.AnyValue_IntValue:
 			got[attr.Key] = value.IntValue
+		default:
+			t.Fatalf("attribute %q has unexpected value type %T", attr.Key, attr.Value.Value)
 		}
 	}
-	for key, value := range want {
-		if got[key] != value {
-			t.Errorf("%s = %#v, want %#v", key, got[key], value)
-		}
-	}
+	return got
 }
 
 func TestResourceAttrsCarriesOSType(t *testing.T) {

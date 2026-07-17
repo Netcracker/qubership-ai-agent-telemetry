@@ -44,6 +44,58 @@ func TestRemoteIdentityNormalizesCommonGitURLs(t *testing.T) {
 	}
 }
 
+func TestRemoteIdentityRejectsLocalAndUnsafeValues(t *testing.T) {
+	cases := map[string]string{
+		"Unix absolute path":    "/home/private/project.git",
+		"Unix relative path":    "../private/project.git",
+		"Windows drive path":    `C:\\Users\\private\\project.git`,
+		"Windows slash drive":   `C:/Users/private/project.git`,
+		"Windows UNC path":      `\\\\server\\share\\project.git`,
+		"file URL":              "file:///home/private/project.git",
+		"URL traversal":         "https://github.com/Netcracker/../private.git",
+		"encoded URL traversal": "https://github.com/Netcracker/%2e%2e/private.git",
+		"scp traversal":         "git@github.com:Netcracker/../private.git",
+		"canonical traversal":   "github.com/Netcracker/../private",
+		"control character":     "github.com/Netcracker/pro\x00ject",
+		"leading control":       "\ngithub.com/Netcracker/project",
+		"unsupported raw value": "private-project",
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := remoteIdentity(raw); got != "" {
+				t.Fatalf("remoteIdentity(%q) = %q, want empty", raw, got)
+			}
+		})
+	}
+}
+
+func TestRemoteIdentityPreservesSupportedNetworkAndCanonicalForms(t *testing.T) {
+	cases := map[string]string{
+		"git@github.com:Netcracker/project.git":          "github.com/netcracker/project",
+		"ssh://git@gitlab.example.com/group/project.git": "gitlab.example.com/group/project",
+		"https://github.com/Netcracker/project.git":      "github.com/netcracker/project",
+		"git://example.net/team/project.git":             "example.net/team/project",
+		"github.com/Netcracker/project":                  "github.com/netcracker/project",
+		"github.com/Netcracker/*":                        "github.com/netcracker/*",
+	}
+	for raw, want := range cases {
+		if got := remoteIdentity(raw); got != want {
+			t.Errorf("remoteIdentity(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestUnscopedPolicyClearsUnsafeRepositoryRemote(t *testing.T) {
+	ev := testSkillEvent(t, "codex", "s1", "/home/private/project.git", "", "skill", time.Now())
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{}, nil)
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1", len(got))
+	}
+	if got[0].RepoRemote != "" {
+		t.Fatalf("repo remote = %q, want empty", got[0].RepoRemote)
+	}
+}
+
 func TestRepoAllowedMatchesGithubOrgWithoutAllowingPersonalForksByOrigin(t *testing.T) {
 	allow := []string{"github.com/Netcracker/*", "github.com/Qubership/*"}
 	if !repoAllowed("git@github.com:Netcracker/qubership-ai-agent-telemetry.git", allow) {

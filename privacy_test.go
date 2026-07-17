@@ -94,6 +94,57 @@ func TestPrivacyRawHooksExcludePrivateFieldsFromOutboxAndOTLP(t *testing.T) {
 	}
 }
 
+func TestPrivacyUnsafeRepositoryValuesNeverReachOutboxOrOTLP(t *testing.T) {
+	unsafe := []string{
+		"/home/private/project.git",
+		`C:\Users\private\project.git`,
+		`\\server\share\project.git`,
+		"file:///home/private/project.git",
+		"https://github.com/Netcracker/../private.git",
+		"github.com/Netcracker/pro\x00ject",
+		"private-project",
+	}
+	for _, remote := range unsafe {
+		t.Run(strings.ReplaceAll(remote, "/", "_"), func(t *testing.T) {
+			ev := testSkillEvent(t, "codex", "session-safe", remote, "", "privacy-skill", time.Unix(1, 0).UTC())
+			events := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{}, nil)
+			if len(events) != 1 || events[0].RepoRemote != "" {
+				t.Fatalf("filtered events = %#v, want one event with an empty repository remote", events)
+			}
+
+			outbox := &Outbox{Dir: t.TempDir()}
+			if err := outbox.Enqueue(events[0]); err != nil {
+				t.Fatal(err)
+			}
+			files, err := outbox.List()
+			if err != nil || len(files) != 1 {
+				t.Fatalf("outbox files = %v, err = %v", files, err)
+			}
+			body, err := os.ReadFile(filepath.Join(outbox.Dir, files[0]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(body, []byte("repo_remote")) || bytes.Contains(body, []byte(remote)) {
+				t.Fatalf("outbox serialized unsafe repository value: %s", body)
+			}
+
+			capture := newOTLPCapture(t)
+			defer capture.server.Close()
+			if _, err := Flush(outbox, capture.server.URL, "", nil, time.Second); err != nil {
+				t.Fatal(err)
+			}
+			records := capturedRecords(capture.requests)
+			if len(records) != 1 {
+				t.Fatalf("records = %d, want 1", len(records))
+			}
+			attrs := otlpAttrs(t, records[0].Attributes)
+			if got := attrs["repo.remote"]; got != "" {
+				t.Fatalf("repo.remote = %#v, want empty", got)
+			}
+		})
+	}
+}
+
 func TestPrivacyInvalidIdentifiersProduceNoOutboxOrCollectorData(t *testing.T) {
 	invalid := []struct {
 		name  string

@@ -251,9 +251,9 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 | **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the installer so the hook resolves it by bare name |
 | **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token, and delivery settings), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush`, `.last_delivery_error`, and `.flush.lock`), `offsets/` (per-session transcript offsets) |
-| **Claude Code hook** | `~/.claude/settings.json` | Global `PreToolUse` registration merged with unrelated settings |
-| **Codex hook** | `~/.codex/hooks.json` | Global `Stop` registration merged with unrelated hooks |
-| **Cursor hook** | `~/.cursor/hooks.json` | Global `afterAgentResponse` registration and numeric `version` |
+| **Claude Code hook** | `~/.claude/settings.json` | Global `PreToolUse`/`Skill`, `UserPromptExpansion`, `PostToolUse`/`mcp__.*`, and `PostToolUseFailure`/`mcp__.*` registrations merged with unrelated settings |
+| **Codex hook** | `~/.codex/hooks.json` | Global `Stop` and `PostToolUse`/`mcp__.*` registrations merged with unrelated hooks |
+| **Cursor hook** | `~/.cursor/hooks.json` | Global `afterAgentResponse` and `afterMCPExecution` registrations, plus numeric `version` |
 
 All three are the same path on every OS, including Windows (`%USERPROFILE%\.config\…`,
 `%USERPROFILE%\.cache\…`). This is deliberate: `os.UserConfigDir()` returns `%AppData%` on
