@@ -77,8 +77,41 @@ func mustSkillEvent(t *testing.T, agent, session, skill string) TelemetryEvent {
 
 func flushRecords(t *testing.T, events []TelemetryEvent) []*logsv1.LogRecord {
 	t.Helper()
-	var requests []*collectlogsv1.ExportLogsServiceRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	capture := newOTLPCapture(t)
+	defer capture.server.Close()
+	s := &Outbox{Dir: t.TempDir()}
+	for _, ev := range events {
+		if err := s.Enqueue(ev); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := Flush(s, capture.server.URL, "", nil, 2*time.Second); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	var records []*logsv1.LogRecord
+	for _, request := range capture.requests {
+		for _, resourceLogs := range request.ResourceLogs {
+			for _, scopeLogs := range resourceLogs.ScopeLogs {
+				for _, record := range scopeLogs.LogRecords {
+					records = append(records, record)
+				}
+			}
+		}
+	}
+	return records
+}
+
+type otlpCapture struct {
+	server   *httptest.Server
+	bodies   [][]byte
+	requests []*collectlogsv1.ExportLogsServiceRequest
+}
+
+func newOTLPCapture(t *testing.T) *otlpCapture {
+	t.Helper()
+	capture := &otlpCapture{}
+	capture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Error(err)
@@ -91,31 +124,11 @@ func flushRecords(t *testing.T, events []TelemetryEvent) []*logsv1.LogRecord {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		requests = append(requests, &request)
+		capture.bodies = append(capture.bodies, body)
+		capture.requests = append(capture.requests, &request)
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
-	s := &Outbox{Dir: t.TempDir()}
-	for _, ev := range events {
-		if err := s.Enqueue(ev); err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err != nil {
-		t.Fatalf("flush: %v", err)
-	}
-	var records []*logsv1.LogRecord
-	for _, request := range requests {
-		for _, resourceLogs := range request.ResourceLogs {
-			for _, scopeLogs := range resourceLogs.ScopeLogs {
-				for _, record := range scopeLogs.LogRecords {
-					records = append(records, record)
-				}
-			}
-		}
-	}
-	return records
+	return capture
 }
 
 func assertOTLPAttrs(t *testing.T, attrs []*commonv1.KeyValue, want map[string]any) {

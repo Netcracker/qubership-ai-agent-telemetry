@@ -577,6 +577,15 @@ func TestIngestBadJSONStillSucceeds(t *testing.T) {
 	}
 }
 
+func TestReservedSelftestCannotBeSelectedThroughDetect(t *testing.T) {
+	if _, err := detect(selftestAgent, []byte(`{}`), nil, time.Now().UTC()); err == nil {
+		t.Fatal("detect accepted reserved selftest agent")
+	}
+	if err := validateSerializableEvent(newSelftestProbe(time.Now().UTC())); err != nil {
+		t.Fatalf("newSelftestProbe produced invalid event: %v", err)
+	}
+}
+
 func TestIngestCursorFromTranscript(t *testing.T) {
 	// Isolate config/cache dirs so the real machine state and any configured CA
 	// are untouched (DefaultOffsetStore uses the cache dir; caTLSConfig the config dir).
