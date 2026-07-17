@@ -36,7 +36,7 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 type remoteResolver func(cwd string) string
 
 // detect routes a raw hook payload to the per-harness detector. Claude Code
-// emits a native Skill-tool event; Codex and Cursor are detected from the
+// emits native lifecycle events; Codex and Cursor detect skills from the
 // session transcript.
 func detect(agent string, stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
 	stdin = bytes.TrimPrefix(stdin, utf8BOM)
@@ -58,10 +58,15 @@ type codexPayload struct {
 	TranscriptPath string `json:"transcript_path"`
 }
 
-// claudePayload is the Claude Code PreToolUse hook envelope. Only the fields
-// the adapter needs are decoded; the rest (permission_mode, effort,
-// tool_use_id, transcript_path) are ignored.
-type claudePayload struct {
+type claudeHookEnvelope struct {
+	HookEventName string `json:"hook_event_name"`
+	ToolName      string `json:"tool_name"`
+}
+
+// claudeSkillPayload is the allowlist for Claude Code PreToolUse hooks. Fields
+// such as permission_mode, effort, tool_use_id, and transcript_path are never
+// decoded.
+type claudeSkillPayload struct {
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
 	ToolName  string `json:"tool_name"`
@@ -70,33 +75,137 @@ type claudePayload struct {
 	} `json:"tool_input"`
 }
 
-// claudeAdapter turns a Claude Code PreToolUse hook payload into a single
-// skill event. The hook is registered on the Skill tool, so it fires once per
-// skill activation; tool_input.skill is the skill name (namespace-prefixed for
-// plugin skills, bare for project skills).
+// claudeCommandPayload excludes command_args and prompt because both may
+// contain source code, credentials, or other private user content.
+type claudeCommandPayload struct {
+	SessionID     string `json:"session_id"`
+	Cwd           string `json:"cwd"`
+	CommandName   string `json:"command_name"`
+	CommandSource string `json:"command_source"`
+	ExpansionType string `json:"expansion_type"`
+}
+
+// claudeMCPPayload excludes tool_input, tool_response, and error. MCP payloads
+// and results are unbounded private content and must never enter telemetry.
+type claudeMCPPayload struct {
+	SessionID string `json:"session_id"`
+	Cwd       string `json:"cwd"`
+	ToolName  string `json:"tool_name"`
+	Duration  *int64 `json:"duration_ms"`
+}
+
+// claudeAdapter routes Claude Code lifecycle hooks to their normalized
+// telemetry events. Malformed or invalid payloads yield no events so a broken
+// turn never fails the hook.
 func claudeAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
-	var p claudePayload
-	if len(stdin) > 0 {
-		// Malformed JSON yields no events rather than an error: a broken turn
-		// must never fail the hook.
-		_ = json.Unmarshal(stdin, &p)
+	var envelope claudeHookEnvelope
+	if len(stdin) == 0 || json.Unmarshal(stdin, &envelope) != nil {
+		return nil, nil
 	}
-	// Defensive: the matcher already scopes the hook to the Skill tool, but
-	// only emit when the payload confirms it and names a skill.
+
+	switch envelope.HookEventName {
+	case "":
+		// Older hook registrations predate hook_event_name. Preserve their
+		// PreToolUse Skill payloads while refusing to infer any other event.
+		if envelope.ToolName != "Skill" {
+			return nil, nil
+		}
+		return claudeSkillEvent(stdin, remote, now)
+	case "PreToolUse":
+		return claudeSkillEvent(stdin, remote, now)
+	case "UserPromptExpansion":
+		return claudeCommandEvent(stdin, remote, now)
+	case "PostToolUse":
+		return claudeMCPEvent(stdin, remote, now, mcpSucceeded)
+	case "PostToolUseFailure":
+		return claudeMCPEvent(stdin, remote, now, mcpFailed)
+	default:
+		return nil, nil
+	}
+}
+
+func claudeSkillEvent(stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
+	var p claudeSkillPayload
+	if json.Unmarshal(stdin, &p) != nil {
+		return nil, nil
+	}
 	if p.ToolName != "Skill" || p.ToolInput.Skill == "" {
 		return nil, nil
 	}
-	// p.Cwd resolves the git remote only; the local path never leaves the
-	// process, since it leaks the user's home directory and username.
-	var rem string
-	if remote != nil && p.Cwd != "" {
-		rem = remote(p.Cwd)
-	}
-	ev, err := newSkillEvent("claude", p.SessionID, rem, p.Cwd, p.ToolInput.Skill, now)
+	ev, err := newSkillEvent("claude", p.SessionID, resolveRemote(remote, p.Cwd), p.Cwd, p.ToolInput.Skill, now)
 	if err != nil {
 		return nil, nil
 	}
 	return []TelemetryEvent{ev}, nil
+}
+
+func claudeCommandEvent(stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
+	var p claudeCommandPayload
+	if json.Unmarshal(stdin, &p) != nil {
+		return nil, nil
+	}
+	ev, err := newCommandEvent("claude", p.SessionID, resolveRemote(remote, p.Cwd), p.Cwd, CommandPayload{
+		CommandName:   p.CommandName,
+		CommandSource: p.CommandSource,
+		ExpansionType: p.ExpansionType,
+	}, now)
+	if err != nil {
+		return nil, nil
+	}
+	return []TelemetryEvent{ev}, nil
+}
+
+func claudeMCPEvent(
+	stdin []byte, remote remoteResolver, now time.Time, outcome MCPOutcome,
+) ([]TelemetryEvent, error) {
+	var p claudeMCPPayload
+	if json.Unmarshal(stdin, &p) != nil {
+		return nil, nil
+	}
+	server, tool, ok := normalizeMCPToolName(p.ToolName)
+	if !ok {
+		return nil, nil
+	}
+	if p.Duration != nil && *p.Duration < 0 {
+		p.Duration = nil
+	}
+	ev, err := newMCPEvent("claude", p.SessionID, resolveRemote(remote, p.Cwd), p.Cwd, MCPPayload{
+		ServerName: server,
+		ToolName:   tool,
+		Outcome:    outcome,
+		DurationMS: p.Duration,
+	}, now)
+	if err != nil {
+		return nil, nil
+	}
+	return []TelemetryEvent{ev}, nil
+}
+
+func normalizeMCPToolName(name string) (server, tool string, ok bool) {
+	const prefix = "mcp__"
+	if !strings.HasPrefix(name, prefix) {
+		return "", "", false
+	}
+	remainder := strings.TrimPrefix(name, prefix)
+	separator := strings.Index(remainder, "__")
+	if separator < 0 {
+		return "", "", false
+	}
+	server, tool = remainder[:separator], remainder[separator+2:]
+	if !validIdentifier(server, mcpIdentifier) || !validIdentifier(tool, mcpIdentifier) {
+		return "", "", false
+	}
+	return server, tool, true
+}
+
+// resolveRemote uses the local working directory only to discover repository
+// identity. RepoDir is retained in memory for policy checks but is never
+// serialized.
+func resolveRemote(remote remoteResolver, cwd string) string {
+	if remote == nil || cwd == "" {
+		return ""
+	}
+	return remote(cwd)
 }
 
 // cursorPayload is the Cursor afterAgentResponse hook envelope. Only the fields
