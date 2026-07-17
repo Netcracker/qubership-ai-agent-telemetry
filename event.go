@@ -513,7 +513,7 @@ func validateSerializableEvent(ev TelemetryEvent) error {
 	if err := validateTelemetryEvent(ev); err != nil {
 		return err
 	}
-	if ev.RepoRemote != "" && ev.RepoRemote != remoteIdentity(ev.RepoRemote) {
+	if ev.RepoRemote != "" && ev.RepoRemote != normalizeCanonicalIdentity(ev.RepoRemote) {
 		return fmt.Errorf("repository remote is not normalized")
 	}
 	return nil

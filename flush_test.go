@@ -45,9 +45,12 @@ func TestFlushMapsAllTypedPayloads(t *testing.T) {
 	mcp, _ := newMCPEvent("codex", "s3", "", "", MCPPayload{
 		ServerName: "github", ToolName: "get_issue", Outcome: mcpSucceeded, DurationMS: &duration,
 	}, ts)
-	records := flushRecords(t, []TelemetryEvent{skill, command, mcp})
-	if len(records) != 3 {
-		t.Fatalf("got %d records, want 3", len(records))
+	cursorMCP, _ := newMCPEvent("cursor", "s4", "", "", MCPPayload{
+		ToolName: "search", Outcome: mcpUnknown,
+	}, ts)
+	records := flushRecords(t, []TelemetryEvent{skill, command, mcp, cursorMCP})
+	if len(records) != 4 {
+		t.Fatalf("got %d records, want 4", len(records))
 	}
 	want := []struct {
 		body  string
@@ -63,6 +66,10 @@ func TestFlushMapsAllTypedPayloads(t *testing.T) {
 		{body: "mcp_tool_executed", attrs: map[string]any{
 			"agent": "codex", "session.id": "s3", "repo.remote": "", "mcp.server.name": "github",
 			"mcp.tool.name": "get_issue", "mcp.outcome": "succeeded", "mcp.duration_ms": int64(42),
+		}},
+		{body: "mcp_tool_executed", attrs: map[string]any{
+			"agent": "cursor", "session.id": "s4", "repo.remote": "", "mcp.tool.name": "search",
+			"mcp.outcome": "unknown",
 		}},
 	}
 	for i, record := range records {

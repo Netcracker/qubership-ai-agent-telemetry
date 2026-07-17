@@ -38,32 +38,37 @@ func TestRemoteIdentityNormalizesCommonGitURLs(t *testing.T) {
 		"https://oauth2:token@gitlab.example.com/qubership/platform/service.git": "gitlab.example.com/qubership/platform/service",
 	}
 	for in, want := range cases {
-		if got := remoteIdentity(in); got != want {
-			t.Fatalf("remoteIdentity(%q) = %q, want %q", in, got, want)
+		if got := normalizeRawRemote(in); got != want {
+			t.Fatalf("normalizeRawRemote(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
 
 func TestRemoteIdentityRejectsLocalAndUnsafeValues(t *testing.T) {
 	cases := map[string]string{
-		"Unix absolute path":    "/home/private/project.git",
-		"Unix relative path":    "../private/project.git",
-		"Windows drive path":    `C:\\Users\\private\\project.git`,
-		"Windows slash drive":   `C:/Users/private/project.git`,
-		"Windows UNC path":      `\\\\server\\share\\project.git`,
-		"file URL":              "file:///home/private/project.git",
-		"URL traversal":         "https://github.com/Netcracker/../private.git",
-		"encoded URL traversal": "https://github.com/Netcracker/%2e%2e/private.git",
-		"scp traversal":         "git@github.com:Netcracker/../private.git",
-		"canonical traversal":   "github.com/Netcracker/../private",
-		"control character":     "github.com/Netcracker/pro\x00ject",
-		"leading control":       "\ngithub.com/Netcracker/project",
-		"unsupported raw value": "private-project",
+		"Unix absolute path":     "/home/private/project.git",
+		"Unix relative path":     "../private/project.git",
+		"two-part relative path": "private/project.git",
+		"nested relative path":   "repos/private/project.git",
+		"home relative path":     "~/private/project.git",
+		"dot-directory path":     ".cache/project.git",
+		"Windows drive path":     `C:\\Users\\private\\project.git`,
+		"Windows slash drive":    `C:/Users/private/project.git`,
+		"Windows UNC path":       `\\\\server\\share\\project.git`,
+		"file URL":               "file:///home/private/project.git",
+		"URL traversal":          "https://github.com/Netcracker/../private.git",
+		"encoded URL traversal":  "https://github.com/Netcracker/%2e%2e/private.git",
+		"scp traversal":          "git@github.com:Netcracker/../private.git",
+		"canonical traversal":    "github.com/Netcracker/../private",
+		"control character":      "github.com/Netcracker/pro\x00ject",
+		"leading control":        "\ngithub.com/Netcracker/project",
+		"unsupported raw value":  "private-project",
+		"allowlist pattern":      "github.com/Netcracker/*",
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := remoteIdentity(raw); got != "" {
-				t.Fatalf("remoteIdentity(%q) = %q, want empty", raw, got)
+			if got := normalizeRawRemote(raw); got != "" {
+				t.Fatalf("normalizeRawRemote(%q) = %q, want empty", raw, got)
 			}
 		})
 	}
@@ -76,11 +81,30 @@ func TestRemoteIdentityPreservesSupportedNetworkAndCanonicalForms(t *testing.T) 
 		"https://github.com/Netcracker/project.git":      "github.com/netcracker/project",
 		"git://example.net/team/project.git":             "example.net/team/project",
 		"github.com/Netcracker/project":                  "github.com/netcracker/project",
-		"github.com/Netcracker/*":                        "github.com/netcracker/*",
 	}
 	for raw, want := range cases {
-		if got := remoteIdentity(raw); got != want {
-			t.Errorf("remoteIdentity(%q) = %q, want %q", raw, got, want)
+		if got := normalizeRawRemote(raw); got != want {
+			t.Errorf("normalizeRawRemote(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestRepoAllowedPreservesSingleLabelHostPatterns(t *testing.T) {
+	if !repoAllowed("git@host:org/project.git", []string{"host/org/*"}) {
+		t.Fatal("want single-label SCP host to match its canonical allowlist pattern")
+	}
+}
+
+func TestNormalizeRepoPatternPreservesSupportedForms(t *testing.T) {
+	cases := map[string]string{
+		"host/org/*":                      "host/org/*",
+		"github.com/Netcracker/**":        "github.com/netcracker/**",
+		"https://github.com/Netcracker/*": "github.com/netcracker/*",
+		"git@github.com:Netcracker/*.git": "github.com/netcracker/*",
+	}
+	for pattern, want := range cases {
+		if got := normalizeRepoPattern(pattern); got != want {
+			t.Errorf("normalizeRepoPattern(%q) = %q, want %q", pattern, got, want)
 		}
 	}
 }

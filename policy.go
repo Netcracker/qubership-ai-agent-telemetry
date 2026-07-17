@@ -82,7 +82,7 @@ func eventAllowedRemote(ev TelemetryEvent, policy telemetryPolicy, remotes func(
 	if policy.Disabled {
 		return "", false
 	}
-	origin := remoteIdentity(ev.RepoRemote)
+	origin := normalizeRawRemote(ev.RepoRemote)
 	if len(policy.RepoAllowList) == 0 {
 		return origin, true
 	}
@@ -98,7 +98,7 @@ func eventAllowedRemote(ev TelemetryEvent, policy telemetryPolicy, remotes func(
 
 func firstAllowedRemote(remotes, allow []string) string {
 	for _, remote := range remotes {
-		id := remoteIdentity(remote)
+		id := normalizeRawRemote(remote)
 		if id == "" {
 			continue
 		}
@@ -115,35 +115,52 @@ func repoAllowed(remote string, allow []string) bool {
 	return firstAllowedRemote([]string{remote}, allow) != ""
 }
 
-func remoteIdentity(raw string) string {
+func normalizeRawRemote(raw string) string {
 	if strings.IndexFunc(raw, unicode.IsControl) >= 0 {
 		return ""
 	}
 	raw = strings.TrimSpace(raw)
-	if raw == "" || hasUnsafeRemoteCharacters(raw) {
+	if raw == "" || hasUnsafeRemoteCharacters(raw) || strings.ContainsAny(raw, "*?[") {
 		return ""
 	}
 	if m := scpRemoteRe.FindStringSubmatch(raw); m != nil {
-		return cleanRemoteIdentity(m[1] + "/" + m[2])
+		return normalizeCanonicalIdentity(m[1] + "/" + m[2])
 	}
 	if u, err := url.Parse(raw); err == nil && supportedRemoteScheme(u.Scheme) && u.Host != "" &&
 		u.RawQuery == "" && u.Fragment == "" {
-		return cleanRemoteIdentity(u.Host + "/" + strings.TrimPrefix(u.Path, "/"))
+		return normalizeCanonicalIdentity(u.Host + "/" + strings.TrimPrefix(u.Path, "/"))
 	}
 	if strings.Contains(raw, "://") || strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "./") ||
 		strings.HasPrefix(raw, "../") {
 		return ""
 	}
 	host, _, ok := strings.Cut(raw, "/")
-	if !ok || strings.Contains(host, ":") {
+	if !ok || !safeCanonicalHost(host) {
 		return ""
 	}
-	return cleanRemoteIdentity(raw)
+	return normalizeCanonicalIdentity(raw)
+}
+
+func safeCanonicalHost(host string) bool {
+	if !strings.Contains(host, ".") {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+		for _, r := range label {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 var scpRemoteRe = regexp.MustCompile(`^[^@\s]+@([^:\s]+):(.+)$`)
 
-func cleanRemoteIdentity(s string) string {
+func normalizeCanonicalIdentity(s string) string {
 	s = strings.TrimSpace(s)
 	if hasUnsafeRemoteCharacters(s) || strings.Contains(s, "\\") || strings.HasPrefix(s, "/") {
 		return ""
@@ -179,11 +196,23 @@ func hasUnsafeRemoteCharacters(s string) bool {
 }
 
 func repoPatternMatch(pattern, id string) bool {
-	pattern = remoteIdentity(pattern)
-	if pattern == "" || id == "" {
+	pattern = normalizeRepoPattern(pattern)
+	if pattern == "" || id == "" || normalizeCanonicalIdentity(id) != id {
 		return false
 	}
 	return matchPathSegments(strings.Split(pattern, "/"), strings.Split(id, "/"))
+}
+
+func normalizeRepoPattern(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if m := scpRemoteRe.FindStringSubmatch(pattern); m != nil {
+		return normalizeCanonicalIdentity(m[1] + "/" + m[2])
+	}
+	if u, err := url.Parse(pattern); err == nil && supportedRemoteScheme(u.Scheme) && u.Host != "" &&
+		u.RawQuery == "" && u.Fragment == "" {
+		return normalizeCanonicalIdentity(u.Host + "/" + strings.TrimPrefix(u.Path, "/"))
+	}
+	return normalizeCanonicalIdentity(pattern)
 }
 
 func matchPathSegments(pattern, id []string) bool {

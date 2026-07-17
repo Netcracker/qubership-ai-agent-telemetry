@@ -97,6 +97,10 @@ func TestPrivacyRawHooksExcludePrivateFieldsFromOutboxAndOTLP(t *testing.T) {
 func TestPrivacyUnsafeRepositoryValuesNeverReachOutboxOrOTLP(t *testing.T) {
 	unsafe := []string{
 		"/home/private/project.git",
+		"private/project.git",
+		"repos/private/project.git",
+		"~/private/project.git",
+		".cache/project.git",
 		`C:\Users\private\project.git`,
 		`\\server\share\project.git`,
 		"file:///home/private/project.git",

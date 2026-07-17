@@ -92,7 +92,7 @@ func TestOutboxKeepsInvalidVersionedEntry(t *testing.T) {
 
 func testSkillEvent(t *testing.T, agent, session, remote, repoDir, skill string, ts time.Time) TelemetryEvent {
 	t.Helper()
-	ev, err := newSkillEvent(agent, session, remoteIdentity(remote), repoDir, skill, ts)
+	ev, err := newSkillEvent(agent, session, normalizeRawRemote(remote), repoDir, skill, ts)
 	if err != nil {
 		t.Fatal(err)
 	}

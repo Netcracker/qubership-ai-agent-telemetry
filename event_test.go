@@ -182,6 +182,11 @@ func TestTelemetryEventValidation(t *testing.T) {
 		t.Fatalf("validateSerializableEvent(normalized): %v", err)
 	}
 	if err := validateSerializableEvent(withEvent(validSkill, func(ev *TelemetryEvent) {
+		ev.RepoRemote = "host/org/project"
+	})); err != nil {
+		t.Fatalf("validateSerializableEvent(single-label canonical host): %v", err)
+	}
+	if err := validateSerializableEvent(withEvent(validSkill, func(ev *TelemetryEvent) {
 		ev.RepoRemote = ""
 	})); err != nil {
 		t.Fatalf("validateSerializableEvent(unscoped): %v", err)
