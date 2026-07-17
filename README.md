@@ -1,7 +1,7 @@
 # ai-agent-telemetry
 
-Records which skills run inside Codex, Claude Code, and Cursor sessions and ships the
-events to an OpenTelemetry collector. Collection is bounded by the installed hook and
+Records skill runs, command invocations, and MCP tool executions in Codex, Claude Code, and Cursor sessions, then
+ships the events to an OpenTelemetry collector. Collection is bounded by the installed hook and
 the machine repository policy. The default `configure` policy records only repositories
 under the Netcracker GitHub organization unless you set a different repository scope.
 
@@ -39,12 +39,11 @@ flowchart LR
   S -->|"OTLP/HTTPS"| C["OpenTelemetry collector"]
 ```
 
-On each turn the harness-specific hook calls `ai-agent-telemetry ingest --agent=<name>`.
-The CLI detects the skill — from the agent's native event where one exists, or from the
-session transcript where it does not (see
-[Agent integration](docs/agent-integration.md)) — buffers the event to an on-disk outbox,
-and flushes it over OTLP/HTTPS. It always exits 0, so a delivery failure never blocks the
-agent.
+On each supported hook event, the harness calls `ai-agent-telemetry ingest --agent=<name>`. The CLI normalizes the
+signal into a typed event, buffers it in an on-disk outbox, and flushes it over OTLP/HTTPS. Skill detection uses a
+native event where available and a session transcript otherwise. See
+[Agent integration](docs/agent-integration.md). The CLI always exits 0, so a detection or delivery failure never
+blocks the agent.
 
 The installer puts the CLI on `PATH`, saves the machine settings, and registers hooks for all
 three harnesses. Each hook calls the same bare command (`ai-agent-telemetry`) on every supported
@@ -52,19 +51,45 @@ OS. For the CLI internals and file layout, see [the ai-agent-telemetry CLI](docs
 
 ## Data
 
-One OpenTelemetry log record per skill run:
+Each OpenTelemetry log record has an event name as its body and these common log attributes:
 
 - `agent` — the harness (`codex`, `claude`, `cursor`).
 - `session.id` — the agent's session identifier.
 - `repo.remote` — the normalized git remote identity. The only repository label.
-- `skill.name` — the skill that ran.
+
+The process adds these resource attributes:
+
 - `service.name`, `service.version` — the CLI's identity and build.
 - `os.type` — the host OS (`windows`, `linux`, `darwin`).
-- `machine.id` — an anonymous, random UUID minted once per install.
+- `machine.id` — an anonymous, random UUID minted once per install, when available.
 
-No personal data leaves the machine. A repository is identified by its normalized remote
-identity alone, and `machine.id` is never derived from the user or the hardware. The full
-schema is in [the event-schema decision](docs/adr/0004-event-schema-and-privacy.md).
+The event-specific bodies and attributes are:
+
+| Body | Required attributes | Optional attributes |
+| --- | --- | --- |
+| `skill_executed` | `skill.name` | None |
+| `command_invoked` | `command.name`, `command.source`, `command.expansion_type` | None |
+| `mcp_tool_executed` | `mcp.tool.name`, `mcp.outcome` | `mcp.server.name`, `mcp.duration_ms` |
+
+`command.expansion_type` is `slash_command` or `mcp_prompt`. `mcp.outcome` is `succeeded`, `failed`, or `unknown`.
+Durations are non-negative integer milliseconds.
+
+External identifiers use strict ASCII profiles and are rejected rather than trimmed or rewritten:
+
+| Fields | Length | Accepted shape |
+| --- | --- | --- |
+| `session.id` | 1–128 | Starts with an alphanumeric character; then alphanumerics, `.`, `_`, `:`, or `-` |
+| `skill.name`, `command.name` | 1–255 | Starts with an alphanumeric character; then alphanumerics, `.`, `_`, `:`, or `-` |
+| `command.source` | 1–64 | Alphanumerics, `.`, `_`, or `-` |
+| `mcp.server.name`, `mcp.tool.name` | 1–128 | Alphanumerics, `.`, `_`, or `-` |
+
+No personal data or unbounded content leaves the machine. The CLI excludes prompts and expanded prompt text, command
+arguments, tool inputs and results, errors and stack traces, local and transcript paths, MCP URLs and launch commands,
+tool-call and turn IDs, model identifiers, user email, and arbitrary unrecognized fields. A repository is identified
+only by its normalized remote, and `machine.id` is never derived from the user or hardware.
+
+[ADR 0004](docs/adr/0004-event-schema-and-privacy.md) records the original privacy decision. The expanded typed schema
+and allowlist are in [ADR 0006](docs/adr/0006-generic-event-schema-and-privacy.md).
 
 ## Repository scope
 
