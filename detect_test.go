@@ -393,6 +393,86 @@ func TestDetectRoutesExistingSkill(t *testing.T) {
 	}
 }
 
+func TestDetectRejectsUnsupportedTranscriptHooksWithoutAdvancingOffsets(t *testing.T) {
+	tests := []struct {
+		name     string
+		agent    string
+		rejected string
+		accepted string
+		line     string
+	}{
+		{
+			name:     "Codex missing hook",
+			agent:    "codex",
+			accepted: "Stop",
+			line:     `{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/demo/SKILL.md\"}"}}`,
+		},
+		{
+			name:     "Codex unsupported hook",
+			agent:    "codex",
+			rejected: "Notification",
+			accepted: "Stop",
+			line:     `{"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat skills/demo/SKILL.md\"}"}}`,
+		},
+		{
+			name:     "Cursor missing hook",
+			agent:    "cursor",
+			accepted: "afterAgentResponse",
+			line:     `{"message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/demo/SKILL.md"}}]}}`,
+		},
+		{
+			name:     "Cursor unsupported hook",
+			agent:    "cursor",
+			rejected: "beforeSubmitPrompt",
+			accepted: "afterAgentResponse",
+			line:     `{"message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/demo/SKILL.md"}}]}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			tp := filepath.Join(t.TempDir(), "transcript.jsonl")
+			if err := os.WriteFile(tp, []byte(tt.line+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			payload := map[string]any{
+				"session_id":      "s1",
+				"cwd":             "/repo",
+				"workspace_roots": []string{"/repo"},
+				"transcript_path": tp,
+			}
+			if tt.rejected != "" {
+				payload["hook_event_name"] = tt.rejected
+			}
+			stdin, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, err := detect(tt.agent, stdin, func(string) string { return "" }, time.Now().UTC())
+			if err != nil {
+				t.Fatalf("detect rejected hook: %v", err)
+			}
+			if len(events) != 0 {
+				t.Fatalf("rejected hook got %d events (%#v), want 0", len(events), events)
+			}
+
+			payload["hook_event_name"] = tt.accepted
+			stdin, err = json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, err = detect(tt.agent, stdin, func(string) string { return "" }, time.Now().UTC())
+			if err != nil {
+				t.Fatalf("detect accepted hook: %v", err)
+			}
+			if len(events) != 1 || skillName(t, events[0]) != "demo" {
+				t.Fatalf("accepted hook events = %#v, want one demo skill", events)
+			}
+		})
+	}
+}
+
 func TestDetectCodexFromTranscript(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -402,7 +482,11 @@ func TestDetectCodexFromTranscript(t *testing.T) {
 	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"session_id": "s1", "transcript_path": tp})
+	stdin, _ := json.Marshal(map[string]any{
+		"hook_event_name": "Stop",
+		"session_id":      "s1",
+		"transcript_path": tp,
+	})
 	events, err := detect("codex", stdin, func(string) string { return "" }, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("detect: %v", err)
@@ -423,7 +507,12 @@ func TestDetectCursorFromTranscript(t *testing.T) {
 	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"session_id": "c1", "workspace_roots": []string{"/repo"}, "transcript_path": tp})
+	stdin, _ := json.Marshal(map[string]any{
+		"hook_event_name": "afterAgentResponse",
+		"session_id":      "c1",
+		"workspace_roots": []string{"/repo"},
+		"transcript_path": tp,
+	})
 	events, err := detect("cursor", stdin, func(string) string { return "git@host:o/r.git" }, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("detect: %v", err)

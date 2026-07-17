@@ -73,8 +73,13 @@ func codexAdapter(stdin []byte, now time.Time) ([]TelemetryEvent, error) {
 	if len(stdin) == 0 || json.Unmarshal(stdin, &envelope) != nil {
 		return nil, nil
 	}
-	if envelope.HookEventName != "PostToolUse" {
+	switch envelope.HookEventName {
+	case "Stop":
 		return codexTranscriptEventsAuto(stdin, now), nil
+	case "PostToolUse":
+		// Continue below.
+	default:
+		return nil, nil
 	}
 
 	var p codexMCPPayload
@@ -277,8 +282,13 @@ func cursorAdapter(
 	if len(stdin) == 0 || json.Unmarshal(stdin, &envelope) != nil {
 		return nil, nil
 	}
-	if envelope.HookEventName != "afterMCPExecution" {
+	switch envelope.HookEventName {
+	case "afterAgentResponse":
 		return cursorTranscriptEventsAuto(stdin, remote, now), nil
+	case "afterMCPExecution":
+		// Continue below.
+	default:
+		return nil, nil
 	}
 
 	var p cursorMCPPayload

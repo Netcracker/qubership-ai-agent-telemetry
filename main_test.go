@@ -474,7 +474,11 @@ func TestIngestEnqueuesAndFlushes(t *testing.T) {
 	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"session_id": "s1", "transcript_path": tp})
+	stdin, _ := json.Marshal(map[string]any{
+		"hook_event_name": "Stop",
+		"session_id":      "s1",
+		"transcript_path": tp,
+	})
 
 	code := ingest(s, "codex", srv.URL, stdin, func(string) string { return "" }, deliverySettings{
 		BufferCap:    defaultBufferCap,
@@ -512,7 +516,11 @@ func TestIngestUsesConfiguredBufferCap(t *testing.T) {
 	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"session_id": "s1", "transcript_path": tp})
+	stdin, _ := json.Marshal(map[string]any{
+		"hook_event_name": "Stop",
+		"session_id":      "s1",
+		"transcript_path": tp,
+	})
 	settings := deliverySettings{BufferCap: 1, FlushTimeout: defaultFlushTimeout}
 
 	if code := ingest(s, "codex", "", stdin, func(string) string { return "" }, settings); code != 0 {
@@ -582,7 +590,12 @@ func TestIngestCursorFromTranscript(t *testing.T) {
 	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stdin, _ := json.Marshal(map[string]any{"session_id": "c1", "workspace_roots": []string{"/repo"}, "transcript_path": tp})
+	stdin, _ := json.Marshal(map[string]any{
+		"hook_event_name": "afterAgentResponse",
+		"session_id":      "c1",
+		"workspace_roots": []string{"/repo"},
+		"transcript_path": tp,
+	})
 
 	// Empty endpoint => Flush is a no-op, so events stay in the outbox to inspect.
 	s := &Outbox{Dir: t.TempDir()}
