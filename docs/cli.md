@@ -83,10 +83,10 @@ targets and returns a nonzero exit code after reporting every failure.
 
 `status` reports `installed`, `missing`, or `invalid` for each harness. It verifies registration
 and required policy files, not execution or trust. `selftest` verifies collector delivery, not hook
-registration. Fully restart a harness after changing its hook so it reloads the file and refreshed `PATH`.
+registration.
 
-The CLI does not edit Codex's private trust state. If Codex prompts after installation or a
-command change, inspect and approve exactly `ai-agent-telemetry ingest --agent=codex`.
+If installation or hook refresh changed the Codex hook definition and hash, fully restart Codex. The CLI does not edit
+Codex's private trust state, so inspect and approve exactly `ai-agent-telemetry ingest --agent=codex` if prompted.
 
 ## Event routing and validation
 

@@ -22,7 +22,8 @@ iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releas
 
 1. If prompted, enter the collector endpoint and optional token.
 2. Run `ai-agent-telemetry status` and `ai-agent-telemetry selftest`.
-3. Fully restart your harness, then review or approve the hook if prompted.
+3. If installation changed the Codex hook definition and hash, fully restart Codex. If prompted, inspect and approve
+   `ai-agent-telemetry ingest --agent=codex`.
 
 See [Installation](#installation) for configuration options, hook repair, and verification details.
 
@@ -173,13 +174,10 @@ ai-agent-telemetry selftest  # send a probe and confirm collector delivery
 native file path and parse error. `selftest` proves the CLI can deliver to the collector, but it
 cannot prove that a harness loaded or invoked its hook. Check both before relying on telemetry.
 
-### 3. Restart and review trust
+### 3. Restart Codex after a hook change
 
-Fully quit the GUI application or close the terminal tab, then restart the harness. A new chat is
-not enough because the running process retains its old `PATH` and hook configuration.
-
-The CLI registers commands but does not modify private harness trust state. Inspect the command
-and approve it if prompted. For Codex, approve exactly:
+If installation or hook refresh changed the Codex hook definition and hash, fully restart Codex. A new chat is not
+enough. The CLI does not edit Codex's private trust state, so inspect and approve exactly this command if prompted:
 
 ```text
 ai-agent-telemetry ingest --agent=codex
@@ -258,8 +256,8 @@ ai-agent-telemetry configure \
 ai-agent-telemetry configure --ca=<path-to-ca.crt>
 ```
 
-Return to [Verify registration and delivery](#2-verify-registration-and-delivery), then restart the
-harness after any hook change.
+Return to [Verify registration and delivery](#2-verify-registration-and-delivery). If the change refreshed the Codex
+hook definition and hash, fully restart Codex and approve the telemetry hook if prompted.
 
 ### Legacy APM hook package
 
