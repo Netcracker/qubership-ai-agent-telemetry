@@ -54,7 +54,7 @@ OS. For the CLI internals and file layout, see [the ai-agent-telemetry CLI](docs
 
 Each OpenTelemetry log record has an event name as its body and these common log attributes:
 
-- `event.id` — a random event identifier that stays unchanged across delivery retries.
+- `event.id` — a time-sortable event identifier that stays unchanged across delivery retries.
 - `agent` — the harness (`codex`, `claude`, `cursor`).
 - `session.id` — the agent's session identifier.
 - `repo.remote` — the normalized git remote identity. The only repository label.

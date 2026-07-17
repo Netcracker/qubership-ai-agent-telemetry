@@ -40,14 +40,16 @@ fields so buffered version 1 events written before event IDs were introduced rem
 Readers also accept the exact legacy unversioned skill shape with `agent`, `session_id`, optional `repo_remote`,
 `skill`, and `ts`. They map it to `skill_executed` and apply version 1 validation. Existing files are not rewritten.
 
-The CLI generates a random UUID v4 when it enqueues an event and stores it as `event_id`. Every delivery attempt for
-the same outbox file exports that value as `event.id`. Different events receive different identifiers. The ID is
-generated with `crypto/rand` and contains no user, machine, repository, session, event payload, or timestamp data.
+The CLI generates a UUID v7 when it enqueues an event and stores it as `event_id`. Every delivery attempt for the same
+outbox file exports that value as `event.id`. Different events receive different identifiers. UUID v7 embeds the event
+time in milliseconds. Its random portion comes from `crypto/rand` and contains no user, machine, repository, session,
+or event payload data.
 
-Older outbox entries without an ID, and entries with an untrusted malformed ID, receive a deterministic UUID-shaped
-fallback derived only from the opaque outbox filename. This keeps retries stable without exporting arbitrary stored
-content. VictoriaLogs does not deduplicate records automatically by `event.id`; backend processing or analytics
-queries must use the attribute to collapse repeat deliveries.
+Older outbox entries without an ID, and entries with an untrusted malformed ID, receive a deterministic UUID v7
+fallback. The fallback uses the persisted event timestamp and derives its random portion only from the opaque outbox
+filename. This keeps retries stable without exporting arbitrary stored content. VictoriaLogs does not deduplicate
+records automatically by `event.id`; backend processing or analytics queries must use the attribute to collapse repeat
+deliveries.
 
 Apply strict profiles to every external identifier before enqueue:
 

@@ -86,13 +86,15 @@ identifier must not fingerprint the user or the hardware.
 
 ### `event.id`: stable delivery identity
 
-The CLI generates a random UUID v4 each time it enqueues an event and persists it with the event. Every delivery
-attempt for that outbox file carries the same `event.id`. Different events receive different identifiers.
+The CLI generates a UUID v7 each time it enqueues an event and persists it with the event. Every delivery attempt for
+that outbox file carries the same `event.id`. Different events receive different identifiers. UUID v7 embeds the event
+time in milliseconds, which makes identifiers time-sortable without adding a second source of user data.
 
-The identifier is generated locally with `crypto/rand`. It contains no user, machine, repository, session, skill, or
-timestamp data. The CLI validates persisted identifiers before export. An outbox entry created by an older version, or
-one containing a malformed identifier, receives a deterministic UUID-shaped fallback derived only from its opaque
-outbox filename. This keeps retries stable without transmitting arbitrary stored content.
+The random portion is generated locally with `crypto/rand`. The identifier contains no user, machine, repository,
+session, or event payload data. The CLI validates persisted identifiers before export. An outbox entry created by an
+older version, or one containing a malformed identifier, receives a deterministic UUID v7 fallback. The fallback uses
+the persisted event timestamp and derives its random portion only from the opaque outbox filename. This keeps retries
+stable without transmitting arbitrary stored content.
 
 `event.id` provides a key that a backend or query can use for deduplication. VictoriaLogs does not automatically
 deduplicate log records by this attribute, so duplicate records remain possible until the backend or analytics query
