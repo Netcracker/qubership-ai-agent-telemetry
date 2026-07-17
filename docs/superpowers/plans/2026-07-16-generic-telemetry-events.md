@@ -244,8 +244,8 @@ Ordinary constructors accept only `claude`, `codex`, and `cursor`.
 accepts that exception only as the exact pair from the design. Event validation
 allows an adapter's temporary raw remote before policy. Serializable validation
 allows an empty `RepoRemote` for an explicitly unscoped repository policy. When
-the value is present, it must equal `remoteIdentity(RepoRemote)`, so raw URLs,
-credentials, and unnormalized identities cannot enter JSON.
+the value is present, it must already be a normalized canonical identity, so
+raw URLs, credentials, and unnormalized identities cannot enter JSON.
 
 - [ ] **Step 4: Run the focused tests**
 
