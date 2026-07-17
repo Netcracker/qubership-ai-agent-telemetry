@@ -101,6 +101,8 @@ func TestPrivacyUnsafeRepositoryValuesNeverReachOutboxOrOTLP(t *testing.T) {
 		"repos/private/project.git",
 		"~/private/project.git",
 		".cache/project.git",
+		"repos.local/private.git",
+		"source.dir/private/project.git",
 		`C:\Users\private\project.git`,
 		`\\server\share\project.git`,
 		"file:///home/private/project.git",
@@ -110,7 +112,12 @@ func TestPrivacyUnsafeRepositoryValuesNeverReachOutboxOrOTLP(t *testing.T) {
 	}
 	for _, remote := range unsafe {
 		t.Run(strings.ReplaceAll(remote, "/", "_"), func(t *testing.T) {
-			ev := testSkillEvent(t, "codex", "session-safe", remote, "", "privacy-skill", time.Unix(1, 0).UTC())
+			ev, err := newSkillEvent(
+				"codex", "session-safe", remote, "", "privacy-skill", time.Unix(1, 0).UTC(),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
 			events := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{}, nil)
 			if len(events) != 1 || events[0].RepoRemote != "" {
 				t.Fatalf("filtered events = %#v, want one event with an empty repository remote", events)

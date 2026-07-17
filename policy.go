@@ -130,32 +130,7 @@ func normalizeRawRemote(raw string) string {
 		u.RawQuery == "" && u.Fragment == "" {
 		return normalizeCanonicalIdentity(u.Host + "/" + strings.TrimPrefix(u.Path, "/"))
 	}
-	if strings.Contains(raw, "://") || strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "./") ||
-		strings.HasPrefix(raw, "../") {
-		return ""
-	}
-	host, _, ok := strings.Cut(raw, "/")
-	if !ok || !safeCanonicalHost(host) {
-		return ""
-	}
-	return normalizeCanonicalIdentity(raw)
-}
-
-func safeCanonicalHost(host string) bool {
-	if !strings.Contains(host, ".") {
-		return false
-	}
-	for _, label := range strings.Split(host, ".") {
-		if label == "" || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-			return false
-		}
-		for _, r := range label {
-			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-') {
-				return false
-			}
-		}
-	}
-	return true
+	return ""
 }
 
 var scpRemoteRe = regexp.MustCompile(`^[^@\s]+@([^:\s]+):(.+)$`)

@@ -52,6 +52,8 @@ func TestRemoteIdentityRejectsLocalAndUnsafeValues(t *testing.T) {
 		"nested relative path":   "repos/private/project.git",
 		"home relative path":     "~/private/project.git",
 		"dot-directory path":     ".cache/project.git",
+		"dotted directory path":  "repos.local/private.git",
+		"dotted nested path":     "source.dir/private/project.git",
 		"Windows drive path":     `C:\\Users\\private\\project.git`,
 		"Windows slash drive":    `C:/Users/private/project.git`,
 		"Windows UNC path":       `\\\\server\\share\\project.git`,
@@ -74,13 +76,12 @@ func TestRemoteIdentityRejectsLocalAndUnsafeValues(t *testing.T) {
 	}
 }
 
-func TestRemoteIdentityPreservesSupportedNetworkAndCanonicalForms(t *testing.T) {
+func TestRemoteIdentityPreservesSupportedNetworkForms(t *testing.T) {
 	cases := map[string]string{
 		"git@github.com:Netcracker/project.git":          "github.com/netcracker/project",
 		"ssh://git@gitlab.example.com/group/project.git": "gitlab.example.com/group/project",
 		"https://github.com/Netcracker/project.git":      "github.com/netcracker/project",
 		"git://example.net/team/project.git":             "example.net/team/project",
-		"github.com/Netcracker/project":                  "github.com/netcracker/project",
 	}
 	for raw, want := range cases {
 		if got := normalizeRawRemote(raw); got != want {
@@ -110,13 +111,29 @@ func TestNormalizeRepoPatternPreservesSupportedForms(t *testing.T) {
 }
 
 func TestUnscopedPolicyClearsUnsafeRepositoryRemote(t *testing.T) {
-	ev := testSkillEvent(t, "codex", "s1", "/home/private/project.git", "", "skill", time.Now())
-	got := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{}, nil)
-	if len(got) != 1 {
-		t.Fatalf("got %d events, want 1", len(got))
+	unsafe := []string{
+		"/home/private/project.git",
+		"private/project.git",
+		"repos/private/project.git",
+		"~/private/project.git",
+		".cache/project.git",
+		"repos.local/private.git",
+		"source.dir/private/project.git",
 	}
-	if got[0].RepoRemote != "" {
-		t.Fatalf("repo remote = %q, want empty", got[0].RepoRemote)
+	for _, remote := range unsafe {
+		t.Run(remote, func(t *testing.T) {
+			ev, err := newSkillEvent("codex", "s1", remote, "", "skill", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{}, nil)
+			if len(got) != 1 {
+				t.Fatalf("got %d events, want 1", len(got))
+			}
+			if got[0].RepoRemote != "" {
+				t.Fatalf("repo remote = %q, want empty", got[0].RepoRemote)
+			}
+		})
 	}
 }
 
@@ -239,10 +256,13 @@ func TestResolveRepoAllowListDefaultsToNetcracker(t *testing.T) {
 }
 
 func TestFilterEventsNormalizesRepoRemoteForTelemetry(t *testing.T) {
-	events := []TelemetryEvent{
-		testSkillEvent(t, "codex", "s1", "git@github.com:Netcracker/Project.git", "", "skill", time.Now()),
+	ev, err := newSkillEvent(
+		"codex", "s1", "git@github.com:Netcracker/Project.git", "", "skill", time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := filterEventsByPolicy(events, telemetryPolicy{}, nil)
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{}, nil)
 	if len(got) != 1 {
 		t.Fatalf("got %d events, want 1", len(got))
 	}
