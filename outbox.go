@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 const (
@@ -181,6 +183,17 @@ func DefaultOffsetStore() (*OffsetStore, error) {
 func (o *OffsetStore) path(key string) string {
 	safe := strings.NewReplacer("/", "_", "\\", "_", ":", "_", ".", "_").Replace(key)
 	return filepath.Join(o.Dir, safe+".offset")
+}
+
+// lock serializes a complete load-process-save transaction for one transcript
+// session across hook processes. Atomic Save protects the offset file itself,
+// but cannot prevent two processes from reading and processing the same offset.
+func (o *OffsetStore) lock(key string) (release func(), err error) {
+	fl := flock.New(o.path(key) + ".lock")
+	if err := fl.Lock(); err != nil {
+		return nil, err
+	}
+	return func() { _ = fl.Unlock() }, nil
 }
 
 // Load returns the stored byte offset for key, or 0 when none is recorded or

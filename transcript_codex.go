@@ -37,6 +37,12 @@ func codexTranscriptEvents(stdin []byte, offsets *OffsetStore, now time.Time) []
 	key := "codex:" + p.SessionID
 	useOffset := offsets != nil && p.SessionID != ""
 	if useOffset {
+		release, lockErr := offsets.lock(key)
+		if lockErr != nil {
+			return nil
+		}
+		defer release()
+
 		offset = offsets.Load(key)
 		if fi, serr := f.Stat(); serr == nil && offset > fi.Size() {
 			offset = 0 // file rotated or truncated since the last run

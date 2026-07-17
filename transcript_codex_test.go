@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 func codexExecLine(cmd string) string {
@@ -261,6 +263,51 @@ func TestCodexTranscriptEventsOffsetSkipsSeenReads(t *testing.T) {
 	third := codexTranscriptEvents(stdin, store, time.Unix(3, 0).UTC())
 	if len(third) != 1 || skillName(t, third[0]) != "english-us-developer-style" {
 		t.Fatalf("third run = %+v, want one english-us-developer-style", third)
+	}
+}
+
+func TestCodexTranscriptEventsSerializesOffsetUpdate(t *testing.T) {
+	roll := codexMetaLine("https://github.com/o/r") +
+		codexExecLine("cat .agents/skills/adr-authoring/SKILL.md")
+	path := writeRollout(t, roll)
+	stdin, _ := json.Marshal(map[string]string{"session_id": "s1", "transcript_path": path})
+	store := &OffsetStore{Dir: t.TempDir()}
+
+	// Hold the per-session lock so both ingests reach the same serialization
+	// point before either can read and advance the offset.
+	lock := flock.New(store.path("codex:s1") + ".lock")
+	if err := lock.Lock(); err != nil {
+		t.Fatalf("lock offset: %v", err)
+	}
+
+	results := make(chan int, 2)
+	for range 2 {
+		go func() {
+			results <- len(codexTranscriptEvents(stdin, store, time.Unix(1, 0).UTC()))
+		}()
+	}
+
+	select {
+	case got := <-results:
+		_ = lock.Unlock()
+		t.Fatalf("ingest completed with %d events while the session offset lock was held", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := lock.Unlock(); err != nil {
+		t.Fatalf("unlock offset: %v", err)
+	}
+
+	total := 0
+	for range 2 {
+		select {
+		case got := <-results:
+			total += got
+		case <-time.After(2 * time.Second):
+			t.Fatal("concurrent ingest did not finish after releasing the session offset lock")
+		}
+	}
+	if total != 1 {
+		t.Fatalf("concurrent ingests emitted %d events, want 1", total)
 	}
 }
 
