@@ -50,9 +50,10 @@ event without reading the telemetry token.
 
 ## How it works
 
-On each turn a CLI-managed global hook runs the binary by its bare name as
-`ai-agent-telemetry ingest --agent=<agent>`. The CLI detects the skill from a native hook
-event where available (Claude Code), or from the session transcript (Codex and Cursor).
+Native CLI-managed hooks collect the event subset supported by each harness:
+skill executions on Claude Code, Codex, and Cursor; command invocations on
+Claude Code; and MCP tool executions on all three. The diagnostic skill checks
+the installation and uses its own invocation as a real skill event.
 
 The standalone installer puts the binary on `PATH`, saves the machine configuration, and registers
 all supported hooks. The skill diagnoses and repairs any gaps reported by the CLI. `ingest` writes

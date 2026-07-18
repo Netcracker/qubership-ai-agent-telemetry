@@ -28,6 +28,18 @@ write. Never put the token in your own output.
   `repo-allow` (repository allowlist), and an optional `ca.crt`. These are the binary's
   to write — don't hand-edit them.
 
+Event coverage is harness-specific:
+
+| Harness | Skill execution | Command invocation | MCP tool execution |
+| --- | --- | --- | --- |
+| Claude Code | Supported | Supported | Supported |
+| Codex | Supported | Not supported | Supported |
+| Cursor | Supported | Not supported | Supported |
+
+Ordinary built-in tools are not collected. Only Claude Code emits
+`command_invoked`. Do not report a missing event type as a failure when the
+harness does not expose it.
+
 ## Calling the binary
 
 The hooks invoke the binary by its bare name (`ai-agent-telemetry ingest …`), so the binary
@@ -123,17 +135,17 @@ Only after the legacy state is gone, continue with the configure steps below.
 
 Read state first, close only the gaps it shows, then prove delivery.
 
-1. Ensure the binary is installed: run the installer one-liner (`references/deployment.md`). It
-   is idempotent — it downloads the binary to `~/.local/bin` only when missing and ensures
-   `~/.local/bin` is on `PATH`. Then run `status` by bare name (see "Calling the binary").
-2. Fix each gap `status` reports (next section).
-3. Run `selftest`. Re-run `status` / `selftest` after each fix until it passes.
-4. Repair and verify global hooks (see "Confirm the global hooks"). **If Codex is a target, also
-   ensure the sandbox execpolicy rule is in place and loads** (see "Codex sandbox rule (check)").
-   Tell the user to fully quit the app or close the terminal tab, then restart it.
-5. Report the outcome (see "Verify delivery").
-6. Check for a newer version and offer it (see "Updating"). Do this at the end of every run —
-   provisioning, repair, or a plain status check — so the user hears about updates without asking.
+1. Ensure the binary is installed by using the installer in
+   `references/deployment.md`, then run `status --verbose` by bare name.
+2. Fix each configuration or delivery gap that status reports.
+3. Run `selftest`. Re-run `status --verbose` and `selftest` after each fix until
+   the collector accepts the probe and removes it from the outbox.
+4. Repair and verify native global hooks. If Codex is a target, verify its
+   CLI-managed execution-policy rule. Require a full harness restart.
+5. Verify one real harness event by following `Verify delivery`.
+6. Report the outcome without exposing configuration secrets.
+7. Run `update-check` and offer an available update without applying it unless
+   the user consents.
 
 ## Importing a ready config file
 
@@ -241,11 +253,21 @@ ai-agent-telemetry status --verbose
 repository policy. `status --verbose` reports `installed`, `missing`, or `invalid`, plus the native
 path and parse error when available:
 
-| Harness | Active hook file | Must contain |
-| --- | --- | --- |
-| Claude Code | `~/.claude/settings.json` | a `PreToolUse` hook matched on `Skill` running `ai-agent-telemetry ingest --agent=claude` |
-| Codex | `~/.codex/hooks.json` | a `Stop` hook running `ai-agent-telemetry ingest --agent=codex` |
-| Cursor | `~/.cursor/hooks.json` | an `afterAgentResponse` hook running `ai-agent-telemetry ingest --agent=cursor`, plus a numeric top-level `version` |
+| Harness | Active hook file |
+| --- | --- |
+| Claude Code | `~/.claude/settings.json` |
+| Codex | `~/.codex/hooks.json` |
+| Cursor | `~/.cursor/hooks.json` |
+
+- Claude Code requires `PreToolUse`/`Skill`, `UserPromptExpansion`, and
+  `PostToolUse` plus `PostToolUseFailure`/`mcp__.*`.
+- Codex requires `Stop` and `PostToolUse`/`mcp__.*`.
+- Cursor requires `afterAgentResponse`, `afterMCPExecution`, and a numeric
+  top-level `version`.
+
+These registrations collect only the event subset listed in the capability
+matrix. The Codex target also requires
+`~/.codex/rules/ai-agent-telemetry.rules`.
 
 A malformed or structurally incompatible file is left byte-for-byte unchanged. Review the path
 and error before repairing user-owned JSON, then rerun the two commands above.
@@ -288,17 +310,43 @@ codex execpolicy check --rules ~/.codex/rules/ai-agent-telemetry.rules \
 
 ## Verify delivery
 
-`selftest` sends a real event as a test. Two outcomes count as success:
+### Level 1: installation and transport
 
-- The collector accepted it (HTTP 200) and it left the spool — the pipeline works end to end up
-  to ingest. This is the guarantee you can always make.
-- If the user has read access to the store (VictoriaLogs or similar), offer the query that
-  confirms the probe landed (`references/deployment.md`). Most users won't have it — don't block
-  on it.
+Run `status --verbose`, then `selftest`. Require all of these results:
 
-If the probe stays in the spool, delivery failed: treat it as a gap and diagnose from `status`.
+- the CLI reports `state: configured`;
+- the current harness hook reports `installed`;
+- diagnostics contain no delivery error;
+- the collector accepts the probe and the probe leaves the outbox.
 
-Don't report success without a passing `selftest` and an `installed` hook status. A written config
-that can't reach the collector looks done but sends nothing; a green `selftest` with an unwired
-hook captures nothing on real skill runs. For Codex, the installed status also validates the
-CLI-managed execution-policy file.
+A nonzero `buffered` value is not automatically a failure. Treat a growing
+buffer together with a delivery error as a failure. Fix that error before
+continuing.
+
+### Level 2: real harness event
+
+The current `ai-agent-telemetry-configure` invocation is the skill test event.
+Record `buffered`, `last_flush_attempt`, and delivery diagnostics after the
+level 1 selftest.
+
+Claude Code emits the skill event before this skill runs. Codex and Cursor run
+their skill-detection hook after the response, so ask the user to send one more
+telemetry-check message after this response. On that next turn, run
+`status --verbose` again and confirm that:
+
+- `last_flush_attempt` advanced;
+- no new delivery error appeared;
+- the buffer did not grow because of a failed send.
+
+If the user already has read access to the telemetry store, offer a
+server-side query as additional evidence. Do not request store credentials in
+the conversation. Store access is optional.
+
+Test MCP telemetry only with a read-only tool that is already configured and
+appropriate for the user's request. Never mutate external state solely to
+create a telemetry event. Test `command_invoked` only in Claude Code and only
+with an available harmless slash command.
+
+Do not report success until level 1 passes and the native hook is installed.
+For a requested real-event test, do not report that part as complete until the
+follow-up check passes.
