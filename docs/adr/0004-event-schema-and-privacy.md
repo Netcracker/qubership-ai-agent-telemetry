@@ -6,6 +6,8 @@ Accepted
 
 **Date:** 2026-07-09
 
+**Last updated:** 2026-07-17
+
 **Owner:** denifilatoff
 
 **Participants and approvers:** Denis Filatov (@denifilatoff)
@@ -34,6 +36,7 @@ privacy boundaries and the design choices behind them.
 
 Each delivered OpenTelemetry log record has body `skill_executed` and these log attributes:
 
+- `event.id`
 - `agent`
 - `session.id`
 - `repo.remote`
@@ -46,15 +49,16 @@ The process also emits these resource attributes:
 - `os.type`
 - `machine.id`, when the CLI can read or create the anonymous install ID
 
-The outbox persists the same event content in local JSON files before flush. Local-only helper fields, such as the
-working directory used for repository policy checks, are never serialized.
+The outbox persists the same event content in local JSON files before flush. It stores `event.id` as `event_id` when
+the event is enqueued. Local-only helper fields, such as the working directory used for repository policy checks, are
+never serialized.
 
 ### Fields excluded
 
 | Field | Why excluded |
 | --- | --- |
 | `repo.path` | The local working directory leaks the username. Repositories are identified by `repo.remote` alone. A non-git checkout has no repo label unless policy can resolve an allowed remote from the working tree. |
-| `turn.id` | Finer than `session.id` with no analytic value. The only theoretical use (server-side dedup of duplicate hook fires) was not needed. |
+| `turn.id` | Finer than `session.id` and supplied by the harness. Delivery deduplication uses the CLI-generated `event.id` instead. |
 | `user_email` | Cursor's hook payload carries it. We do not read it — skill-usage counts do not require user identity, and collecting email would cross the "no personal data" line. |
 | `skill.source` | Originally carried by the `[skill-called]` marker; retired when the marker was removed (see [ADR 0001](0001-skill-detection-via-hooks-and-transcripts.md)). |
 
@@ -80,6 +84,22 @@ identifier must not fingerprint the user or the hardware.
   cloud-instance ID — a semantic mismatch for a random UUID. `device.id` targets mobile and client apps.
   A custom `machine.id` names the concept without overloading a standard key.
 
+### `event.id`: stable delivery identity
+
+The CLI generates a UUID v7 each time it enqueues an event and persists it with the event. Every delivery attempt for
+that outbox file carries the same `event.id`. Different events receive different identifiers. UUID v7 embeds the event
+time in milliseconds, which makes identifiers time-sortable without adding a second source of user data.
+
+The random portion is generated locally with `crypto/rand`. The identifier contains no user, machine, repository,
+session, or event payload data. The CLI validates persisted identifiers before export. An outbox entry created by an
+older version, or one containing a malformed identifier, receives a deterministic UUID v7 fallback. The fallback uses
+the persisted event timestamp and derives its random portion only from the opaque outbox filename. This keeps retries
+stable without transmitting arbitrary stored content.
+
+`event.id` provides a key that a backend or query can use for deduplication. VictoriaLogs does not automatically
+deduplicate log records by this attribute, so duplicate records remain possible until the backend or analytics query
+uses `event.id` explicitly.
+
 ### Justification
 
 The guiding principle is **no personal data leaves the machine**. A repository is identified by its normalized remote
@@ -101,3 +121,5 @@ line requires a new ADR.
 - **`machine.id` resets on re-configure.** Deleting the config directory (or reconfiguring onto a new
   XDG path, per [ADR 0003](0003-config-cache-dirs-xdg.md)) mints a new UUID. The backend sees a "new"
   install. This is a minor analytics discontinuity, not a correctness issue.
+- **Retries can be identified but are not removed automatically.** A retry carries the same `event.id`, but storage
+  and queries must use that attribute to collapse duplicates.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -55,6 +56,10 @@ func DefaultOutbox() (*Outbox, error) {
 
 // Enqueue writes one event atomically (temp file + rename).
 func (s *Outbox) Enqueue(ev TelemetryEvent) error {
+	ev.EventID = newEventID(ev.TS)
+	if ev.EventID == "" {
+		return fmt.Errorf("generate event ID: secure random source unavailable")
+	}
 	if err := validateSerializableEvent(ev); err != nil {
 		return err
 	}
@@ -154,6 +159,39 @@ func randHex() string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+func newEventID(ts time.Time) string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return ""
+	}
+	return eventIDFromBytes(ts, b[:])
+}
+
+func eventIDFromBytes(ts time.Time, entropy []byte) string {
+	var b [16]byte
+	copy(b[:], entropy)
+	millis := uint64(ts.UnixMilli())
+	for i := 5; i >= 0; i-- {
+		b[i] = byte(millis)
+		millis >>= 8
+	}
+	b[6] = (b[6] & 0x0f) | 0x70
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// eventIDForDelivery returns a validated persisted ID. Legacy or malformed
+// records receive a deterministic UUID v7 based on the event timestamp and
+// opaque outbox file name, so retries stay stable without transmitting
+// untrusted content.
+func eventIDForDelivery(ev TelemetryEvent, name string) string {
+	if validUUIDv7(ev.EventID) {
+		return ev.EventID
+	}
+	sum := sha256.Sum256([]byte(name))
+	return eventIDFromBytes(ev.TS, sum[:])
 }
 
 // OffsetStore persists a per-session byte offset into a harness transcript, so

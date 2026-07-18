@@ -197,6 +197,11 @@ func newOTLPCapture(t *testing.T) *otlpCapture {
 func assertOTLPAttrs(t *testing.T, attrs []*commonv1.KeyValue, want map[string]any) {
 	t.Helper()
 	got := otlpAttrs(t, attrs)
+	eventID, ok := got["event.id"].(string)
+	if !ok || !validUUIDv7(eventID) {
+		t.Errorf("event.id = %#v, want a UUID v7", got["event.id"])
+	}
+	delete(got, "event.id")
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("attributes = %#v, want %#v", got, want)
 	}
@@ -350,6 +355,120 @@ func TestFlushKeepsBufferOnServerError(t *testing.T) {
 	if len(files) != 2 {
 		t.Fatalf("buffer should be intact: %d files remain, want 2", len(files))
 	}
+}
+
+func TestFlushRetryKeepsEventID(t *testing.T) {
+	isolateConfigCache(t)
+	var eventIDs []string
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		eventIDs = append(eventIDs, eventIDFromOTLPRequest(t, r))
+		requests++
+		if requests == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	seed(t, s, 1)
+	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err == nil {
+		t.Fatal("first flush succeeded, want a delivery error")
+	}
+	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err != nil {
+		t.Fatalf("retry flush: %v", err)
+	}
+	if len(eventIDs) != 2 || !validUUIDv7(eventIDs[0]) || eventIDs[0] != eventIDs[1] {
+		t.Fatalf("event ID was not stable across retry: %v", eventIDs)
+	}
+}
+
+func TestFlushReplacesMalformedPersistedEventID(t *testing.T) {
+	isolateConfigCache(t)
+	var gotID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotID = eventIDFromOTLPRequest(t, r)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	const malformed = `{"schema_version":1,"event_name":"skill_executed","event_id":"user@example.com\\nforged=true","agent":"codex","session_id":"s1","ts":"2026-01-01T00:00:00Z","payload":{"skill_name":"safe"}}`
+	if err := os.WriteFile(filepath.Join(s.Dir, "0001.json"), []byte(malformed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if !validUUIDv7(gotID) || gotID == "user@example.com\nforged=true" {
+		t.Fatalf("unsafe replacement event ID %q", gotID)
+	}
+	wantTS := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	if got := uuidV7UnixMilli(t, gotID); got != wantTS {
+		t.Fatalf("replacement event ID timestamp = %d, want %d", got, wantTS)
+	}
+}
+
+func TestFlushLegacyRetryKeepsFallbackEventID(t *testing.T) {
+	isolateConfigCache(t)
+	var eventIDs []string
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		eventIDs = append(eventIDs, eventIDFromOTLPRequest(t, r))
+		requests++
+		if requests == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	const legacy = `{"agent":"codex","session_id":"legacy-1","skill":"safe","ts":"2026-01-01T00:00:00Z"}`
+	if err := os.WriteFile(filepath.Join(s.Dir, "0001.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err == nil {
+		t.Fatal("first flush succeeded, want a delivery error")
+	}
+	if _, err := Flush(s, srv.URL, "", nil, 2*time.Second); err != nil {
+		t.Fatalf("retry flush: %v", err)
+	}
+	if len(eventIDs) != 2 || !validUUIDv7(eventIDs[0]) || eventIDs[0] != eventIDs[1] {
+		t.Fatalf("legacy event ID was not stable across retry: %v", eventIDs)
+	}
+	wantTS := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	if got := uuidV7UnixMilli(t, eventIDs[0]); got != wantTS {
+		t.Fatalf("legacy event ID timestamp = %d, want %d", got, wantTS)
+	}
+}
+
+func eventIDFromOTLPRequest(t *testing.T, r *http.Request) string {
+	t.Helper()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Errorf("read OTLP request: %v", err)
+		return ""
+	}
+	var request collectlogsv1.ExportLogsServiceRequest
+	if err := proto.Unmarshal(body, &request); err != nil {
+		t.Errorf("decode OTLP request: %v", err)
+		return ""
+	}
+	records := capturedRecords([]*collectlogsv1.ExportLogsServiceRequest{&request})
+	if len(records) != 1 {
+		t.Errorf("got %d OTLP records, want 1", len(records))
+		return ""
+	}
+	eventID, ok := otlpAttrs(t, records[0].Attributes)["event.id"].(string)
+	if !ok {
+		t.Error("OTLP record has no string event.id")
+		return ""
+	}
+	return eventID
 }
 
 func TestFlushRecordsLastDeliveryError(t *testing.T) {

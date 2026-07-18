@@ -62,6 +62,7 @@ func (MCPPayload) eventName() EventName {
 type TelemetryEvent struct {
 	SchemaVersion int
 	EventName     EventName
+	EventID       string
 	Agent         string
 	SessionID     string
 	RepoRemote    string
@@ -73,6 +74,7 @@ type TelemetryEvent struct {
 type eventEnvelope struct {
 	SchemaVersion int              `json:"schema_version"`
 	EventName     EventName        `json:"event_name"`
+	EventID       string           `json:"event_id,omitempty"`
 	Agent         string           `json:"agent"`
 	SessionID     string           `json:"session_id"`
 	RepoRemote    string           `json:"repo_remote,omitempty"`
@@ -83,6 +85,7 @@ type eventEnvelope struct {
 type encodedEventEnvelope struct {
 	SchemaVersion int             `json:"schema_version"`
 	EventName     EventName       `json:"event_name"`
+	EventID       string          `json:"event_id,omitempty"`
 	Agent         string          `json:"agent"`
 	SessionID     string          `json:"session_id"`
 	RepoRemote    string          `json:"repo_remote,omitempty"`
@@ -100,10 +103,10 @@ type legacySkillEvent struct {
 
 var (
 	telemetryEventKeys = []string{
-		"schema_version", "event_name", "agent", "session_id", "repo_remote", "ts", "payload", "skill",
+		"schema_version", "event_name", "event_id", "agent", "session_id", "repo_remote", "ts", "payload", "skill",
 	}
 	versionedEventKeys = []string{
-		"schema_version", "event_name", "agent", "session_id", "repo_remote", "ts", "payload",
+		"schema_version", "event_name", "event_id", "agent", "session_id", "repo_remote", "ts", "payload",
 	}
 	legacyEventKeys    = []string{"agent", "session_id", "repo_remote", "skill", "ts"}
 	skillPayloadKeys   = []string{"skill_name"}
@@ -120,6 +123,7 @@ func (ev TelemetryEvent) MarshalJSON() ([]byte, error) {
 	return json.Marshal(eventEnvelope{
 		SchemaVersion: ev.SchemaVersion,
 		EventName:     ev.EventName,
+		EventID:       ev.EventID,
 		Agent:         ev.Agent,
 		SessionID:     ev.SessionID,
 		RepoRemote:    ev.RepoRemote,
@@ -202,6 +206,7 @@ func (ev *TelemetryEvent) UnmarshalJSON(data []byte) error {
 	decoded := TelemetryEvent{
 		SchemaVersion: envelope.SchemaVersion,
 		EventName:     envelope.EventName,
+		EventID:       envelope.EventID,
 		Agent:         envelope.Agent,
 		SessionID:     envelope.SessionID,
 		RepoRemote:    envelope.RepoRemote,
@@ -524,8 +529,16 @@ func validHarnessAgent(agent string) bool {
 }
 
 func validUUIDv4(value string) bool {
+	return validUUIDVersion(value, '4')
+}
+
+func validUUIDv7(value string) bool {
+	return validUUIDVersion(value, '7')
+}
+
+func validUUIDVersion(value string, version byte) bool {
 	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' ||
-		value[14] != '4' || value[19] != '8' && value[19] != '9' && value[19] != 'a' && value[19] != 'b' {
+		value[14] != version || value[19] != '8' && value[19] != '9' && value[19] != 'a' && value[19] != 'b' {
 		return false
 	}
 	for i := 0; i < len(value); i++ {

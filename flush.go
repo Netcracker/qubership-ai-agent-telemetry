@@ -124,7 +124,7 @@ func Flush(s *Outbox, endpoint, token string, tlsConfig *tls.Config, timeout tim
 		if rerr != nil {
 			continue // skip unreadable file; do not fail the whole batch
 		}
-		rec, rerr := eventRecord(ev, time.Now().UTC())
+		rec, rerr := eventRecord(ev, time.Now().UTC(), eventIDForDelivery(ev, n))
 		if rerr != nil {
 			continue
 		}
@@ -146,7 +146,7 @@ func Flush(s *Outbox, endpoint, token string, tlsConfig *tls.Config, timeout tim
 	return len(sentNames), nil
 }
 
-func eventRecord(ev TelemetryEvent, observed time.Time) (otellog.Record, error) {
+func eventRecord(ev TelemetryEvent, observed time.Time, eventID string) (otellog.Record, error) {
 	if err := validateSerializableEvent(ev); err != nil {
 		return otellog.Record{}, err
 	}
@@ -155,6 +155,7 @@ func eventRecord(ev TelemetryEvent, observed time.Time) (otellog.Record, error) 
 	rec.SetObservedTimestamp(observed)
 	rec.SetBody(otellog.StringValue(string(ev.EventName)))
 	rec.AddAttributes(
+		otellog.String("event.id", eventID),
 		otellog.String("agent", ev.Agent),
 		otellog.String("session.id", ev.SessionID),
 		otellog.String("repo.remote", ev.RepoRemote),

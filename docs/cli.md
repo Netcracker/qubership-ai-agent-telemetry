@@ -133,6 +133,8 @@ and returns; delivery happens opportunistically.
 - **Outbox.** One JSON file per buffered event in a per-machine outbox directory. A failed
   send leaves the file in place to retry on a later run. The last delivery error is kept
   beside the outbox and appears in `status --verbose`.
+- **Delivery identity.** Each new outbox entry stores a time-sortable UUID v7. Every retry exports
+  the same value as `event.id`.
 - **Flush lock.** `flush` takes a non-blocking advisory lock (`.flush.lock`) on the
   outbox, so two concurrent runs never send the same event twice. A run that finds the
   lock held skips quietly.
@@ -147,6 +149,7 @@ New outbox writers use schema version `1`, a typed top-level envelope, and one d
 {
   "schema_version": 1,
   "event_name": "command_invoked",
+  "event_id": "019f6aec-41fb-7abc-8def-0123456789ab",
   "agent": "claude",
   "session_id": "session-123",
   "repo_remote": "github.com/netcracker/project",
@@ -160,13 +163,19 @@ New outbox writers use schema version `1`, a typed top-level envelope, and one d
 ```
 
 The envelope rejects unknown fields, duplicate fields, explicit `null` values, unknown versions or event names, and a
-payload that does not match `event_name`. Optional `repo_remote`, MCP server, and MCP duration fields are omitted when
-unavailable.
+payload that does not match `event_name`. The optional `event_id` remains readable for buffered version 1 entries
+created before delivery IDs were introduced. Optional `repo_remote`, MCP server, and MCP duration fields are omitted
+when unavailable.
 
 Readers remain compatible with the unversioned skill shape containing top-level `agent`, `session_id`, optional
 `repo_remote`, `skill`, and `ts`. They map it to `skill_executed` in memory and apply the version 1 validation rules.
 Writers never emit the legacy shape, and no eager migration rewrites existing files. In a mixed batch, invalid or
 unreadable files remain buffered while valid legacy and version 1 files continue to flush in filename order.
+
+Older entries without an ID receive a stable UUID v7 fallback. It combines the persisted event timestamp with a random
+portion derived from the opaque outbox filename. A malformed stored ID is replaced by the same mechanism rather than
+exported. VictoriaLogs does not deduplicate automatically by `event.id`; backend processing or analytics queries must
+use it to collapse repeat deliveries.
 
 `selftest` uses a reserved internal exception: `agent=selftest`, event `skill_executed`, skill `__selftest__`, a
 generated UUID v4 session, and no repository value. No harness adapter can create this pair. The probe bypasses
