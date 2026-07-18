@@ -1,11 +1,13 @@
 # ai-agent-telemetry-configure
 
-This package delivers the optional setup, repair, and verification skill for the
-`ai-agent-telemetry` CLI. The standalone installers handle binary installation,
-configuration, and global hook registration; this package provides agent-guided diagnosis.
+This package delivers the optional setup, testing, troubleshooting, repair,
+and verification skill for the `ai-agent-telemetry` CLI. The standalone
+installers handle binary installation, configuration, and native global hook
+registration. This package teaches an agent how to verify and diagnose that
+installation.
 
-Most users only need the standalone installer. Add this package when you want the agent to guide
-repair or collector CA troubleshooting.
+Install this package when you want the agent to check telemetry on request. It
+does not install telemetry hooks itself.
 
 Supported agents: Codex, Claude Code, and Cursor. An OpenCode adapter is
 follow-up work.
@@ -42,8 +44,9 @@ apm install --target claude
 enough. Codex and other agents that read `AGENTS.md` additionally need
 `apm compile --target codex` to register the trigger.
 
-Restart your agent and ask it to "set up skills telemetry". The bundled setup skill reads
-per-machine configuration and global hook status, repairs missing setup, and verifies delivery.
+Restart your agent and ask it to "test AI agent telemetry." The bundled skill
+checks configuration, native hooks, collector delivery, and a real harness
+event without reading the telemetry token.
 
 ## How it works
 

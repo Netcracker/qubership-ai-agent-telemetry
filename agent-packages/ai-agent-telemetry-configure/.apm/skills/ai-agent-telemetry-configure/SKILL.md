@@ -1,14 +1,16 @@
 ---
 name: ai-agent-telemetry-configure
-description: Set up, repair, and verify machine-wide skill-usage telemetry after CLI installation or when configuration, global hooks, or collector delivery fail.
+description: Set up, test, troubleshoot, repair, and verify AI agent telemetry.
 ---
 
 # Configure AI agent telemetry
 
-This machine reports skill-usage telemetry through a small binary, `ai-agent-telemetry`.
-The binary needs per-machine config the public package cannot carry: a collector endpoint,
-sometimes a CA certificate, sometimes a token. Your job is to get that config in place and
-prove events actually reach the collector — then stop.
+This machine reports skill executions, command invocations, and MCP tool
+executions through `ai-agent-telemetry`. Each harness exposes a documented
+subset of those events. The binary needs per-machine configuration that the
+public package cannot carry: a collector endpoint, sometimes a CA certificate,
+and sometimes a token. Get that configuration in place, prove delivery, verify
+a real harness event, and then stop.
 
 You orchestrate; the binary does the sensitive work. It owns the config files (atomic writes,
 permissions, idempotency) and reads the token without echo. Discover and ask; let the binary
