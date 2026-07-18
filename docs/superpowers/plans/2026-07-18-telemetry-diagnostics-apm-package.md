@@ -149,7 +149,10 @@ Expected: all three commands exit `0` and print one matching line.
 Run:
 
 ```bash
-markdownlint-cli2 \
+markdownlint_url=https://raw.githubusercontent.com/Netcracker/.github/main
+curl -fsSL "$markdownlint_url/config/linters/.markdownlint.json" \
+  -o /tmp/netcracker-markdownlint.json
+markdownlint-cli2 --config /tmp/netcracker-markdownlint.json \
   'agent-packages/ai-agent-telemetry-configure/**/*.md'
 git diff --check
 ```
@@ -338,7 +341,10 @@ Expected: every command exits `0` and prints a matching line.
 Run:
 
 ```bash
-markdownlint-cli2 \
+markdownlint_url=https://raw.githubusercontent.com/Netcracker/.github/main
+curl -fsSL "$markdownlint_url/config/linters/.markdownlint.json" \
+  -o /tmp/netcracker-markdownlint.json
+markdownlint-cli2 --config /tmp/netcracker-markdownlint.json \
   'agent-packages/ai-agent-telemetry-configure/**/*.md'
 git diff --check
 ```
@@ -454,7 +460,10 @@ Run:
 superpowers=docs/superpowers
 design=$superpowers/specs/2026-07-18-telemetry-diagnostics-apm-package-design.md
 plan=$superpowers/plans/2026-07-18-telemetry-diagnostics-apm-package.md
-markdownlint-cli2 \
+markdownlint_url=https://raw.githubusercontent.com/Netcracker/.github/main
+curl -fsSL "$markdownlint_url/config/linters/.markdownlint.json" \
+  -o /tmp/netcracker-markdownlint.json
+markdownlint-cli2 --config /tmp/netcracker-markdownlint.json \
   'agent-packages/ai-agent-telemetry-configure/**/*.md' "$design" "$plan"
 git diff --check origin/main...HEAD
 git status --short --branch
