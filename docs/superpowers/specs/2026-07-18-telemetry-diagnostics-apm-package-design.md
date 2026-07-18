@@ -79,16 +79,29 @@ differs by harness:
 | Codex | Supported | Not supported | Supported |
 | Cursor | Supported | Not supported | Supported |
 
-Claude Code emits its skill event before the skill runs. Codex and Cursor
-detect skill use after the response, so their verification requires a second
-user turn:
+Claude Code emits its skill event before the skill runs. The level 1 `selftest`
+flushes any queued Claude skill event, so it also consumes the local evidence
+before the post-level-1 baseline is recorded. Without telemetry-store read
+access, Claude verification therefore consists of an installed native hook
+and passing transport verification. A server-side query is optional evidence
+for the individual skill event.
 
-1. Record `buffered`, `last_flush_attempt`, and delivery diagnostics.
+Codex and Cursor detect skill use after the response, so their verification
+requires a second user turn:
+
+1. Record `buffered`, `last_flush_attempt`, and delivery diagnostics after the
+   level 1 selftest.
 2. Complete the response that invokes the configure skill so the harness hook
    can run.
 3. On the user's next telemetry-check request, run `status --verbose` again.
-4. Confirm that `last_flush_attempt` advanced, no new delivery error appeared,
-   and the buffer did not grow because of a failed send.
+4. Accept either an advanced `last_flush_attempt` with no new delivery error
+   and no failed-send buffer growth, or a buffer increase above the recorded
+   baseline with no delivery error.
+5. For the buffered outcome, run `selftest` to force the full outbox flush.
+   Require the buffer to return to the recorded baseline, normally zero, with
+   no delivery error.
+6. If neither the timestamp advances nor the buffer grows, treat the event as
+   unobserved and troubleshoot the native hook and full harness restart.
 
 Test MCP telemetry only with a read-only tool that is already configured and
 appropriate for the user's request. Do not mutate external state solely to
@@ -97,8 +110,10 @@ with an available harmless slash command.
 
 If the user already has read access to the telemetry store, offer a server-side
 query as additional evidence. Store access is optional. Do not request store
-credentials or tokens in the conversation. A passing `selftest`, installed
-hooks, and a successful subsequent flush are the baseline success criteria.
+credentials or tokens in the conversation. A passing `selftest` and installed
+hooks are the baseline success criteria. Codex and Cursor additionally require
+one observable follow-up outcome and, when batching queues the event, a
+successful forced flush back to the recorded baseline.
 
 ## Harness guidance
 

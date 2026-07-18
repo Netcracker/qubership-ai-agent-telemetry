@@ -329,14 +329,25 @@ The current `ai-agent-telemetry-configure` invocation is the skill test event.
 Record `buffered`, `last_flush_attempt`, and delivery diagnostics after the
 level 1 selftest.
 
-Claude Code emits the skill event before this skill runs. Codex and Cursor run
-their skill-detection hook after the response, so ask the user to send one more
-telemetry-check message after this response. On that next turn, run
-`status --verbose` again and confirm that:
+Claude Code emits the skill event before this skill runs, and the level 1
+`selftest` flushes any queued Claude skill event. Without telemetry-store read
+access, the available Claude evidence is therefore the installed native hook
+plus passing transport verification. Offer an optional server-side query for
+proof of the individual skill event.
 
-- `last_flush_attempt` advanced;
-- no new delivery error appeared;
-- the buffer did not grow because of a failed send.
+Codex and Cursor run their skill-detection hook after the response, so ask the
+user to send one more telemetry-check message after this response. On that
+next turn, run `status --verbose` again. Accept either outcome:
+
+- `last_flush_attempt` advanced, no new delivery error appeared, and the
+  buffer did not grow because of a failed send; or
+- `buffered` increased above the post-level-1 baseline with no delivery error,
+  which proves that batching queued an event. Run `selftest` to force the full
+  outbox to flush, then require `buffered` to return to the recorded baseline
+  (normally zero) with no delivery error.
+
+If `last_flush_attempt` did not advance and `buffered` did not grow, no harness
+event is observable. Troubleshoot the native hook and full harness restart.
 
 If the user already has read access to the telemetry store, offer a
 server-side query as additional evidence. Do not request store credentials in
@@ -348,5 +359,6 @@ create a telemetry event. Test `command_invoked` only in Claude Code and only
 with an available harmless slash command.
 
 Do not report success until level 1 passes and the native hook is installed.
-For a requested real-event test, do not report that part as complete until the
-follow-up check passes.
+For a requested Codex or Cursor real-event test, do not report that part as
+complete until one follow-up outcome passes. For Claude Code, do not claim
+individual-event proof without a successful store query.
