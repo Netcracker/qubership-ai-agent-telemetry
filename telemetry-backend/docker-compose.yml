@@ -32,6 +32,8 @@ services:
       - SITE_ADDRESS=${SITE_ADDRESS}
       - CADDY_TLS=${CADDY_TLS}
       - INGEST_TOKEN=${INGEST_TOKEN}
+      - DASHBOARD_AUTH_USER=${DASHBOARD_AUTH_USER:?set DASHBOARD_AUTH_USER}
+      - DASHBOARD_AUTH_PASSWORD_HASH=${DASHBOARD_AUTH_PASSWORD_HASH:?set DASHBOARD_AUTH_PASSWORD_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
