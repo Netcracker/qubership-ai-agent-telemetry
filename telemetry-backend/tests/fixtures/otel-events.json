@@ -1,0 +1,152 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "ai-agent-telemetry"}},
+          {"key": "service.version", "value": {"stringValue": "v1.2.0"}},
+          {"key": "machine.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000001"}},
+          {"key": "os.type", "value": {"stringValue": "linux"}}
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {"name": "ai-agent-telemetry"},
+          "logRecords": [
+            {
+              "timeUnixNano": "__TS_1__",
+              "body": {"stringValue": "skill_executed"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0001-7000-8000-000000000001"}},
+                {"key": "agent", "value": {"stringValue": "claude"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000011"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-a"}},
+                {"key": "skill.name", "value": {"stringValue": "review"}}
+              ]
+            },
+            {
+              "timeUnixNano": "__TS_2__",
+              "body": {"stringValue": "skill_executed"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0001-7000-8000-000000000001"}},
+                {"key": "agent", "value": {"stringValue": "claude"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000011"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-a"}},
+                {"key": "skill.name", "value": {"stringValue": "review"}}
+              ]
+            },
+            {
+              "timeUnixNano": "__TS_3__",
+              "body": {"stringValue": "mcp_tool_executed"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0003-7000-8000-000000000003"}},
+                {"key": "agent", "value": {"stringValue": "claude"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000011"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-a"}},
+                {"key": "mcp.server.name", "value": {"stringValue": "github"}},
+                {"key": "mcp.tool.name", "value": {"stringValue": "search"}},
+                {"key": "mcp.outcome", "value": {"stringValue": "succeeded"}},
+                {"key": "mcp.duration_ms", "value": {"intValue": "120"}}
+              ]
+            },
+            {
+              "timeUnixNano": "__TS_4__",
+              "body": {"stringValue": "mcp_tool_executed"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0004-7000-8000-000000000004"}},
+                {"key": "agent", "value": {"stringValue": "claude"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000011"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-a"}},
+                {"key": "mcp.server.name", "value": {"stringValue": "github"}},
+                {"key": "mcp.tool.name", "value": {"stringValue": "search"}},
+                {"key": "mcp.outcome", "value": {"stringValue": "failed"}},
+                {"key": "mcp.duration_ms", "value": {"intValue": "400"}}
+              ]
+            },
+            {
+              "timeUnixNano": "__TS_5__",
+              "body": {"stringValue": "command_invoked"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0006-7000-8000-000000000006"}},
+                {"key": "agent", "value": {"stringValue": "claude"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000011"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-a"}},
+                {"key": "command.name", "value": {"stringValue": "review"}},
+                {"key": "command.source", "value": {"stringValue": "project"}},
+                {"key": "command.expansion_type", "value": {"stringValue": "slash_command"}}
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "ai-agent-telemetry"}},
+          {"key": "service.version", "value": {"stringValue": "v1.2.0"}},
+          {"key": "machine.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000002"}},
+          {"key": "os.type", "value": {"stringValue": "darwin"}}
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {"name": "ai-agent-telemetry"},
+          "logRecords": [
+            {
+              "timeUnixNano": "__TS_6__",
+              "body": {"stringValue": "skill_executed"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0002-7000-8000-000000000002"}},
+                {"key": "agent", "value": {"stringValue": "codex"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000022"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-b"}},
+                {"key": "skill.name", "value": {"stringValue": "testing"}}
+              ]
+            },
+            {
+              "timeUnixNano": "__TS_7__",
+              "body": {"stringValue": "mcp_tool_executed"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0005-7000-8000-000000000005"}},
+                {"key": "agent", "value": {"stringValue": "codex"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000022"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-b"}},
+                {"key": "mcp.server.name", "value": {"stringValue": "github"}},
+                {"key": "mcp.tool.name", "value": {"stringValue": "search"}},
+                {"key": "mcp.outcome", "value": {"stringValue": "unknown"}}
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "ai-agent-telemetry"}},
+          {"key": "service.version", "value": {"stringValue": "v1.1.1"}},
+          {"key": "machine.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000003"}},
+          {"key": "os.type", "value": {"stringValue": "windows"}}
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {"name": "ai-agent-telemetry"},
+          "logRecords": [
+            {
+              "timeUnixNano": "__TS_8__",
+              "body": {"stringValue": "skill_executed"},
+              "attributes": [
+                {"key": "agent", "value": {"stringValue": "cursor"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000033"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-c"}},
+                {"key": "skill.name", "value": {"stringValue": "legacy"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
