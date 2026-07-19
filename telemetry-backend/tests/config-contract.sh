@@ -18,6 +18,7 @@ done
 
 grep -q '@ingest path /v1/logs' "$caddyfile" || fail 'ingest path matcher is missing'
 grep -q '@grafana path /grafana/\\*' "$caddyfile" || fail 'Grafana path matcher is missing'
+grep -q '@dashboard_entry path / /grafana' "$caddyfile" || fail 'dashboard entry redirect matcher is missing'
 grep -q '@vmui path /select/\\*' "$caddyfile" || fail 'VMUI path matcher is missing'
 
 rendered=$(mktemp)

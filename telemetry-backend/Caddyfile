@@ -12,6 +12,9 @@
 	}
 
 	# Grafana dashboards — shared read-only access
+	@dashboard_entry path / /grafana
+	redir @dashboard_entry /grafana/ 308
+
 	@grafana path /grafana/*
 	handle @grafana {
 		basic_auth {

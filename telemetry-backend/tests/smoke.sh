@@ -27,8 +27,17 @@ status() {
   curl --silent --show-error --output /dev/null --write-out '%{http_code}' --cacert "$TEST_CA_CERT" "$@"
 }
 
+location() {
+  curl --silent --show-error --head --cacert "$TEST_CA_CERT" "$@" |
+    awk 'BEGIN { IGNORECASE=1 } /^location:/ { sub(/\r$/, "", $2); print $2 }'
+}
+
 compose ps --status running grafana | grep -q grafana || fail 'Grafana was not started by the fixture stack'
 
+[ "$(status "$TEST_BASE_URL/")" = 308 ] || fail 'root path must redirect to Grafana'
+[ "$(location "$TEST_BASE_URL/")" = /grafana/ ] || fail 'root path must redirect to /grafana/'
+[ "$(status "$TEST_BASE_URL/grafana")" = 308 ] || fail '/grafana must include a trailing slash redirect'
+[ "$(location "$TEST_BASE_URL/grafana")" = /grafana/ ] || fail '/grafana must redirect to /grafana/'
 [ "$(status "$TEST_BASE_URL/grafana/")" = 401 ] || fail 'Grafana must require Basic Auth'
 [ "$(status "$TEST_BASE_URL/select/vmui/")" = 401 ] || fail 'VMUI must require Basic Auth'
 [ "$(status --request POST "$TEST_BASE_URL/v1/logs")" = 401 ] || fail 'ingest must require a bearer token'
