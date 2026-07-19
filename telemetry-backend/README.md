@@ -95,6 +95,7 @@ rate excludes `unknown` outcomes, and latency uses only events that contain `mcp
 
 To test the dashboards from a separate Grafana instance, add a VictoriaLogs datasource with:
 
+- UID: `victorialogs`, which is referenced by the provisioned dashboards;
 - URL: `https://<SITE_ADDRESS>:<HTTPS_PORT>` — do not append `/select/logsql`; omit `:<HTTPS_PORT>` when it is `443`;
 - access mode: Server/Proxy;
 - Basic Auth enabled;
@@ -110,6 +111,7 @@ The equivalent provisioning fields are:
 apiVersion: 1
 datasources:
   - name: Remote VictoriaLogs
+    uid: victorialogs
     type: victoriametrics-logs-datasource
     access: proxy
     url: https://<SITE_ADDRESS>:<HTTPS_PORT>
