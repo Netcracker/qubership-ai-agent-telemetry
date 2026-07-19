@@ -5,6 +5,7 @@ backend_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 compose_file=$backend_dir/docker-compose.yml
 env_file=$backend_dir/.env.example
 caddyfile=$backend_dir/Caddyfile
+readme=$backend_dir/README.md
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -32,5 +33,11 @@ jq -e '.services.grafana.environment.GF_AUTH_ANONYMOUS_ORG_ROLE == "Viewer"' "$r
   fail 'Grafana anonymous Viewer role is missing'
 jq -e '.services.grafana.environment.GF_USERS_ALLOW_SIGN_UP == "false"' "$rendered" >/dev/null ||
   fail 'Grafana user sign-up must be disabled'
+
+for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_USER \
+  GRAFANA_ADMIN_PASSWORD 'grafana cli admin reset-admin-password' 'Executive overview' 'Skill adoption' \
+  'MCP usage and reliability' 'Command adoption' 'Telemetry health'; do
+  grep -Fq "$text" "$readme" || fail "backend README is missing: $text"
+done
 
 printf 'PASS: backend configuration contract\n'

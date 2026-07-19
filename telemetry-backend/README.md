@@ -1,117 +1,147 @@
 # Collector backend
 
-A self-contained observability backend that receives skill-usage telemetry from the
-`ai-agent-telemetry` CLI. Three containers behind a single reverse proxy:
-
-- **Caddy** — TLS termination, bearer-token auth on the ingest path, basic-auth on
-  the query UI. The only service that exposes ports.
-- **OpenTelemetry Collector** — accepts OTLP/HTTP logs from Caddy and forwards them
-  to VictoriaLogs.
-- **VictoriaLogs** — log storage and the built-in query UI (VMUI).
+A self-contained observability backend for `ai-agent-telemetry`. Caddy is the only published service. It routes
+authenticated ingest to OpenTelemetry Collector, dashboards to Grafana, and diagnostic queries to VictoriaLogs.
 
 ```text
 CLI ──OTLP/HTTPS──▸ Caddy ──▸ OTel Collector ──▸ VictoriaLogs
-                      │
-                      └──▸ /select/*  (VMUI, basic-auth)
+                      │                              ▲
+                      ├──▸ /grafana/* ──▸ Grafana ───┘
+                      └──▸ /select/*  ──▸ VMUI
 ```
+
+Grafana is outside the ingest path. Stopping it does not interrupt telemetry delivery.
 
 ## Prerequisites
 
 - Docker Engine 24+ with Compose v2.
-- A machine with a public IP (for Let's Encrypt) or `localhost` (for local
-  development with Caddy's internal CA).
-- Ports 80 and 443 open and unoccupied (80 is needed for the ACME challenge;
-  for local dev you can remap both in `.env`).
+- A machine with a public IP, or `localhost` for local testing with Caddy's internal CA.
+- Ports 80 and 443 open and unoccupied on a server. Local ports can be changed in `.env`.
 
 ## Setup
 
-### 1. Create the environment file
+### 1. Create credentials
+
+Generate separate values for ingest, dashboard viewers, and the Grafana administrator:
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+docker run --rm caddy:2 caddy hash-password --plaintext '<dashboard-password>'
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+The Caddy command prints a bcrypt hash. Keep the original dashboard password for viewers.
+
+### 2. Create the environment file
 
 ```sh
 cp .env.example .env
 ```
 
-Edit `.env` and fill in every value. The fields:
+Set every value in `.env`:
 
 | Variable | Purpose |
 | --- | --- |
-| `SITE_ADDRESS` | Domain Caddy serves. VPS: `<ip-with-dashes>.sslip.io`. Local: `localhost`. |
-| `CADDY_TLS` | TLS mode. VPS: an ACME email (Let's Encrypt). Local: `internal`. |
-| `INGEST_TOKEN` | Shared bearer token the CLI sends with each request. Generate a strong random value (see the comment in `.env.example`). |
-| `VL_RETENTION` | How long VictoriaLogs keeps data (e.g. `30d`). |
-| `HTTP_PORT` | Host port for HTTP (ACME). VPS: `80`. Local: any free port. |
-| `HTTPS_PORT` | Host port for HTTPS (traffic). VPS: `443`. Local: any free port. |
+| `SITE_ADDRESS` | Domain served by Caddy. Use `<ip-with-dashes>.sslip.io` on a VPS or `localhost` locally. |
+| `CADDY_TLS` | ACME email on a VPS or `internal` locally. |
+| `INGEST_TOKEN` | Write-only bearer token used by telemetry clients. |
+| `DASHBOARD_AUTH_USER` | Shared read-only username in front of Grafana and VMUI. |
+| `DASHBOARD_AUTH_PASSWORD_HASH` | Caddy bcrypt hash, enclosed in single quotes to preserve dollar signs. |
+| `GRAFANA_ADMIN_USER` | Grafana administrator username. |
+| `GRAFANA_ADMIN_PASSWORD` | Initial Grafana administrator password. |
+| `VL_RETENTION` | VictoriaLogs retention, such as `30d`. |
+| `HTTP_PORT`, `HTTPS_PORT` | Published Caddy ports. Keep `80` and `443` on a public server. |
 
-### 2. Set the VictoriaLogs UI password
+Do not put the plaintext dashboard password in `.env`. `GRAFANA_ADMIN_PASSWORD` initializes a new `grafana-data`
+volume; changing it later does not change an existing administrator account.
 
-The Caddyfile protects `/select/*` (VMUI) with basic auth. Replace the placeholder
-hash:
-
-```sh
-# Pick a password and generate its bcrypt hash:
-docker run --rm caddy:2 caddy hash-password --plaintext 'YourPassword'
-```
-
-Open `Caddyfile`, find the `basic_auth` block, and paste the hash in place of
-`<REPLACE_WITH_BCRYPT_HASH>`. Change the username from `admin` if you prefer.
-
-### 3. Start the stack
+### 3. Start and verify the stack
 
 ```sh
-docker compose up -d
-```
-
-On a VPS, Caddy obtains a Let's Encrypt certificate automatically (first request
-takes a few seconds while the ACME challenge completes). Locally with
-`CADDY_TLS=internal`, Caddy mints a self-signed certificate for `localhost`
-immediately.
-
-### 4. Verify the stack
-
-Check that all three containers are healthy:
-
-```sh
+docker compose up -d --build
 docker compose ps
 ```
 
-Confirm ingest auth:
+Open these URLs and enter `DASHBOARD_AUTH_USER` plus the original dashboard password:
 
-```bash
-source .env
-curl_flags=(-sS -o /dev/null -w '%{http_code}\n')
-if [ "$CADDY_TLS" = "internal" ]; then
-  curl_flags=(-sk -o /dev/null -w '%{http_code}\n')
-fi
+- `https://<SITE_ADDRESS>/grafana/` for management dashboards;
+- `https://<SITE_ADDRESS>/select/vmui/` for ad hoc VictoriaLogs queries.
 
-# Should return 401 (no token):
-curl "${curl_flags[@]}" "https://$SITE_ADDRESS:$HTTPS_PORT/v1/logs"
+For Grafana administration, open `https://<SITE_ADDRESS>/grafana/login` after passing Caddy Basic Auth, then enter
+`GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`. Normal viewers remain anonymous Viewer users inside Grafana and
+cannot edit provisioned dashboards.
 
-# Should return 200 or 400 (token accepted, no body):
-curl "${curl_flags[@]}" \
-  -H "Authorization: Bearer $INGEST_TOKEN" \
-  "https://$SITE_ADDRESS:$HTTPS_PORT/v1/logs"
+With `CADDY_TLS=internal`, trust the generated Caddy root certificate in the browser or accept the local certificate
+warning. Do not disable certificate verification for production clients.
+
+## Dashboards
+
+The default time range is 30 days, except Telemetry health, which defaults to seven days.
+
+- **Executive overview** — active installations, repositories, sessions, adoption trend, and top usage.
+- **Skill adoption** — reach and frequency by skill, trend, concentration, and repository detail.
+- **MCP usage and reliability** — calls, tools, servers, failure rate, latency, outcomes, and repository detail.
+- **Command adoption** — Claude Code command coverage, trends, sources, and repository detail.
+- **Telemetry health** — delivery-ID coverage, duplicates, duration coverage, versions, harnesses, and missing fields.
+
+Filters expose repositories, harnesses, operating systems, CLI versions, skills, commands, and MCP names where they
+apply. Dashboards never display raw machine, session, or event identifiers.
+
+Event totals use distinct `event.id` values to collapse delivery retries. Legacy records without an ID remain visible
+in active installation and repository counts but cannot be included safely in deduplicated event totals. MCP failure
+rate excludes `unknown` outcomes, and latency uses only events that contain `mcp.duration_ms`.
+
+## Connect another Grafana through Caddy
+
+To test the dashboards from a separate Grafana instance, add a VictoriaLogs datasource with:
+
+- URL: `https://<SITE_ADDRESS>` — do not append `/select/logsql`;
+- access mode: Server/Proxy;
+- Basic Auth enabled;
+- user: the value of `DASHBOARD_AUTH_USER`;
+- password: the original dashboard password, not `DASHBOARD_AUTH_PASSWORD_HASH`.
+
+The datasource appends VictoriaLogs `/select/*` API paths to the base URL. Keep TLS verification enabled. If the
+remote server uses a private CA, add that CA to the Grafana container trust store instead of enabling skip-verify.
+
+The equivalent provisioning fields are:
+
+```yaml
+apiVersion: 1
+datasources:
+  - name: Remote VictoriaLogs
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: https://<SITE_ADDRESS>
+    basicAuth: true
+    basicAuthUser: <DASHBOARD_AUTH_USER>
+    secureJsonData:
+      basicAuthPassword: <dashboard-password>
 ```
-
-Open the VMUI in a browser at `https://<SITE_ADDRESS>/select/vmui/` and log in
-with the username and password you set in step 2.
 
 ## Operations
 
 | Task | Command |
 | --- | --- |
-| Stop the stack (data preserved) | `docker compose down` |
-| Stop and delete all data | `docker compose down -v` |
-| View Caddy logs (TLS, auth) | `docker compose logs -f caddy` |
-| View collector logs | `docker compose logs -f collector` |
-| Query events from the host | `curl -su admin:'<password>' 'https://<SITE_ADDRESS>/select/logsql/query?query=skill_executed&limit=5'` |
+| Run the complete local backend test | `sh tests/smoke.sh` |
+| Stop the stack and preserve data | `docker compose down` |
+| Stop the stack and delete all data | `docker compose down -v` |
+| View Grafana logs | `docker compose logs -f grafana` |
+| View Caddy logs | `docker compose logs -f caddy` |
+| View Collector logs | `docker compose logs -f collector` |
+| Restart Grafana only | `docker compose restart grafana` |
+
+Reset an initialized Grafana administrator password with:
+
+```sh
+docker compose exec grafana grafana cli admin reset-admin-password '<new-admin-password>'
+```
 
 ## Routing
 
-Caddy is the single entry point. All other services are on an internal Docker
-network with no published ports.
-
-| Path | Backend | Auth |
+| Path | Backend | Authentication |
 | --- | --- | --- |
-| `/v1/logs` | OTel Collector `:4318` | `Authorization: Bearer <INGEST_TOKEN>` |
-| `/select/*` | VictoriaLogs `:9428` | Basic auth (VMUI + query API) |
-| everything else | — | `401 unauthorized` |
+| `/v1/logs` | OpenTelemetry Collector `:4318` | `Authorization: Bearer <INGEST_TOKEN>` |
+| `/grafana/*` | Grafana `:3000` | Caddy Basic Auth; anonymous Viewer or Grafana admin session inside |
+| `/select/*` | VictoriaLogs `:9428` | Caddy Basic Auth |
+| everything else | None | `404 not found` |

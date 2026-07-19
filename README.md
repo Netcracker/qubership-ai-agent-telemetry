@@ -141,7 +141,7 @@ Any collector that meets these requirements works. A ready-to-deploy reference s
 - [Agent integration](docs/agent-integration.md) — how each agent's skill runs are caught.
 - [The ai-agent-telemetry CLI](docs/cli.md) — command reference, internals, and file layout.
 - [Collector backend](telemetry-backend/README.md) — deploy the observability stack
-  (Caddy, OTel Collector, VictoriaLogs) on a VM or locally.
+  (Caddy, OTel Collector, VictoriaLogs, and Grafana dashboards) on a VM or locally.
 
 ## Installation
 
