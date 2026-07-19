@@ -48,4 +48,24 @@ assert_query mcp_unknown 1 "$selector _msg:=\"mcp_tool_executed\" | stats count_
 assert_query mcp_failure_rate 0.5 "$selector _msg:=\"mcp_tool_executed\" | stats count_uniq(event.id) if (mcp.outcome:=\"failed\") failed, count_uniq(event.id) if (mcp.outcome:=\"succeeded\") succeeded | math failed / (failed + succeeded) as mcp_failure_rate"
 assert_query mcp_duration_records 2 "$selector _msg:=\"mcp_tool_executed\" | stats count(mcp.duration_ms) mcp_duration_records"
 
+dashboard_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/../grafana/dashboards" && pwd)
+queries=$(mktemp)
+response=$(mktemp)
+trap 'rm -f "$queries" "$response"' EXIT HUP INT TERM
+for dashboard in "$dashboard_dir"/*.json; do
+  jq -r '[.panels[].targets[]?.expr] | unique[]' "$dashboard" >>"$queries"
+done
+sort -u "$queries" -o "$queries"
+while IFS= read -r query; do
+  query=$(printf '%s\n' "$query" | sed 's/\${[^}]*:regex}/.*/g')
+  status=$(curl --silent --show-error --cacert "$TEST_CA_CERT" \
+    --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
+    --output "$response" --write-out '%{http_code}' \
+    --data-urlencode "query=$query" \
+    --data-urlencode "start=$TEST_TIME_FROM" \
+    --data-urlencode "end=$TEST_TIME_TO" \
+    "$TEST_BASE_URL/select/logsql/query")
+  [ "$status" = 200 ] || fail "dashboard query returned HTTP $status: $(cat "$response")"
+done <"$queries"
+
 printf 'PASS: LogsQL query contract\n'

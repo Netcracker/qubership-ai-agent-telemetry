@@ -43,5 +43,14 @@ check_dashboard skill-adoption.json ai-agent-skills \
   'Active installs using skills' 'Active repositories using skills' 'Observed skills' 'Skill events' \
   'Skill adoption trend' 'Top skills by reach and frequency' 'Adoption concentration' \
   'Repository by skill' 'Coverage note'
+check_dashboard mcp-usage.json ai-agent-mcp \
+  'MCP calls' 'Observed tools' 'Observed servers' 'Failure rate' 'p95 latency' 'Outcome trend' \
+  'Top MCP tools' 'Tool reliability' 'Repository detail' 'Coverage note'
+check_dashboard command-adoption.json ai-agent-commands \
+  'Coverage notice' 'Observed commands' 'Active installs' 'Active repositories' 'Command invocations' \
+  'Invocation trend' 'Top commands' 'Command sources' 'Repository detail'
+check_dashboard telemetry-health.json ai-agent-health \
+  'Event ID coverage' 'Machine ID coverage' 'Duplicate delivery rate' 'MCP duration coverage' \
+  'Version adoption' 'Harness and OS coverage' 'MCP outcomes' 'Data quality by version'
 
 printf 'PASS: Grafana dashboard contract\n'
