@@ -59,6 +59,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}, "id": 6,
       "options": {"showHeader": true},
+      "transformations": [{"id": "labelsToFields", "options": {"mode": "columns", "valueLabel": "__name__"}}],
       "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | stats by (skill.name) count_uniq(event.id) events, count_uniq(machine.id) installs, count_uniq(repo.remote) repositories | sort by (events) desc | limit 20", "queryType": "stats", "refId": "A"}],
       "title": "Top skills", "type": "table"
     },
@@ -67,6 +68,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}, "id": 7,
       "options": {"showHeader": true},
+      "transformations": [{"id": "labelsToFields", "options": {"mode": "columns", "valueLabel": "__name__"}}],
       "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"mcp_tool_executed\" | stats by (mcp.server.name, mcp.tool.name) count_uniq(event.id) events, count_uniq(machine.id) installs, count_uniq(repo.remote) repositories | sort by (events) desc | limit 20", "queryType": "stats", "refId": "A"}],
       "title": "Top MCP tools", "type": "table"
     },
@@ -75,6 +77,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 9, "w": 24, "x": 0, "y": 20}, "id": 8,
       "options": {"showHeader": true},
+      "transformations": [{"id": "labelsToFields", "options": {"mode": "columns", "valueLabel": "__name__"}}],
       "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats by (repo.remote) count_uniq(machine.id) active_installs, count_uniq(event.id) if (_msg:=\"skill_executed\") skill_events, count_uniq(event.id) if (_msg:=\"mcp_tool_executed\") mcp_events | sort by (active_installs) desc | limit 50", "queryType": "stats", "refId": "A"}],
       "title": "Repository adoption", "type": "table"
     },

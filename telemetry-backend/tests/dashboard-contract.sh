@@ -30,6 +30,11 @@ check_dashboard() {
       | select(.expr | contains("| stats"))]
     | all(.queryType == "stats" or .queryType == "statsRange")' "$path" >/dev/null ||
     fail "$file must use the numeric stats query type for aggregate queries"
+  jq -e '[.panels[] | select(.type == "table")]
+    | all(any(.transformations[]?;
+        .id == "labelsToFields" and .options.mode == "columns" and .options.valueLabel == "__name__"))' \
+    "$path" >/dev/null ||
+    fail "$file must convert grouped series into table columns"
   jq -e '[.panels[].title, .panels[].fieldConfig.defaults.displayName?]
     | map(select(. != null))
     | all(test("machine\\.id|session\\.id|event\\.id") | not)' "$path" >/dev/null ||

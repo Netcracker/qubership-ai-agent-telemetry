@@ -89,7 +89,7 @@ jq -n --arg from "$time_from_ms" --arg to "$time_to_ms" '{
     },
     {
       datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
-      expr: "{service.name=\"ai-agent-telemetry\"} _msg:=\"skill_executed\" | stats by (skill.name) count_uniq(event.id) events | sort by (events) desc | limit 20",
+      expr: "{service.name=\"ai-agent-telemetry\"} _msg:=\"skill_executed\" | stats by (skill.name) count_uniq(event.id) events, count_uniq(machine.id) installs, count_uniq(repo.remote) repositories | sort by (events) desc | limit 20",
       queryType: "stats", refId: "T", maxDataPoints: 1000, intervalMs: 60000
     },
     {
@@ -123,6 +123,9 @@ for ref_id in T P; do
         | any(.["skill.name"] == "testing"))' "$grafana_response" >/dev/null ||
     fail "the Grafana $ref_id query did not return grouped numeric skill data"
 done
+jq -e '[.results.T.frames[].schema.fields[].labels?.__name__]
+  | contains(["events", "installs", "repositories"])' "$grafana_response" >/dev/null ||
+  fail 'the Grafana table query did not return every requested metric'
 jq -e '(.results.R.frames | [.[].schema.fields[]]
     | any(.name == "Time" and .type == "time"))
   and (.results.R.frames | [.[].schema.fields[]]
