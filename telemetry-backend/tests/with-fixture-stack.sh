@@ -42,7 +42,11 @@ password_hash=$(docker run --rm caddy:2 caddy hash-password --plaintext "$dashbo
   printf '%s\n' 'HTTPS_PORT=18443'
 } >"$env_file"
 
-compose up -d victorialogs collector caddy
+if [ "${TEST_WITH_GRAFANA:-}" = 1 ]; then
+  compose up -d --build
+else
+  compose up -d victorialogs collector caddy
+fi
 
 attempt=0
 while ! compose cp caddy:/data/caddy/pki/authorities/local/root.crt "$ca_cert" >/dev/null 2>&1; do
@@ -107,5 +111,10 @@ export TEST_DASHBOARD_USER="$dashboard_user"
 export TEST_DASHBOARD_PASSWORD="$dashboard_password"
 export TEST_TIME_FROM="$hour"
 export TEST_TIME_TO=$((hour + 3600))
+export TEST_COMPOSE_PROJECT="$project"
+export TEST_ENV_FILE="$env_file"
+export TEST_COMPOSE_FILE="$compose_file"
+export TEST_INGEST_TOKEN="$ingest_token"
+export TEST_RENDERED_FIXTURE="$rendered_fixture"
 
 "$@"
