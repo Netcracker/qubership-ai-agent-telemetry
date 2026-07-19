@@ -23,6 +23,28 @@ services:
       - victorialogs
     restart: unless-stopped
 
+  grafana:
+    build:
+      context: ./grafana
+      dockerfile: Dockerfile
+    environment:
+      - GF_SERVER_ROOT_URL=https://${SITE_ADDRESS}:${HTTPS_PORT:-443}/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:?set GRAFANA_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - backend
+    depends_on:
+      - victorialogs
+    restart: unless-stopped
+
   caddy:
     image: caddy:2
     ports:
@@ -49,5 +71,6 @@ networks:
 
 volumes:
   vlogs-data:
+  grafana-data:
   caddy-data:
   caddy-config:
