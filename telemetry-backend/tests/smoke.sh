@@ -54,6 +54,11 @@ datasource=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
   "$TEST_BASE_URL/grafana/api/datasources/uid/victorialogs")
 [ "$(printf '%s' "$datasource" | jq -r '.type')" = victoriametrics-logs-datasource ] ||
   fail 'VictoriaLogs datasource was not provisioned'
+datasource_health=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
+  --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
+  "$TEST_BASE_URL/grafana/api/datasources/uid/victorialogs/health")
+[ "$(printf '%s' "$datasource_health" | jq -r '.status')" = OK ] ||
+  fail 'VictoriaLogs datasource health check failed'
 
 for uid in ai-agent-executive ai-agent-skills ai-agent-mcp ai-agent-commands ai-agent-health; do
   curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
