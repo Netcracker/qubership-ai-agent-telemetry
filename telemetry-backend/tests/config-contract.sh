@@ -33,6 +33,12 @@ jq -e '.services.grafana.environment.GF_AUTH_ANONYMOUS_ORG_ROLE == "Viewer"' "$r
   fail 'Grafana anonymous Viewer role is missing'
 jq -e '.services.grafana.environment.GF_USERS_ALLOW_SIGN_UP == "false"' "$rendered" >/dev/null ||
   fail 'Grafana user sign-up must be disabled'
+jq -e '.services.grafana.environment.GF_PLUGINS_PREINSTALL_DISABLED == "true"' "$rendered" >/dev/null ||
+  fail 'Grafana default plugin preinstallation must be disabled'
+jq -e '.services.grafana.environment.GF_ANALYTICS_REPORTING_ENABLED == "false"' "$rendered" >/dev/null ||
+  fail 'Grafana anonymous usage reporting must be disabled'
+[ -d "$backend_dir/grafana/provisioning/plugins" ] || fail 'Grafana plugin provisioning directory is missing'
+[ -d "$backend_dir/grafana/provisioning/alerting" ] || fail 'Grafana alerting provisioning directory is missing'
 
 for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_USER \
   GRAFANA_ADMIN_PASSWORD 'grafana cli admin reset-admin-password' 'Executive overview' 'Skill adoption' \

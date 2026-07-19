@@ -64,12 +64,12 @@ docker compose ps
 
 Open these URLs and enter `DASHBOARD_AUTH_USER` plus the original dashboard password:
 
-- `https://<SITE_ADDRESS>/grafana/` for management dashboards;
-- `https://<SITE_ADDRESS>/select/vmui/` for ad hoc VictoriaLogs queries.
+- `https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/` for management dashboards;
+- `https://<SITE_ADDRESS>:<HTTPS_PORT>/select/vmui/` for ad hoc VictoriaLogs queries.
 
-For Grafana administration, open `https://<SITE_ADDRESS>/grafana/login` after passing Caddy Basic Auth, then enter
-`GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`. Normal viewers remain anonymous Viewer users inside Grafana and
-cannot edit provisioned dashboards.
+For Grafana administration, open `https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/login` after passing Caddy Basic Auth,
+then enter `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`. Normal viewers remain anonymous Viewer users inside
+Grafana and cannot edit provisioned dashboards.
 
 With `CADDY_TLS=internal`, trust the generated Caddy root certificate in the browser or accept the local certificate
 warning. Do not disable certificate verification for production clients.
@@ -95,7 +95,7 @@ rate excludes `unknown` outcomes, and latency uses only events that contain `mcp
 
 To test the dashboards from a separate Grafana instance, add a VictoriaLogs datasource with:
 
-- URL: `https://<SITE_ADDRESS>` — do not append `/select/logsql`;
+- URL: `https://<SITE_ADDRESS>:<HTTPS_PORT>` — do not append `/select/logsql`; omit `:<HTTPS_PORT>` when it is `443`;
 - access mode: Server/Proxy;
 - Basic Auth enabled;
 - user: the value of `DASHBOARD_AUTH_USER`;
@@ -112,7 +112,7 @@ datasources:
   - name: Remote VictoriaLogs
     type: victoriametrics-logs-datasource
     access: proxy
-    url: https://<SITE_ADDRESS>
+    url: https://<SITE_ADDRESS>:<HTTPS_PORT>
     basicAuth: true
     basicAuthUser: <DASHBOARD_AUTH_USER>
     secureJsonData:

@@ -15,7 +15,7 @@
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}}, "overrides": []},
       "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}, "id": 1,
       "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
-      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(machine.id) active_installs", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(machine.id) active_installs", "queryType": "stats", "refId": "A"}],
       "title": "Active installs", "type": "stat"
     },
     {
@@ -23,7 +23,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}, "id": 2,
       "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
-      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(repo.remote) active_repositories", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(repo.remote) active_repositories", "queryType": "stats", "refId": "A"}],
       "title": "Active repositories", "type": "stat"
     },
     {
@@ -31,7 +31,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}, "id": 3,
       "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
-      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(agent, session.id) active_sessions", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(agent, session.id) active_sessions", "queryType": "stats", "refId": "A"}],
       "title": "Active sessions", "type": "stat"
     },
     {
@@ -39,7 +39,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}, "id": 4,
       "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
-      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | stats count_uniq(machine.id) installs_using_skills", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | stats count_uniq(machine.id) installs_using_skills", "queryType": "stats", "refId": "A"}],
       "title": "Installs using skills", "type": "stat"
     },
     {
@@ -59,7 +59,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}, "id": 6,
       "options": {"showHeader": true},
-      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | stats by (skill.name) count_uniq(event.id) events, count_uniq(machine.id) installs, count_uniq(repo.remote) repositories | sort by (events) desc | limit 20", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | stats by (skill.name) count_uniq(event.id) events, count_uniq(machine.id) installs, count_uniq(repo.remote) repositories | sort by (events) desc | limit 20", "queryType": "stats", "refId": "A"}],
       "title": "Top skills", "type": "table"
     },
     {
@@ -67,7 +67,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}, "id": 7,
       "options": {"showHeader": true},
-      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"mcp_tool_executed\" | stats by (mcp.server.name, mcp.tool.name) count_uniq(event.id) events, count_uniq(machine.id) installs, count_uniq(repo.remote) repositories | sort by (events) desc | limit 20", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"mcp_tool_executed\" | stats by (mcp.server.name, mcp.tool.name) count_uniq(event.id) events, count_uniq(machine.id) installs, count_uniq(repo.remote) repositories | sort by (events) desc | limit 20", "queryType": "stats", "refId": "A"}],
       "title": "Top MCP tools", "type": "table"
     },
     {
@@ -75,7 +75,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 9, "w": 24, "x": 0, "y": 20}, "id": 8,
       "options": {"showHeader": true},
-      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats by (repo.remote) count_uniq(machine.id) active_installs, count_uniq(event.id) if (_msg:=\"skill_executed\") skill_events, count_uniq(event.id) if (_msg:=\"mcp_tool_executed\") mcp_events | sort by (active_installs) desc | limit 50", "queryType": "instant", "refId": "A"}],
+      "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats by (repo.remote) count_uniq(machine.id) active_installs, count_uniq(event.id) if (_msg:=\"skill_executed\") skill_events, count_uniq(event.id) if (_msg:=\"mcp_tool_executed\") mcp_events | sort by (active_installs) desc | limit 50", "queryType": "stats", "refId": "A"}],
       "title": "Repository adoption", "type": "table"
     },
     {

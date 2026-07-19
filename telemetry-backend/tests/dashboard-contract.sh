@@ -26,6 +26,10 @@ check_dashboard() {
   jq -e '[.panels[] | select(.type != "text") | .targets[]?]
     | all(.expr | contains("service.name=\"ai-agent-telemetry\""))' "$path" >/dev/null ||
     fail "$file contains a query without the service selector"
+  jq -e '[.panels[] | select(.type != "text") | .targets[]?
+      | select(.expr | contains("| stats"))]
+    | all(.queryType == "stats" or .queryType == "statsRange")' "$path" >/dev/null ||
+    fail "$file must use the numeric stats query type for aggregate queries"
   jq -e '[.panels[].title, .panels[].fieldConfig.defaults.displayName?]
     | map(select(. != null))
     | all(test("machine\\.id|session\\.id|event\\.id") | not)' "$path" >/dev/null ||

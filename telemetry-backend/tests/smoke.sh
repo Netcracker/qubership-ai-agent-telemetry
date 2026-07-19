@@ -67,12 +67,67 @@ for uid in ai-agent-executive ai-agent-skills ai-agent-mcp ai-agent-commands ai-
 done
 
 cookie_jar=$(mktemp)
-trap 'rm -f "$cookie_jar"' EXIT HUP INT TERM
+grafana_query=$(mktemp)
+grafana_response=$(mktemp)
+trap 'rm -f "$cookie_jar" "$grafana_query" "$grafana_response"' EXIT HUP INT TERM
 login_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --cacert "$TEST_CA_CERT" --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
   --cookie-jar "$cookie_jar" --header 'Content-Type: application/json' \
   --data '{"user":"admin","password":"fixture-admin-password"}' "$TEST_BASE_URL/grafana/login")
 [ "$login_status" = 200 ] || fail "Grafana administrator login failed (HTTP $login_status)"
+
+time_from_ms=$((TEST_TIME_FROM * 1000))
+time_to_ms=$((TEST_TIME_TO * 1000))
+jq -n --arg from "$time_from_ms" --arg to "$time_to_ms" '{
+  from: $from,
+  to: $to,
+  queries: [
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} | stats count_uniq(machine.id) active_installs",
+      queryType: "stats", refId: "S", maxDataPoints: 1000, intervalMs: 60000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} _msg:=\"skill_executed\" | stats by (skill.name) count_uniq(event.id) events | sort by (events) desc | limit 20",
+      queryType: "stats", refId: "T", maxDataPoints: 1000, intervalMs: 60000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} _msg:=\"skill_executed\" | stats by (skill.name) count_uniq(event.id) events",
+      queryType: "stats", refId: "P", maxDataPoints: 1000, intervalMs: 60000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} _msg:=\"skill_executed\" | stats by (_time:1h) count_uniq(event.id) events",
+      queryType: "statsRange", refId: "R", maxDataPoints: 1000, intervalMs: 60000
+    }
+  ]
+}' >"$grafana_query"
+curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
+  --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
+  --header 'Content-Type: application/json' --data-binary "@$grafana_query" \
+  "$TEST_BASE_URL/grafana/api/ds/query" >"$grafana_response"
+jq -e '.results | [.S, .T, .P, .R] | all(.status == 200 and (.frames | length > 0))' \
+  "$grafana_response" >/dev/null || fail 'Grafana datasource queries did not return frames'
+jq -e '[.results[].frames[].schema.fields[].name] | index("Line") == null' \
+  "$grafana_response" >/dev/null || fail 'an aggregate Grafana query returned a raw log frame'
+jq -e '.results.S.frames[0]
+  | (.schema.fields | any(.name == "Value" and .type == "number"))
+    and (.data.values[1][0] == 3)' "$grafana_response" >/dev/null ||
+  fail 'the Grafana stat query did not return active_installs=3 as numeric data'
+for ref_id in T P; do
+  jq -e --arg ref_id "$ref_id" '
+    (.results[$ref_id].frames | [.[].schema.fields[]] | any(.type == "number"))
+      and (.results[$ref_id].frames | [.[].schema.fields[].labels?]
+        | any(.["skill.name"] == "testing"))' "$grafana_response" >/dev/null ||
+    fail "the Grafana $ref_id query did not return grouped numeric skill data"
+done
+jq -e '(.results.R.frames | [.[].schema.fields[]]
+    | any(.name == "Time" and .type == "time"))
+  and (.results.R.frames | [.[].schema.fields[]]
+    | any(.name == "Value" and .type == "number"))' "$grafana_response" >/dev/null ||
+  fail 'the Grafana range query did not return a numeric time series'
 
 sh "$script_dir/query-contract.sh"
 sh "$script_dir/dashboard-contract.sh"
