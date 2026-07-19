@@ -72,10 +72,10 @@ services:
     restart: unless-stopped
 
 networks:
-  backend:
+  backend: {}
 
 volumes:
-  vlogs-data:
-  grafana-data:
-  caddy-data:
-  caddy-config:
+  vlogs-data: {}
+  grafana-data: {}
+  caddy-data: {}
+  caddy-config: {}
