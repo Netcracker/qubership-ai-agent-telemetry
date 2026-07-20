@@ -262,6 +262,12 @@ hook definition and hash, fully restart Codex and approve the telemetry hook if 
 
 ### Legacy APM hook package
 
-Existing repositories that already consume the `ai-agent-telemetry` APM hook package may keep
-using it. The machine-wide setup above is the default for new installations. The compatibility
-package remains available while existing consumers migrate.
+Before it writes CLI-managed hooks, the CLI checks the global APM manifest at `~/.apm/apm.yml` for this exact legacy
+dependency: `Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry`. If it finds the dependency, it
+asks APM to uninstall it globally. Cleanup is best effort: a failure produces a warning, but the CLI still
+canonicalizes the requested native hooks. The command succeeds when configuration and hook installation succeed.
+
+Automatic cleanup reads only the global APM manifest. It does not edit project manifests. Existing repositories that
+consume the `ai-agent-telemetry` APM hook package may keep using it while they migrate. The compatibility package
+remains available for those repository-local consumers, while the machine-wide setup above is the default for new
+installations.

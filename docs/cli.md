@@ -73,6 +73,14 @@ ai-agent-telemetry configure --hooks=claude,codex
 ai-agent-telemetry hooks install --target=claude,codex
 ```
 
+Before either command installs a nonempty set of CLI-managed hooks, the CLI reads `~/.apm/apm.yml`. If the manifest
+contains the exact legacy telemetry hook package dependency, the CLI asks APM to remove that global dependency. It
+does not edit repository-local APM manifests or remove the retained compatibility package from a project.
+
+Cleanup is best effort. If the global manifest cannot be read or parsed, APM is unavailable, or the uninstall command
+fails, the CLI writes a warning to `stderr` and continues canonicalizing every requested native hook. A cleanup warning
+does not affect the exit code: the command succeeds when configuration and hook installation succeed.
+
 Hook updates preserve unrelated top-level fields, events, matcher groups, handlers, and unknown
 extension fields. They canonicalize only recognized telemetry entries and remove duplicate owned
 entries. Repeating an installation produces no further JSON changes.
@@ -80,6 +88,10 @@ entries. Repeating an installation produces no further JSON changes.
 If a file contains malformed JSON or an incompatible native structure, the CLI leaves it
 byte-for-byte unchanged and reports that target as failed. It continues with the other selected
 targets and returns a nonzero exit code after reporting every failure.
+
+`configure` writes machine configuration before it attempts cleanup and hook installation. A cleanup warning does not
+roll back the configuration. If a later hook installation fails, the configuration remains written and `configure`
+returns exit code `1`.
 
 `status` reports `installed`, `missing`, or `invalid` for each harness. It verifies registration
 and required policy files, not execution or trust. `selftest` verifies collector delivery, not hook

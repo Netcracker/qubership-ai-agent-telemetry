@@ -104,7 +104,9 @@ component-specific operations:
   installer does not discard them.
 
 The telemetry component installs the binary first, then configures hooks through `ai-agent-telemetry`. It therefore
-requires a telemetry release that supports CLI-managed global hooks.
+requires a telemetry release that supports CLI-managed global hooks. The telemetry binary owns best-effort cleanup of
+the legacy global APM telemetry dependency before it installs those hooks. This cleanup runs whenever the telemetry
+component installs hooks and does not depend on selecting the `apm` component.
 
 ## Git and Java prerequisites
 
