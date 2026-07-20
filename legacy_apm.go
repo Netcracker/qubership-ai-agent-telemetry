@@ -52,6 +52,9 @@ func cleanupLegacyTelemetryAPMWith(
 	lookPath func(string) (string, error),
 	runCommand func(string, ...string) (string, error),
 ) {
+	if strings.TrimSpace(home) == "" {
+		return
+	}
 	manifestPath := filepath.Join(home, ".apm", "apm.yml")
 	data, err := os.ReadFile(manifestPath)
 	if errors.Is(err, os.ErrNotExist) {

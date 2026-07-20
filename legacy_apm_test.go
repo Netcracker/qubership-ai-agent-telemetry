@@ -58,6 +58,48 @@ func TestCleanupLegacyTelemetryAPMWithMissingManifestDoesNothing(t *testing.T) {
 	}
 }
 
+func TestCleanupLegacyTelemetryAPMWithBlankHomeDoesNothing(t *testing.T) {
+	workingDir := t.TempDir()
+	t.Chdir(workingDir)
+	for _, relativeHome := range []string{"", "   "} {
+		dir := filepath.Join(relativeHome, ".apm")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		manifest := filepath.Join(dir, "apm.yml")
+		contents := []byte("dependencies:\n  - " + legacyTelemetryAPMPackage + "\n")
+		if err := os.WriteFile(manifest, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name string
+		home string
+	}{
+		{name: "empty", home: ""},
+		{name: "whitespace", home: "   "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var lookedUp, ran bool
+			var warnings strings.Builder
+			cleanupLegacyTelemetryAPMWith(
+				tt.home,
+				&warnings,
+				func(string) (string, error) { lookedUp = true; return "apm", nil },
+				func(string, ...string) (string, error) { ran = true; return "", nil },
+			)
+			if lookedUp || ran {
+				t.Fatalf("lookedUp = %v, ran = %v, want neither", lookedUp, ran)
+			}
+			if warnings.Len() != 0 {
+				t.Fatalf("warnings = %q, want none", warnings.String())
+			}
+		})
+	}
+}
+
 func TestCleanupLegacyTelemetryAPMWithAbsentDependencyDoesNothing(t *testing.T) {
 	home := writeGlobalAPMManifest(t, "dependencies:\n  - another/package\n")
 	var lookedUp, ran bool
