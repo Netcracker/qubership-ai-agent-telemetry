@@ -14,7 +14,6 @@ project=telemetry-dashboard-contract-$$
 env_file=$tmp_dir/backend.env
 ca_cert=$tmp_dir/caddy-root.crt
 rendered_fixture=$tmp_dir/otel-events.json
-# Deliberately collides with GRAFANA_ADMIN_USER to prove the auth-proxy prefix prevents privilege escalation.
 dashboard_user='admin'
 dashboard_password='fixture-viewer-password'
 ingest_token='fixture-ingest-token'
@@ -39,7 +38,6 @@ password_hash=$(docker run --rm caddy:2 caddy hash-password --plaintext "$dashbo
   printf 'INGEST_TOKEN=%s\n' "$ingest_token"
   printf 'DASHBOARD_AUTH_USER=%s\n' "$dashboard_user"
   printf "DASHBOARD_AUTH_PASSWORD_HASH='%s'\n" "$password_hash"
-  printf '%s\n' 'GRAFANA_ADMIN_USER=admin'
   printf '%s\n' 'GRAFANA_ADMIN_PASSWORD=fixture-admin-password'
   printf '%s\n' 'VL_RETENTION=30d'
   printf 'HTTP_PORT=%s\n' "$http_port"

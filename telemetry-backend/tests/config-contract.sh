@@ -14,14 +14,21 @@ fail() {
   exit 1
 }
 
-for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD; do
+for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD; do
   grep -q "^$name=" "$env_file" || fail "$name is missing from .env.example"
 done
+if grep -q '^GRAFANA_ADMIN_USER=' "$env_file"; then
+  fail 'Grafana administrator username must not be configurable'
+fi
 
 grep -q '@ingest path /v1/logs' "$caddyfile" || fail 'ingest path matcher is missing'
 grep -q '@grafana path /grafana/\\*' "$caddyfile" || fail 'Grafana path matcher is missing'
 grep -q '@grafana_login {' "$caddyfile" || fail 'Grafana login matcher is missing'
 grep -q 'path /grafana/login' "$caddyfile" || fail 'Grafana login path is missing'
+grep -q '@grafana_native_login {' "$caddyfile" || fail 'Grafana native login matcher is missing'
+if ! sed -n '/@grafana_native_login {/,/}/p' "$caddyfile" | grep -q 'method POST'; then
+  fail 'Grafana native login POST matcher is missing'
+fi
 grep -q '@dashboard_entry path / /grafana' "$caddyfile" || fail 'dashboard entry redirect matcher is missing'
 grep -q '@vmui path /select/\\*' "$caddyfile" || fail 'VMUI path matcher is missing'
 grep -q 'header_up X-WEBAUTH-USER viewer-{http.auth.user.id}' "$caddyfile" ||
@@ -38,6 +45,8 @@ jq -e '(.services.grafana.build.context // "") | endswith("/telemetry-backend/gr
 jq -e '.services.grafana.ports == null' "$rendered" >/dev/null || fail 'Grafana must not publish ports'
 jq -e '.services.grafana.environment.GF_AUTH_ANONYMOUS_ENABLED == "false"' "$rendered" >/dev/null ||
   fail 'Grafana anonymous access must be disabled'
+jq -e '.services.grafana.environment.GF_SECURITY_ADMIN_USER == "admin"' "$rendered" >/dev/null ||
+  fail 'Grafana administrator username must be fixed to admin'
 jq -e '.services.grafana.environment.GF_AUTH_PROXY_ENABLED == "true"' "$rendered" >/dev/null ||
   fail 'Grafana auth proxy must be enabled'
 jq -e '.services.grafana.environment.GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN == "true"' "$rendered" >/dev/null ||
@@ -80,10 +89,11 @@ for panel_spec in \
     fail "$panel_title must return and format only $percent_field with semantic thresholds"
 done
 
-for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_USER \
-  GRAFANA_ADMIN_PASSWORD 'grafana cli admin reset-admin-password' 'Executive overview' 'Skill adoption' \
+for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD \
+  "administrator username is \`admin\`" 'Upgrade an existing stack' 'docker compose config' \
+  'com.docker.compose.volume=grafana-data' "Do not run \`docker compose down -v\`" \
+  'grafana cli admin reset-admin-password' 'Executive overview' 'Skill adoption' \
   'MCP usage and reliability' 'Command adoption' 'Telemetry health'; do
   grep -Fq "$text" "$readme" || fail "backend README is missing: $text"
 done
-
 printf 'PASS: backend configuration contract\n'

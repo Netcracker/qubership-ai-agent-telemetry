@@ -47,7 +47,6 @@ Set every value in `.env`:
 | `INGEST_TOKEN` | Write-only bearer token used by telemetry clients. |
 | `DASHBOARD_AUTH_USER` | Shared read-only username in front of Grafana and VMUI. |
 | `DASHBOARD_AUTH_PASSWORD_HASH` | Caddy bcrypt hash, enclosed in single quotes to preserve dollar signs. |
-| `GRAFANA_ADMIN_USER` | Grafana administrator username. |
 | `GRAFANA_ADMIN_PASSWORD` | Initial Grafana administrator password. |
 | `VL_RETENTION` | VictoriaLogs retention, such as `30d`. |
 | `HTTP_PORT`, `HTTPS_PORT` | Published Caddy ports. Keep `80` and `443` on a public server. |
@@ -70,11 +69,49 @@ Auth credentials for a login cookie, so the browser prompts once per Grafana ses
 
 For Grafana administration, open
 `https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/login?disableAutoLogin=true` after passing Caddy Basic Auth. Then enter
-`GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`. The shared dashboard user receives the Viewer role under an isolated
-Grafana identity and cannot edit provisioned dashboards, even if both configured usernames happen to match.
+`admin` and `GRAFANA_ADMIN_PASSWORD`. The Grafana administrator username is `admin`. The shared dashboard user receives
+the Viewer role under an isolated Grafana identity and cannot edit provisioned dashboards.
 
 With `CADDY_TLS=internal`, trust the generated Caddy root certificate in the browser or accept the local certificate
 warning. Do not disable certificate verification for production clients.
+
+## Upgrade an existing stack
+
+Add the dashboard credentials and Grafana administrator password to an existing `.env` before updating the stack:
+
+```dotenv
+DASHBOARD_AUTH_USER=viewer
+DASHBOARD_AUTH_PASSWORD_HASH='<caddy-bcrypt-hash>'
+GRAFANA_ADMIN_PASSWORD=<new-admin-password>
+```
+
+Generate the hash as described in [Create credentials](#1-create-credentials), and remove an obsolete
+`GRAFANA_ADMIN_USER` entry from `.env`. If an earlier preview created `grafana-data` with any administrator username
+other than `admin`, recreate only that volume before updating:
+
+```sh
+docker compose down
+docker volume ls --filter label=com.docker.compose.volume=grafana-data
+docker volume rm <grafana-data-volume>
+docker compose up -d --build
+```
+
+Select the volume that belongs to this Compose project. Grafana restores provisioned dashboards and the datasource,
+but local Grafana changes are lost. Do not run `docker compose down -v`: it also deletes the VictoriaLogs data volume.
+
+Validate and update the stack:
+
+```sh
+docker compose config
+docker compose up -d --build
+```
+
+The administrator username is `admin`. `GRAFANA_ADMIN_PASSWORD` initializes only a new `grafana-data` volume. If the
+volume already uses `admin`, reset its password after the update:
+
+```sh
+docker compose exec grafana grafana cli admin reset-admin-password '<new-admin-password>'
+```
 
 ## Dashboards
 

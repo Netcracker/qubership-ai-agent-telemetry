@@ -49,6 +49,8 @@ done
 [ "$(location "$TEST_BASE_URL/grafana")" = /grafana/ ] || fail '/grafana must redirect to /grafana/'
 [ "$(status "$TEST_BASE_URL/grafana/")" = 302 ] || fail 'Grafana must redirect unauthenticated users to login'
 [ "$(status "$TEST_BASE_URL/grafana/login")" = 401 ] || fail 'Grafana login must require Basic Auth'
+[ "$(status --request POST --header 'Content-Type: application/json' --data '{}' \
+  "$TEST_BASE_URL/grafana/login")" = 401 ] || fail 'Grafana native login POST must require Basic Auth'
 [ "$(status "$TEST_BASE_URL/select/vmui/")" = 401 ] || fail 'VMUI must require Basic Auth'
 [ "$(status --request POST "$TEST_BASE_URL/v1/logs")" = 401 ] || fail 'ingest must require a bearer token'
 [ "$(status --header "Authorization: Bearer $TEST_INGEST_TOKEN" "$TEST_BASE_URL/unknown")" = 404 ] ||
@@ -121,7 +123,8 @@ trap 'rm -f "$challenge_headers" "$viewer_cookie" "$cookie_jar" "$grafana_query"
   "$TEST_BASE_URL/grafana/login?disableAutoLogin=true")" = 200 ] ||
   fail 'Grafana administrator login page is unavailable'
 login_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-  --cacert "$TEST_CA_CERT" --cookie-jar "$cookie_jar" --header 'Content-Type: application/json' \
+  --cacert "$TEST_CA_CERT" --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
+  --cookie-jar "$cookie_jar" --header 'Content-Type: application/json' \
   --data '{"user":"admin","password":"fixture-admin-password"}' "$TEST_BASE_URL/grafana/login")
 [ "$login_status" = 200 ] || fail "Grafana administrator login failed (HTTP $login_status)"
 admin_user=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" --cookie "$cookie_jar" \
