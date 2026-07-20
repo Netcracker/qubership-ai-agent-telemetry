@@ -37,10 +37,13 @@ var commandHelpEntries = []commandHelpEntry{
 	},
 	{
 		Name:    "hooks",
-		Summary: "Install or repair global harness hooks without changing collector settings.",
-		Usage:   []string{"ai-agent-telemetry hooks install [--target=<list>]"},
+		Summary: "Install, repair, or remove global harness hooks without changing collector settings.",
+		Usage: []string{
+			"ai-agent-telemetry hooks install [--target=<list>]",
+			"ai-agent-telemetry hooks uninstall [--target=<list>]",
+		},
 		Options: []helpOption{
-			{Syntax: "--target=<list>", Description: "Install a comma-separated subset of claude,codex,cursor (default: all)."},
+			{Syntax: "--target=<list>", Description: "Operate on a comma-separated subset of claude,codex,cursor (default: all)."},
 		},
 	},
 	{
@@ -170,7 +173,8 @@ func routeHelp(args []string) (output string, code int, handled bool) {
 		help, _ := commandHelp(args[0])
 		return fmt.Sprintf("%s help does not accept arguments\n\n%s", args[0], help), 2, true
 	}
-	if args[0] == "hooks" && len(args) >= 3 && args[1] == "install" && isHelpToken(args[2]) {
+	if args[0] == "hooks" && len(args) >= 3 &&
+		(args[1] == "install" || args[1] == "uninstall") && isHelpToken(args[2]) {
 		help, _ := commandHelp("hooks")
 		if len(args) == 3 {
 			return help, 0, true

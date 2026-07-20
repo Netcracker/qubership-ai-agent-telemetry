@@ -302,22 +302,29 @@ func TestParseHookTargetsNamesInvalidValue(t *testing.T) {
 
 func TestParseHooksCommand(t *testing.T) {
 	tests := []struct {
-		name    string
-		args    []string
-		want    []hookTarget
-		wantErr bool
+		name       string
+		args       []string
+		wantAction hooksAction
+		want       []hookTarget
+		wantErr    bool
 	}{
-		{name: "install all", args: []string{"install"}, want: allHookTargets},
-		{name: "install subset", args: []string{"install", "--target=cursor,claude"}, want: []hookTarget{hookClaude, hookCursor}},
+		{name: "install all", args: []string{"install"}, wantAction: hooksInstall, want: allHookTargets},
+		{name: "uninstall all", args: []string{"uninstall"}, wantAction: hooksUninstall, want: allHookTargets},
+		{name: "install subset", args: []string{"install", "--target=cursor,claude"}, wantAction: hooksInstall, want: []hookTarget{hookClaude, hookCursor}},
+		{name: "uninstall subset", args: []string{"uninstall", "--target=claude,cursor"}, wantAction: hooksUninstall, want: []hookTarget{hookClaude, hookCursor}},
 		{name: "missing action", wantErr: true},
 		{name: "unknown action", args: []string{"remove"}, wantErr: true},
 		{name: "unknown flag", args: []string{"install", "--bogus"}, wantErr: true},
+		{name: "unknown uninstall flag", args: []string{"uninstall", "--bogus"}, wantErr: true},
 		{name: "unknown target", args: []string{"install", "--target=windsurf"}, wantErr: true},
 		{name: "explicit all target", args: []string{"install", "--target=all"}, wantErr: true},
 		{name: "explicit no targets", args: []string{"install", "--target=none"}, wantErr: true},
+		{name: "uninstall explicit all target", args: []string{"uninstall", "--target=all"}, wantErr: true},
+		{name: "uninstall explicit no targets", args: []string{"uninstall", "--target=none"}, wantErr: true},
 		{name: "empty explicit target", args: []string{"install", "--target="}, wantErr: true},
 		{name: "empty target before valid target", args: []string{"install", "--target=", "--target=codex"}, wantErr: true},
 		{name: "duplicate target flag", args: []string{"install", "--target=codex", "--target=claude"}, wantErr: true},
+		{name: "duplicate uninstall target flag", args: []string{"uninstall", "--target=codex", "--target=claude"}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -325,8 +332,35 @@ func TestParseHooksCommand(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("targets = %v, want %v", got, tt.want)
+			if tt.wantErr {
+				return
+			}
+			if got.Action != tt.wantAction {
+				t.Fatalf("action = %q, want %q", got.Action, tt.wantAction)
+			}
+			if !reflect.DeepEqual(got.Targets, tt.want) {
+				t.Fatalf("targets = %v, want %v", got.Targets, tt.want)
+			}
+		})
+	}
+}
+
+func TestFullHookTargetSetUsesCanonicalMembership(t *testing.T) {
+	tests := []struct {
+		name    string
+		targets []hookTarget
+		want    bool
+	}{
+		{name: "canonical order", targets: allHookTargets, want: true},
+		{name: "different order", targets: []hookTarget{hookCursor, hookClaude, hookCodex}, want: true},
+		{name: "subset", targets: []hookTarget{hookClaude, hookCursor}},
+		{name: "duplicate replaces member", targets: []hookTarget{hookClaude, hookClaude, hookCursor}},
+		{name: "unknown replaces member", targets: []hookTarget{hookClaude, hookCodex, hookTarget("windsurf")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fullHookTargetSet(tt.targets); got != tt.want {
+				t.Fatalf("fullHookTargetSet(%v) = %v, want %v", tt.targets, got, tt.want)
 			}
 		})
 	}

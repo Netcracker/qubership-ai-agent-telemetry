@@ -428,32 +428,63 @@ func parseHookTargets(raw string) ([]hookTarget, error) {
 	return targets, nil
 }
 
-func parseHooksCommand(args []string) ([]hookTarget, error) {
+type hooksAction string
+
+const (
+	hooksInstall   hooksAction = "install"
+	hooksUninstall hooksAction = "uninstall"
+)
+
+type hooksCommand struct {
+	Action  hooksAction
+	Targets []hookTarget
+}
+
+func parseHooksCommand(args []string) (hooksCommand, error) {
 	if len(args) == 0 {
-		return nil, fmt.Errorf("missing hooks action")
+		return hooksCommand{}, fmt.Errorf("missing hooks action")
 	}
-	if args[0] != "install" {
-		return nil, fmt.Errorf("unknown hooks action %q", args[0])
+	action := hooksAction(args[0])
+	if action != hooksInstall && action != hooksUninstall {
+		return hooksCommand{}, fmt.Errorf("unknown hooks action %q", args[0])
 	}
 
 	rawTargets := ""
-	targetFlagSet := false
+	targetSet := false
 	for _, arg := range args[1:] {
-		if strings.HasPrefix(arg, "--target=") {
-			if targetFlagSet {
-				return nil, fmt.Errorf("hook target flag may be specified only once")
-			}
-			rawTargets = strings.TrimPrefix(arg, "--target=")
-			if rawTargets == "" {
-				return nil, fmt.Errorf("hook target value must not be empty")
-			}
-			targetFlagSet = true
-			continue
+		if !strings.HasPrefix(arg, "--target=") {
+			return hooksCommand{}, fmt.Errorf("unknown hooks %s flag %q", action, arg)
 		}
-		return nil, fmt.Errorf("unknown hooks install flag %q", arg)
+		if targetSet {
+			return hooksCommand{}, fmt.Errorf("hook target flag may be specified only once")
+		}
+		rawTargets = strings.TrimPrefix(arg, "--target=")
+		if rawTargets == "" {
+			return hooksCommand{}, fmt.Errorf("hook target value must not be empty")
+		}
+		targetSet = true
 	}
-	if targetFlagSet && (rawTargets == "all" || rawTargets == "none") {
-		return nil, fmt.Errorf("hook target %q is not valid here; omit --target to install all hooks", rawTargets)
+	if targetSet && (rawTargets == "all" || rawTargets == "none") {
+		return hooksCommand{}, fmt.Errorf(
+			"hook target %q is not valid here; omit --target to process all hooks", rawTargets,
+		)
 	}
-	return parseHookTargets(rawTargets)
+	targets, err := parseHookTargets(rawTargets)
+	return hooksCommand{Action: action, Targets: targets}, err
+}
+
+func fullHookTargetSet(targets []hookTarget) bool {
+	if len(targets) != len(allHookTargets) {
+		return false
+	}
+	requested := make(map[hookTarget]bool, len(targets))
+	for _, target := range targets {
+		requested[target] = true
+	}
+	for _, target := range allHookTargets {
+		if !requested[target] {
+			return false
+		}
+	}
+	return true
 }

@@ -94,7 +94,7 @@ func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 		}
 		return 0
 	case "hooks":
-		targets, err := parseHooksCommand(args[1:])
+		command, err := parseHooksCommand(args[1:])
 		if err != nil {
 			help, _ := commandHelp("hooks")
 			stdout("hooks: " + err.Error() + "\n\n" + help)
@@ -105,30 +105,56 @@ func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 			stdout("hooks: no user home directory available\n")
 			return 1
 		}
-		results, err := installManagedHooks(home, targets, stderr)
-		if err != nil {
-			stdout("hooks: " + err.Error() + "\n")
-			return 1
-		}
-		for _, result := range results {
-			if result.Err != nil {
-				stdout(fmt.Sprintf("%s: failed: %s\n", result.Target, result.Path))
-				continue
+		switch command.Action {
+		case hooksInstall:
+			results, err := installManagedHooks(home, command.Targets, stderr)
+			if err != nil {
+				stdout("hooks: " + err.Error() + "\n")
+				return 1
 			}
-			state := "unchanged"
-			if result.Changed {
-				state = "installed"
+			for _, result := range results {
+				if result.Err != nil {
+					stdout(fmt.Sprintf("%s: failed: %s\n", result.Target, result.Path))
+					continue
+				}
+				state := "unchanged"
+				if result.Changed {
+					state = "installed"
+				}
+				stdout(fmt.Sprintf("%s: %s: %s\n", result.Target, state, result.Path))
 			}
-			stdout(fmt.Sprintf("%s: %s: %s\n", result.Target, state, result.Path))
+			if err := hookInstallError(results); err != nil {
+				stdout("hooks: " + err.Error() + "\n")
+				return 1
+			}
+			if codexHookChanged(results) {
+				stdout("restart Codex and approve `ai-agent-telemetry ingest --agent=codex` if prompted\n")
+			}
+			return 0
+		case hooksUninstall:
+			results := uninstallHooks(home, command.Targets, stderr)
+			for _, result := range results {
+				state := "unchanged"
+				if result.Err != nil {
+					state = "failed"
+				} else if result.Changed {
+					state = "removed"
+				}
+				stdout(fmt.Sprintf("%s: %s: %s\n", result.Target, state, result.Path))
+			}
+			if err := hookInstallError(results); err != nil {
+				stdout("hooks: " + err.Error() + "\n")
+				return 1
+			}
+			if fullHookTargetSet(command.Targets) {
+				if err := writeHookReceipt(home); err != nil {
+					_, _ = fmt.Fprintln(stderr, "hooks: write uninstall receipt:", err)
+					return 1
+				}
+			}
+			return 0
 		}
-		if err := hookInstallError(results); err != nil {
-			stdout("hooks: " + err.Error() + "\n")
-			return 1
-		}
-		if codexHookChanged(results) {
-			stdout("restart Codex and approve `ai-agent-telemetry ingest --agent=codex` if prompted\n")
-		}
-		return 0
+		return 2
 	case "selftest":
 		s, err := DefaultOutbox()
 		if err != nil {

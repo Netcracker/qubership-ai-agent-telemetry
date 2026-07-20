@@ -37,6 +37,7 @@ func TestRunHelp(t *testing.T) {
 		{name: "command short flag", args: []string{"configure", "-h"}, want: "--hooks=<targets>"},
 		{name: "command long flag", args: []string{"status", "--help"}, want: "--verbose"},
 		{name: "nested action help", args: []string{"hooks", "install", "--help"}, want: "--target=<list>"},
+		{name: "nested uninstall help", args: []string{"hooks", "uninstall", "--help"}, want: "ai-agent-telemetry hooks uninstall"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -48,6 +49,21 @@ func TestRunHelp(t *testing.T) {
 				t.Fatalf("output = %q, want %q", out, tt.want)
 			}
 		})
+	}
+}
+
+func TestRunHooksHelpShowsInstallAndUninstallUsage(t *testing.T) {
+	var out string
+	if code := run([]string{"help", "hooks"}, func(s string) { out += s }); code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+	}
+	for _, want := range []string{
+		"ai-agent-telemetry hooks install [--target=<list>]",
+		"ai-agent-telemetry hooks uninstall [--target=<list>]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output = %q, want %q", out, want)
+		}
 	}
 }
 
@@ -286,6 +302,233 @@ func TestRunHooksInstallContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
 	}
 	if _, err := os.Stat(hookPath(home, hookClaude)); err != nil {
 		t.Fatalf("Claude hook not installed after cleanup warning: %v", err)
+	}
+}
+
+func TestRunHooksUninstallWritesReceiptForFullTargetSet(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "default targets", args: []string{"hooks", "uninstall"}},
+		{name: "explicit targets in different order", args: []string{"hooks", "uninstall", "--target=cursor,claude,codex"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			t.Setenv("XDG_STATE_HOME", "")
+			if err := hookInstallError(installHooks(home, allHookTargets)); err != nil {
+				t.Fatal(err)
+			}
+
+			var out string
+			if code := run(tt.args, func(s string) { out += s }); code != 0 {
+				t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+			}
+			for _, target := range allHookTargets {
+				assertNoRemovalCommands(t, hookPath(home, target))
+				if !strings.Contains(out, string(target)+": removed:") {
+					t.Fatalf("output = %q, want removed result for %s", out, target)
+				}
+			}
+			assertHookReceiptContents(t, home)
+
+			out = ""
+			if code := run(tt.args, func(s string) { out += s }); code != 0 {
+				t.Fatalf("second exit code = %d, want 0; output = %q", code, out)
+			}
+			for _, target := range allHookTargets {
+				if !strings.Contains(out, string(target)+": unchanged:") {
+					t.Fatalf("second output = %q, want unchanged result for %s", out, target)
+				}
+			}
+			assertHookReceiptContents(t, home)
+		})
+	}
+}
+
+func TestRunHooksUninstallSubsetDoesNotWriteReceipt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	if err := hookInstallError(installHooks(home, allHookTargets)); err != nil {
+		t.Fatal(err)
+	}
+
+	var out string
+	if code := run([]string{"hooks", "uninstall", "--target=cursor,claude"}, func(s string) { out += s }); code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
+	}
+	for _, target := range []hookTarget{hookClaude, hookCursor} {
+		assertNoRemovalCommands(t, hookPath(home, target))
+	}
+	assertInstalledHook(t, hookPath(home, hookCodex), inspectCodexHook)
+	if _, err := os.Stat(hookReceiptPath(home)); !os.IsNotExist(err) {
+		t.Fatalf("receipt exists after subset removal: %v", err)
+	}
+}
+
+func TestRunHooksUninstallContinuesAfterMalformedClaudeFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	if err := hookInstallError(installHooks(home, allHookTargets)); err != nil {
+		t.Fatal(err)
+	}
+	claudePath := hookPath(home, hookClaude)
+	malformed := []byte("{not json\n")
+	if err := os.WriteFile(claudePath, malformed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out string
+	if code := run([]string{"hooks", "uninstall"}, func(s string) { out += s }); code != 1 {
+		t.Fatalf("exit code = %d, want 1; output = %q", code, out)
+	}
+	if !strings.Contains(out, "claude: failed:") || !strings.Contains(out, "codex: removed:") || !strings.Contains(out, "cursor: removed:") {
+		t.Fatalf("output = %q, want one failed and two removed results", out)
+	}
+	assertNoRemovalCommands(t, hookPath(home, hookCodex))
+	assertNoRemovalCommands(t, hookPath(home, hookCursor))
+	if _, err := os.Stat(hookReceiptPath(home)); !os.IsNotExist(err) {
+		t.Fatalf("receipt exists after target failure: %v", err)
+	}
+}
+
+func TestRunHooksUninstallReturnsFailureWhenReceiptCannotBeWritten(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	if err := hookInstallError(installHooks(home, allHookTargets)); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := hookReceiptPath(home)
+	if err := os.MkdirAll(receiptPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(receiptPath, "keep"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, stderr strings.Builder
+	code := runWithStderr(
+		[]string{"hooks", "uninstall"},
+		func(value string) { out.WriteString(value) },
+		&stderr,
+	)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; output = %q; stderr = %q", code, out.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "hooks: write uninstall receipt:") {
+		t.Fatalf("stderr = %q, want receipt write error", stderr.String())
+	}
+	for _, target := range allHookTargets {
+		assertNoRemovalCommands(t, hookPath(home, target))
+	}
+}
+
+func TestRunHooksInstallFailsClosedOnReceiptInvalidation(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies:\n  apm:\n    - "+legacyTelemetryAPMPackage+"\n")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	claudePath := hookPath(home, hookClaude)
+	if err := os.MkdirAll(filepath.Dir(claudePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	claudeContents := []byte("{\"theme\":\"dark\"}\n")
+	if err := os.WriteFile(claudePath, claudeContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(home, ".apm", "apm.yml")
+	manifestContents, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := hookReceiptPath(home)
+	if err := os.MkdirAll(receiptPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(receiptPath, "keep"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, stderr strings.Builder
+	code := runWithStderr(
+		[]string{"hooks", "install"},
+		func(value string) { out.WriteString(value) },
+		&stderr,
+	)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; output = %q; stderr = %q", code, out.String(), stderr.String())
+	}
+	if !strings.Contains(out.String(), "hooks: invalidate hook removal receipt:") {
+		t.Fatalf("output = %q, want receipt invalidation error", out.String())
+	}
+	gotClaude, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotClaude) != string(claudeContents) {
+		t.Fatalf("Claude file = %q, want unchanged %q", gotClaude, claudeContents)
+	}
+	for _, target := range []hookTarget{hookCodex, hookCursor} {
+		if _, err := os.Stat(hookPath(home, target)); !os.IsNotExist(err) {
+			t.Fatalf("%s hook exists after invalidation failure: %v", target, err)
+		}
+	}
+	gotManifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotManifest) != string(manifestContents) {
+		t.Fatalf("legacy APM manifest = %q, want unchanged %q", gotManifest, manifestContents)
+	}
+}
+
+func TestRunHooksUninstallDoesNotCleanUpLegacyAPM(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies: [\n")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	if err := hookInstallError(installHooks(home, allHookTargets)); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, stderr strings.Builder
+	code := runWithStderr(
+		[]string{"hooks", "uninstall"},
+		func(value string) { out.WriteString(value) },
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q; stderr = %q", code, out.String(), stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want no legacy APM cleanup warning", stderr.String())
+	}
+	manifest, err := os.ReadFile(filepath.Join(home, ".apm", "apm.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(manifest) != "dependencies: [\n" {
+		t.Fatalf("legacy APM manifest = %q, want unchanged", manifest)
+	}
+}
+
+func assertHookReceiptContents(t *testing.T, home string) {
+	t.Helper()
+	data, err := os.ReadFile(hookReceiptPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != hookReceiptContents {
+		t.Fatalf("receipt = %q, want %q", data, hookReceiptContents)
 	}
 }
 
