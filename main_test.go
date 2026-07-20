@@ -321,6 +321,55 @@ func TestRunConfigureContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
 	}
 }
 
+func TestRunConfigureFailsClosedOnReceiptInvalidation(t *testing.T) {
+	home, configHome := isolateRunConfigure(t)
+	t.Setenv("XDG_STATE_HOME", "")
+
+	manifestPath := filepath.Join(home, ".apm", "apm.yml")
+	manifestContents := []byte("dependencies:\n  apm:\n    - " + legacyTelemetryAPMPackage + "\n")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, manifestContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := hookReceiptPath(home)
+	if err := os.MkdirAll(receiptPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(receiptPath, "keep"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, stderr strings.Builder
+	code := runWithStderr(
+		[]string{"configure", "--endpoint=https://otel.example/v1/logs"},
+		func(value string) { out.WriteString(value) },
+		&stderr,
+	)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; output = %q; stderr = %q", code, out.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "configure hooks: invalidate hook removal receipt:") {
+		t.Fatalf("stderr = %q, want receipt invalidation error", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(configHome, pkgName, "env")); err != nil {
+		t.Fatalf("telemetry env not written: %v", err)
+	}
+	for _, target := range allHookTargets {
+		if _, err := os.Stat(hookPath(home, target)); !os.IsNotExist(err) {
+			t.Fatalf("%s hook exists after receipt invalidation failure: %v", target, err)
+		}
+	}
+	gotManifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotManifest) != string(manifestContents) {
+		t.Fatalf("legacy APM manifest = %q, want unchanged %q", gotManifest, manifestContents)
+	}
+}
+
 func TestRunConfigureHooksNoneSkipsLegacyAPMCleanup(t *testing.T) {
 	home := writeGlobalAPMManifest(t, "dependencies: [\n")
 	configHome := t.TempDir()
@@ -463,10 +512,14 @@ func TestRunConfigureRejectsUnavailableHomeWithoutRelativeHooks(t *testing.T) {
 	t.Setenv("AI_AGENT_TELEMETRY_TOKEN", "")
 	t.Setenv(envRepoAllow, "")
 
-	var out string
-	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
+	var out, stderr strings.Builder
+	code := runWithStderr(
+		[]string{"configure", "--endpoint=https://otel.example/v1/logs"},
+		func(value string) { out.WriteString(value) },
+		&stderr,
+	)
 	if code != 1 {
-		t.Fatalf("exit code = %d, want 1; output = %q", code, out)
+		t.Fatalf("exit code = %d, want 1; output = %q; stderr = %q", code, out.String(), stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(configHome, pkgName, "env")); err != nil {
 		t.Fatalf("telemetry env not written: %v", err)
@@ -476,8 +529,11 @@ func TestRunConfigureRejectsUnavailableHomeWithoutRelativeHooks(t *testing.T) {
 			t.Fatalf("configure created relative hook directory %s: %v", relativeDir, err)
 		}
 	}
-	if !strings.Contains(out, "claude: invalid") || !strings.Contains(out, "codex: invalid") || !strings.Contains(out, "cursor: invalid") {
-		t.Fatalf("output = %q, want unavailable-home hook status", out)
+	if out.Len() != 0 {
+		t.Fatalf("output = %q, want no hook status", out.String())
+	}
+	if !strings.Contains(stderr.String(), "configure hooks: invalidate hook removal receipt: "+errUserHomeUnavailable.Error()) {
+		t.Fatalf("stderr = %q, want unavailable-home receipt error", stderr.String())
 	}
 }
 

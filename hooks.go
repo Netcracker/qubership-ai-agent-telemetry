@@ -106,21 +106,31 @@ func installHooks(home string, targets []hookTarget) []hookInstallResult {
 	return results
 }
 
-func installManagedHooks(home string, targets []hookTarget, warnings io.Writer) []hookInstallResult {
-	return installManagedHooksWith(home, targets, warnings, cleanupLegacyTelemetryAPM, installHooks)
+func installManagedHooks(
+	home string,
+	targets []hookTarget,
+	warnings io.Writer,
+) ([]hookInstallResult, error) {
+	return installManagedHooksWith(
+		home, targets, warnings, invalidateHookReceipt, cleanupLegacyTelemetryAPM, installHooks,
+	)
 }
 
 func installManagedHooksWith(
 	home string,
 	targets []hookTarget,
 	warnings io.Writer,
+	invalidate func(string) error,
 	cleanup func(string, io.Writer),
 	install func(string, []hookTarget) []hookInstallResult,
-) []hookInstallResult {
+) ([]hookInstallResult, error) {
 	if len(targets) > 0 {
+		if err := invalidate(home); err != nil {
+			return nil, fmt.Errorf("invalidate hook removal receipt: %w", err)
+		}
 		cleanup(home, warnings)
 	}
-	return install(home, targets)
+	return install(home, targets), nil
 }
 
 func hookInstallError(results []hookInstallResult) error {

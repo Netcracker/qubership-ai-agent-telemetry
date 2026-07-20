@@ -60,6 +60,25 @@ func TestCacheBaseFromNoHomeIsEmpty(t *testing.T) {
 	}
 }
 
+func TestStateBaseFromXDGWins(t *testing.T) {
+	if got := stateBaseFrom("/x/state", "/home/u"); got != "/x/state" {
+		t.Fatalf("got %q, want the XDG_STATE_HOME value", got)
+	}
+}
+
+func TestStateBaseFromHomeFallback(t *testing.T) {
+	want := filepath.Join("/home/u", ".local", "state")
+	if got := stateBaseFrom("", "/home/u"); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestStateBaseFromNoHomeIsEmpty(t *testing.T) {
+	if got := stateBaseFrom("", ""); got != "" {
+		t.Fatalf("got %q, want empty when no XDG state directory and no home", got)
+	}
+}
+
 // pkgConfigDir must honour XDG_CONFIG_HOME on every OS, proving it no longer
 // routes through os.UserConfigDir() (which is %AppData% on Windows, the path
 // MSIX virtualizes).

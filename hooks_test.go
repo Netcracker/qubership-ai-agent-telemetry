@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,13 +14,41 @@ import (
 	"testing"
 )
 
-func TestInstallManagedHooksWithCleansBeforeInstalling(t *testing.T) {
+func TestInstallManagedHooksWithStopsWhenInvalidationFails(t *testing.T) {
+	var calls []string
+	results, err := installManagedHooksWith(
+		"/home/test",
+		[]hookTarget{hookClaude},
+		io.Discard,
+		func(string) error {
+			calls = append(calls, "invalidate")
+			return errors.New("receipt locked")
+		},
+		func(string, io.Writer) { calls = append(calls, "cleanup") },
+		func(string, []hookTarget) []hookInstallResult {
+			calls = append(calls, "install")
+			return nil
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "receipt locked") {
+		t.Fatalf("error = %v", err)
+	}
+	if results != nil || !reflect.DeepEqual(calls, []string{"invalidate"}) {
+		t.Fatalf("results = %#v, calls = %v", results, calls)
+	}
+}
+
+func TestInstallManagedHooksWithInvalidatesAndCleansBeforeInstalling(t *testing.T) {
 	var calls []string
 	var warnings strings.Builder
-	results := installManagedHooksWith(
+	results, err := installManagedHooksWith(
 		"/home/test",
 		[]hookTarget{hookClaude},
 		&warnings,
+		func(string) error {
+			calls = append(calls, "invalidate")
+			return nil
+		},
 		func(_ string, warnings io.Writer) {
 			calls = append(calls, "cleanup")
 			_, _ = fmt.Fprintln(warnings, "cleanup warning")
@@ -29,7 +58,10 @@ func TestInstallManagedHooksWithCleansBeforeInstalling(t *testing.T) {
 			return []hookInstallResult{{Target: hookClaude, Path: "/hook"}}
 		},
 	)
-	if !reflect.DeepEqual(calls, []string{"cleanup", "install"}) {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, []string{"invalidate", "cleanup", "install"}) {
 		t.Fatalf("calls = %v", calls)
 	}
 	if err := hookInstallError(results); err != nil {
@@ -38,26 +70,29 @@ func TestInstallManagedHooksWithCleansBeforeInstalling(t *testing.T) {
 }
 
 func TestInstallManagedHooksWithSkipsCleanupForNoTargets(t *testing.T) {
-	cleanupCalled := false
-	installCalled := false
-	results := installManagedHooksWith(
+	var calls []string
+	results, err := installManagedHooksWith(
 		"/home/test",
 		nil,
 		io.Discard,
-		func(string, io.Writer) { cleanupCalled = true },
+		func(string) error {
+			calls = append(calls, "invalidate")
+			return nil
+		},
+		func(string, io.Writer) { calls = append(calls, "cleanup") },
 		func(_ string, targets []hookTarget) []hookInstallResult {
-			installCalled = true
+			calls = append(calls, "install")
 			if len(targets) != 0 {
 				t.Fatalf("targets = %v, want empty", targets)
 			}
 			return nil
 		},
 	)
-	if cleanupCalled {
-		t.Fatal("cleanup called with no targets")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !installCalled {
-		t.Fatal("install not called with empty targets")
+	if !reflect.DeepEqual(calls, []string{"install"}) {
+		t.Fatalf("calls = %v, want only install", calls)
 	}
 	if results != nil {
 		t.Fatalf("results = %#v, want nil", results)

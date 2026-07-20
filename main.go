@@ -73,7 +73,11 @@ func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, "configure:", err)
 			return 1
 		}
-		results := installManagedHooks(userHomeDir(), opts.Hooks, stderr)
+		results, err := installManagedHooks(userHomeDir(), opts.Hooks, stderr)
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "configure hooks:", err)
+			return 1
+		}
 		s, err := DefaultOutbox()
 		if err != nil {
 			_, _ = fmt.Fprintln(stderr, "outbox:", err)
@@ -101,7 +105,11 @@ func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 			stdout("hooks: no user home directory available\n")
 			return 1
 		}
-		results := installManagedHooks(home, targets, stderr)
+		results, err := installManagedHooks(home, targets, stderr)
+		if err != nil {
+			stdout("hooks: " + err.Error() + "\n")
+			return 1
+		}
 		for _, result := range results {
 			if result.Err != nil {
 				stdout(fmt.Sprintf("%s: failed: %s\n", result.Target, result.Path))
