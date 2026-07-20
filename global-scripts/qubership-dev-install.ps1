@@ -315,8 +315,56 @@ function Write-TelemetryReceipt {
   Move-Item -Force -LiteralPath $temp -Destination $path
 }
 
-function Test-NativePathEntry([string]$Path) {
-  return $null -ne (Get-Item -Force -LiteralPath $Path -ErrorAction SilentlyContinue)
+function Get-NativePathEntry([string]$Path, [string]$Description) {
+  try {
+    return Get-Item -Force -LiteralPath $Path -ErrorAction Stop
+  } catch [System.Management.Automation.ItemNotFoundException] {
+    $ancestor = Split-Path -Parent $Path
+    while ($ancestor) {
+      try {
+        $ancestorItem = Get-Item -Force -LiteralPath $ancestor -ErrorAction Stop
+      } catch [System.Management.Automation.ItemNotFoundException] {
+        $parent = Split-Path -Parent $ancestor
+        if (-not $parent -or $parent -eq $ancestor) { return $null }
+        $ancestor = $parent
+        continue
+      } catch {
+        throw "cannot inspect $Description ${Path}: $($_.Exception.Message)"
+      }
+      if (-not $ancestorItem.PSIsContainer) {
+        throw "cannot inspect $Description $Path because parent path $ancestor is not a directory."
+      }
+      return $null
+    }
+    return $null
+  } catch {
+    throw "cannot inspect $Description ${Path}: $($_.Exception.Message)"
+  }
+}
+
+function Test-TelemetryManagedExecutable([string]$Path) {
+  $item = Get-NativePathEntry $Path 'managed telemetry executable'
+  if ($null -eq $item -or $item.PSIsContainer) { return $false }
+  if ($env:OS -eq 'Windows_NT') {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+      return $stream.ReadByte() -eq 0x4d -and $stream.ReadByte() -eq 0x5a
+    } finally {
+      $stream.Dispose()
+    }
+  }
+  $unixMode = $item.PSObject.Properties['UnixFileMode']
+  return $null -ne $unixMode -and (([int]$unixMode.Value -band 73) -ne 0)
+}
+
+function Test-SafeRecursiveRemoval([string]$Path, [string]$Description) {
+  $item = Get-NativePathEntry $Path $Description
+  if ($null -eq $item) { return $false }
+  $isReparsePoint = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+  if ($item.PSIsContainer -and $isReparsePoint) {
+    throw "preserving $Path because it is a directory reparse point. Remove it manually after verifying its target."
+  }
+  return $true
 }
 
 function Test-TelemetryHooksMayExist {
@@ -326,17 +374,19 @@ function Test-TelemetryHooksMayExist {
     '.cursor/hooks.json',
     '.codex/rules/ai-agent-telemetry.rules'
   )) {
-    if (Test-NativePathEntry (Join-Path $env:USERPROFILE $relativePath)) { return $true }
+    $path = Join-Path $env:USERPROFILE $relativePath
+    if ($null -ne (Get-NativePathEntry $path 'native hook path')) { return $true }
   }
   return $false
 }
 
 function Uninstall-Telemetry {
   $managedExecutable = Join-Path $env:USERPROFILE '.local/bin/ai-agent-telemetry.exe'
-  $telemetryCommand = (Get-Command ai-agent-telemetry -ErrorAction SilentlyContinue).Source
-  if ([string]::IsNullOrWhiteSpace($telemetryCommand) -and
-      (Test-Path -LiteralPath $managedExecutable -PathType Leaf)) {
+  $telemetryCommand = $null
+  if (Test-TelemetryManagedExecutable $managedExecutable) {
     $telemetryCommand = $managedExecutable
+  } else {
+    $telemetryCommand = (Get-Command ai-agent-telemetry -ErrorAction SilentlyContinue).Source
   }
 
   if (-not [string]::IsNullOrWhiteSpace($telemetryCommand)) {
@@ -349,7 +399,7 @@ function Uninstall-Telemetry {
     Write-TelemetryReceipt
   }
 
-  if (Test-NativePathEntry $managedExecutable) {
+  if ($null -ne (Get-NativePathEntry $managedExecutable 'managed telemetry executable')) {
     Remove-Item -Force -ErrorAction Stop -LiteralPath $managedExecutable
   }
   if ($Purge) {
@@ -359,7 +409,7 @@ function Uninstall-Telemetry {
       (Join-Path $configRoot 'ai-agent-telemetry'),
       (Join-Path $cacheRoot 'ai-agent-telemetry')
     )) {
-      if (Test-NativePathEntry $path) {
+      if (Test-SafeRecursiveRemoval $path 'telemetry package directory') {
         Remove-Item -Recurse -Force -ErrorAction Stop -LiteralPath $path
       }
     }
@@ -383,6 +433,15 @@ function Get-ResolvedGitHooksPath {
   $path = Join-Path $script:GitHooksDir 'hooks-global'
   if (Test-Path -LiteralPath $path) { return (Resolve-Path -LiteralPath $path).Path }
   return [System.IO.Path]::GetFullPath($path)
+}
+
+function Get-GlobalGitHooksPaths {
+  $global:LASTEXITCODE = 0
+  $output = @(& git config --global --get-all core.hooksPath 2>$null)
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -eq 0) { return @($output | ForEach-Object { [string]$_ }) }
+  if ($exitCode -eq 1) { return @() }
+  throw "cannot read global core.hooksPath values: git config --get-all exited with code $exitCode."
 }
 
 function Install-GitHooks {
@@ -460,20 +519,22 @@ function Uninstall-GitHooks {
   }
   Initialize-GitHooks
   $desiredPath = Get-ResolvedGitHooksPath
-  $global:LASTEXITCODE = 0
-  $currentOutput = & git config --global --get core.hooksPath 2>$null
-  $currentPath = if ($LASTEXITCODE -eq 0) { ($currentOutput | Out-String).Trim() } else { '' }
-  $resolvedCurrentPath = $currentPath
-  if ($currentPath -and [System.IO.Path]::IsPathRooted($currentPath)) {
+  $currentPaths = @(Get-GlobalGitHooksPaths)
+  $managedValues = [System.Collections.Generic.List[string]]::new()
+  foreach ($currentPath in $currentPaths) {
+    if (-not $currentPath -or -not [System.IO.Path]::IsPathRooted($currentPath)) { continue }
     $resolvedCurrentPath = if (Test-Path -LiteralPath $currentPath) {
       (Resolve-Path -LiteralPath $currentPath).Path
     } else {
       [System.IO.Path]::GetFullPath($currentPath)
     }
+    if ($resolvedCurrentPath -eq $desiredPath -and -not $managedValues.Contains($currentPath)) {
+      $managedValues.Add($currentPath)
+    }
   }
-  if ($currentPath -and [System.IO.Path]::IsPathRooted($currentPath) -and
-      $resolvedCurrentPath -eq $desiredPath) {
-    Invoke-Checked 'git' @('config', '--global', '--unset-all', 'core.hooksPath')
+  foreach ($managedValue in $managedValues) {
+    $valuePattern = '^' + [regex]::Escape($managedValue) + '$'
+    Invoke-Checked 'git' @('config', '--global', '--unset-all', 'core.hooksPath', $valuePattern)
   }
 
   if (-not (Test-Path -LiteralPath $script:GitHooksDir)) { return }
@@ -500,7 +561,9 @@ function Uninstall-GitHooks {
   }
   $status = ($statusOutput | Out-String).Trim()
   if ($status) { throw "preserving modified worktree $($script:GitHooksDir)." }
-  Remove-Item -Recurse -Force -LiteralPath $script:GitHooksDir
+  if (Test-SafeRecursiveRemoval $script:GitHooksDir 'managed Git hooks directory') {
+    Remove-Item -Recurse -Force -LiteralPath $script:GitHooksDir
+  }
 }
 
 function Invoke-Component([string]$Component) {

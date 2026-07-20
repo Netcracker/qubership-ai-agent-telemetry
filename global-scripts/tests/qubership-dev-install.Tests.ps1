@@ -75,6 +75,7 @@ function Setup-ComponentFixture {
   Remove-Item Env:QDI_FAIL_TELEMETRY_HOOKS -ErrorAction SilentlyContinue
   Remove-Item Env:QDI_FAIL_GIT_ORIGIN -ErrorAction SilentlyContinue
   Remove-Item Env:QDI_FAIL_GIT_STATUS -ErrorAction SilentlyContinue
+  Remove-Item Env:QDI_FAIL_GIT_CONFIG_READ -ErrorAction SilentlyContinue
 
   @'
 $line = "apm " + ($args -join ' ')
@@ -113,12 +114,35 @@ Write-Error "    java.specification.version = $version" -ErrorAction Continue
   @'
 Add-Content -LiteralPath $env:QDI_TEST_LOG -Value ("git " + ($args -join ' '))
 $joined = $args -join ' '
-if ($joined -eq 'config --global --get core.hooksPath') {
-  if (Test-Path $env:QDI_GIT_CONFIG) { Get-Content -Raw -LiteralPath $env:QDI_GIT_CONFIG; exit 0 }
+if ($joined -eq 'config --global --get core.hooksPath' -or
+    $joined -eq 'config --global --get-all core.hooksPath') {
+  if ($env:QDI_FAIL_GIT_CONFIG_READ) { exit 8 }
+  if (Test-Path $env:QDI_GIT_CONFIG) {
+    if ($joined -eq 'config --global --get-all core.hooksPath') {
+      Get-Content -LiteralPath $env:QDI_GIT_CONFIG
+    } else {
+      Get-Content -Raw -LiteralPath $env:QDI_GIT_CONFIG
+    }
+    exit 0
+  }
   exit 1
 }
-if ($joined -eq 'config --global --unset-all core.hooksPath') {
-  Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $env:QDI_GIT_CONFIG
+if ($args.Count -ge 4 -and $args[0] -eq 'config' -and $args[1] -eq '--global' -and
+    $args[2] -eq '--unset-all' -and $args[3] -eq 'core.hooksPath') {
+  if ($args.Count -eq 4) {
+    Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $env:QDI_GIT_CONFIG
+    exit 0
+  }
+  $valuePattern = $args[4]
+  $configured = @(Get-Content -LiteralPath $env:QDI_GIT_CONFIG)
+  $matches = @($configured | Where-Object { $_ -match $valuePattern })
+  if ($matches.Count -eq 0) { exit 5 }
+  $remaining = @($configured | Where-Object { $_ -notmatch $valuePattern })
+  if ($remaining.Count -eq 0) {
+    Remove-Item -Force -LiteralPath $env:QDI_GIT_CONFIG
+  } else {
+    [System.IO.File]::WriteAllLines($env:QDI_GIT_CONFIG, [string[]]$remaining)
+  }
   exit 0
 }
 if ($args.Count -ge 4 -and $args[0] -eq 'config' -and $args[1] -eq '--global' -and $args[2] -eq 'core.hooksPath') {
@@ -183,6 +207,7 @@ function Teardown-ComponentFixture {
     'QDI_TEST_LOG', 'QDI_GIT_CONFIG',
     'QDI_MARKETPLACE_STATE', 'QDI_TELEMETRY_CLI', 'QDI_FAIL_APM_COMMAND', 'QDI_GIT_ORIGIN_FILE',
     'QDI_GIT_STATUS', 'QDI_GIT_PULL_FAIL', 'QDI_FAIL_GIT_ORIGIN', 'QDI_FAIL_GIT_STATUS',
+    'QDI_FAIL_GIT_CONFIG_READ',
     'QDI_TEST_JAVA_EXIT_CODE', 'QDI_TEST_JAVA_SPEC_VERSION', 'QDI_FAIL_TELEMETRY_HOOKS',
     'QDI_TELEMETRY_RECEIPT', 'QDI_TELEMETRY_CONFIG_DIR', 'QDI_TELEMETRY_CACHE_DIR',
     'QDI_TELEMETRY_HOOK', 'QDI_MANAGED_TELEMETRY_BIN',
@@ -191,6 +216,60 @@ function Teardown-ComponentFixture {
   )) {
     Remove-Item "Env:$name" -ErrorAction SilentlyContinue
   }
+}
+
+function New-ManagedTelemetryExecutable {
+  $path = $env:QDI_MANAGED_TELEMETRY_BIN
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+  if ($env:OS -eq 'Windows_NT') {
+    $className = "ManagedTelemetry$([guid]::NewGuid().ToString('N'))"
+    $source = @"
+using System;
+using System.IO;
+public static class $className {
+  public static int Main(string[] args) {
+    File.AppendAllText(
+      Environment.GetEnvironmentVariable("QDI_TEST_LOG"),
+      "managed-ai-agent-telemetry " + String.Join(" ", args) + Environment.NewLine);
+    return Environment.GetEnvironmentVariable("QDI_FAIL_TELEMETRY_HOOKS") == "1" ? 9 : 0;
+  }
+}
+"@
+    Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $path -OutputType ConsoleApplication
+  } else {
+    [System.IO.File]::WriteAllText($path, @'
+#!/usr/bin/env pwsh
+Add-Content -LiteralPath $env:QDI_TEST_LOG -Value ("managed-ai-agent-telemetry " + ($args -join ' '))
+if ($env:QDI_FAIL_TELEMETRY_HOOKS -eq '1') { exit 9 }
+exit 0
+'@)
+    $mode = [System.IO.File]::GetUnixFileMode($path)
+    $executeMode = [System.IO.UnixFileMode]::UserExecute -bor `
+      [System.IO.UnixFileMode]::GroupExecute -bor [System.IO.UnixFileMode]::OtherExecute
+    [System.IO.File]::SetUnixFileMode($path, $mode -bor $executeMode)
+  }
+  return $path
+}
+
+function New-DirectoryReparseFixture([string]$Path, [string]$Target) {
+  New-Item -ItemType Directory -Force -Path $Target | Out-Null
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+  try {
+    New-Item -ItemType SymbolicLink -Path $Path -Target $Target -ErrorAction Stop | Out-Null
+    return $true
+  } catch {
+    if ($env:OS -ne 'Windows_NT') { return $false }
+  }
+  try {
+    New-Item -ItemType Junction -Path $Path -Target $Target -ErrorAction Stop | Out-Null
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Test-NativeFixtureEntry([string]$Path) {
+  return $null -ne (Get-Item -Force -LiteralPath $Path -ErrorAction SilentlyContinue)
 }
 
 function Test-HelpDescribesPublicOptions {
@@ -519,6 +598,41 @@ function Test-TelemetryUninstallLifecycle {
   } finally { Teardown-ComponentFixture }
 }
 
+function Test-TelemetryPrefersInvokableManagedExecutable {
+  Setup-ComponentFixture
+  try {
+    $externalCommand = Join-Path (Split-Path -Parent (Get-Command apm).Source) 'ai-agent-telemetry.ps1'
+    Copy-Item -LiteralPath $env:QDI_TELEMETRY_CLI -Destination $externalCommand
+    New-ManagedTelemetryExecutable | Out-Null
+    $result = Invoke-Installer @('-Uninstall', '-Components', 'telemetry')
+    if ($result.Code -ne 0) { Fail "managed telemetry uninstall failed: $($result.Output)" }
+    $logLines = @(Get-Content -LiteralPath $env:QDI_TEST_LOG)
+    if ($logLines -notcontains 'managed-ai-agent-telemetry hooks uninstall') {
+      Fail 'managed telemetry executable was not invoked first'
+    }
+    if ($logLines -contains 'ai-agent-telemetry hooks uninstall') {
+      Fail 'external telemetry command was invoked while the managed executable was available'
+    }
+    if (-not (Test-Path -LiteralPath $externalCommand -PathType Leaf)) {
+      Fail 'removed external telemetry command'
+    }
+  } finally { Teardown-ComponentFixture }
+}
+
+function Test-TelemetryUsesAndPreservesExternalCommandWhenManagedIsAbsent {
+  Setup-ComponentFixture
+  try {
+    $externalCommand = Join-Path (Split-Path -Parent (Get-Command apm).Source) 'ai-agent-telemetry.ps1'
+    Copy-Item -LiteralPath $env:QDI_TELEMETRY_CLI -Destination $externalCommand
+    $result = Invoke-Installer @('-Uninstall', '-Components', 'telemetry')
+    if ($result.Code -ne 0) { Fail "external telemetry uninstall failed: $($result.Output)" }
+    Assert-LogContains 'ai-agent-telemetry hooks uninstall'
+    if (-not (Test-Path -LiteralPath $externalCommand -PathType Leaf)) {
+      Fail 'removed external telemetry command'
+    }
+  } finally { Teardown-ComponentFixture }
+}
+
 function Test-TelemetryHookFailurePreservesManagedExecutable {
   Setup-ComponentFixture
   try {
@@ -573,6 +687,21 @@ function Test-TelemetryDanglingHookIsExistingState {
   } finally { Teardown-ComponentFixture }
 }
 
+function Test-TelemetryHookInspectionFailureDoesNotWriteReceipt {
+  Setup-ComponentFixture
+  try {
+    $blockedParent = Join-Path $env:HOME '.claude'
+    [System.IO.File]::WriteAllText($blockedParent, 'not a directory')
+    $hookPath = Join-Path $blockedParent 'settings.json'
+    $result = Invoke-Installer @('-Uninstall', '-Components', 'telemetry')
+    if ($result.Code -ne 1) { Fail "expected hook inspection failure: $($result.Output)" }
+    Assert-Contains $result.Output "cannot inspect native hook path $hookPath"
+    if (Test-Path -LiteralPath $env:QDI_TELEMETRY_RECEIPT) {
+      Fail 'wrote telemetry receipt after hook inspection failure'
+    }
+  } finally { Teardown-ComponentFixture }
+}
+
 function Test-TelemetryPurgeRemovesOnlyPackageDirectories {
   Setup-ComponentFixture
   try {
@@ -589,6 +718,28 @@ function Test-TelemetryPurgeRemovesOnlyPackageDirectories {
     if (Test-Path -LiteralPath $env:QDI_TELEMETRY_CACHE_DIR) { Fail 'telemetry cache remains' }
     if (-not (Test-Path -LiteralPath $env:QDI_TELEMETRY_RECEIPT)) { Fail 'purge removed receipt' }
     if (-not (Test-Path -LiteralPath $env:QDI_MARKETPLACE_STATE)) { Fail 'purge removed marketplace marker' }
+  } finally { Teardown-ComponentFixture }
+}
+
+function Test-TelemetryPurgePreservesDirectoryReparsePoint {
+  Setup-ComponentFixture
+  try {
+    $target = Join-Path $FixtureRoot 'external-config-target'
+    Remove-Item -Recurse -Force -LiteralPath $env:QDI_TELEMETRY_CONFIG_DIR
+    if (-not (New-DirectoryReparseFixture $env:QDI_TELEMETRY_CONFIG_DIR $target)) { return }
+    New-Item -ItemType File -Path (Join-Path $target 'sentinel') | Out-Null
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:QDI_TELEMETRY_RECEIPT) | Out-Null
+    [System.IO.File]::WriteAllText($env:QDI_TELEMETRY_RECEIPT, "version=1`nstate=uninstalled`n")
+    $result = Invoke-Installer @('-Uninstall', '-Purge', '-Components', 'telemetry')
+    if ($result.Code -ne 1) { Fail "expected telemetry reparse-point failure: $($result.Output)" }
+    Assert-Contains $result.Output "preserving $env:QDI_TELEMETRY_CONFIG_DIR"
+    Assert-Contains $result.Output 'directory reparse point'
+    if (-not (Test-NativeFixtureEntry $env:QDI_TELEMETRY_CONFIG_DIR)) {
+      Fail 'removed telemetry config reparse point'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $target 'sentinel'))) {
+      Fail 'recursed into telemetry config reparse target'
+    }
   } finally { Teardown-ComponentFixture }
 }
 
@@ -628,6 +779,54 @@ function Test-GitHooksUninstallDeactivatesOnlyExactManagedPath {
   } finally { Teardown-ComponentFixture }
 }
 
+function Test-GitHooksUninstallPreservesMixedConfigValues {
+  Setup-ComponentFixture
+  try {
+    $managedPath = Get-ManagedGitHooksPath
+    [System.IO.File]::WriteAllLines($env:QDI_GIT_CONFIG, [string[]]@(
+      'relative/hooks', $managedPath, '/other/hooks'
+    ))
+    $result = Invoke-Installer @('-Uninstall', '-Components', 'git-hooks')
+    if ($result.Code -ne 0) { Fail "mixed Git config uninstall failed: $($result.Output)" }
+    $remaining = @(Get-Content -LiteralPath $env:QDI_GIT_CONFIG)
+    if ($remaining.Count -ne 2 -or $remaining[0] -ne 'relative/hooks' -or $remaining[1] -ne '/other/hooks') {
+      $log = Get-Content -Raw -LiteralPath $env:QDI_TEST_LOG
+      Fail "changed unrelated Git hook values: $($remaining -join ','). Log: $log"
+    }
+    Assert-LogContains 'git config --global --get-all core.hooksPath'
+    Assert-LogContains 'git config --global --unset-all core.hooksPath'
+  } finally { Teardown-ComponentFixture }
+}
+
+function Test-GitHooksUninstallPreservesWhitespaceDistinctValue {
+  Setup-ComponentFixture
+  try {
+    $configuredPath = ' ' + (Get-ManagedGitHooksPath) + ' '
+    [System.IO.File]::WriteAllText($env:QDI_GIT_CONFIG, $configuredPath)
+    $result = Invoke-Installer @('-Uninstall', '-Components', 'git-hooks')
+    if ($result.Code -ne 0) { Fail "whitespace-distinct Git config uninstall failed: $($result.Output)" }
+    if ((Get-Content -Raw -LiteralPath $env:QDI_GIT_CONFIG) -ne $configuredPath) {
+      Fail 'changed whitespace-distinct core.hooksPath value'
+    }
+    Assert-LogNotContains 'git config --global --unset-all core.hooksPath'
+  } finally { Teardown-ComponentFixture }
+}
+
+function Test-GitHooksUninstallReportsConfigReadFailure {
+  Setup-ComponentFixture
+  try {
+    Initialize-CleanGitHooksClone
+    $env:QDI_FAIL_GIT_CONFIG_READ = '1'
+    $result = Invoke-Installer @('-Uninstall', '-Components', 'git-hooks')
+    if ($result.Code -ne 1) { Fail "expected Git config read failure: $($result.Output)" }
+    Assert-Contains $result.Output 'cannot read global core.hooksPath values'
+    if (-not (Test-Path -LiteralPath $env:QUBERSHIP_DEV_GIT_HOOKS_DIR)) {
+      Fail 'removed Git hooks clone after config read failure'
+    }
+    Assert-LogNotContains "git -C $env:QUBERSHIP_DEV_GIT_HOOKS_DIR rev-parse"
+  } finally { Teardown-ComponentFixture }
+}
+
 function Test-GitHooksUninstallOwnershipChecks {
   Setup-ComponentFixture
   try {
@@ -652,6 +851,28 @@ function Test-GitHooksUninstallOwnershipChecks {
     if ($dirty.Code -ne 1) { Fail "expected dirty-clone failure: $($dirty.Output)" }
     Assert-Contains $dirty.Output 'preserving modified worktree'
     if (-not (Test-Path -LiteralPath $env:QUBERSHIP_DEV_GIT_HOOKS_DIR)) { Fail 'removed dirty clone' }
+  } finally { Teardown-ComponentFixture }
+}
+
+function Test-GitHooksUninstallPreservesDirectoryReparsePoint {
+  Setup-ComponentFixture
+  try {
+    $target = Join-Path $FixtureRoot 'external-git-hooks-target'
+    if (-not (New-DirectoryReparseFixture $env:QUBERSHIP_DEV_GIT_HOOKS_DIR $target)) { return }
+    New-Item -ItemType Directory -Force -Path `
+      (Join-Path $target '.git'), (Join-Path $target 'hooks-global') | Out-Null
+    New-Item -ItemType File -Path (Join-Path $target 'sentinel') | Out-Null
+    Set-Content -LiteralPath $env:QDI_GIT_ORIGIN_FILE -Value $env:QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY
+    $result = Invoke-Installer @('-Uninstall', '-Components', 'git-hooks')
+    if ($result.Code -ne 1) { Fail "expected Git reparse-point failure: $($result.Output)" }
+    Assert-Contains $result.Output "preserving $env:QUBERSHIP_DEV_GIT_HOOKS_DIR"
+    Assert-Contains $result.Output 'directory reparse point'
+    if (-not (Test-NativeFixtureEntry $env:QUBERSHIP_DEV_GIT_HOOKS_DIR)) {
+      Fail 'removed Git hooks reparse point'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $target 'sentinel'))) {
+      Fail 'recursed into Git hooks reparse target'
+    }
   } finally { Teardown-ComponentFixture }
 }
 
@@ -706,33 +927,46 @@ function Test-GitHooksUninstallWithoutGitContinues {
   } finally { Teardown-ComponentFixture }
 }
 
-Test-HelpDescribesPublicOptions
-Test-InvalidSelectionsFailBeforeInstallation
-Test-UninstallOptionCombinationsFailBeforeChanges
-Test-UnknownParameterFailsBeforeInstallation
-Test-PrerequisitesApplyOnlyToGitHooks
-Test-Java20IsRejected
-Test-Java21AndNewerAreAccepted
-Test-UnrecognizedOrFailingJavaIsRejected
-Test-DefaultInstallRunsEveryComponent
-Test-ExistingClisAreUpdatedByDefault
-Test-SelectionAndHarnessesAreForwarded
-Test-ForceUpdateRefreshesSelectedComponents
-Test-UnrelatedGitHooksAreSkipped
-Test-ComponentFailureDoesNotStopIndependentComponents
-Test-UnconfiguredTelemetryBehavior
-Test-GitHooksRejectUnsafeExistingDirectories
-Test-GitHooksRejectNonRepositoryAndDivergence
-Test-ApmUninstallBehavior
-Test-ApmUninstallFailureDoesNotStopTelemetry
-Test-TelemetryUninstallLifecycle
-Test-TelemetryHookFailurePreservesManagedExecutable
-Test-TelemetryReceiptAndOwnershipBehavior
-Test-TelemetryDanglingHookIsExistingState
-Test-TelemetryPurgeRemovesOnlyPackageDirectories
-Test-GitHooksUninstallDeactivatesOnlyExactManagedPath
-Test-GitHooksUninstallOwnershipChecks
-Test-GitHooksUninstallReportsInspectionFailures
-Test-GitHooksUninstallDeactivatesBeforeValidationFailure
-Test-GitHooksUninstallWithoutGitContinues
+$testCases = @(
+  'Test-HelpDescribesPublicOptions',
+  'Test-InvalidSelectionsFailBeforeInstallation',
+  'Test-UninstallOptionCombinationsFailBeforeChanges',
+  'Test-UnknownParameterFailsBeforeInstallation',
+  'Test-PrerequisitesApplyOnlyToGitHooks',
+  'Test-Java20IsRejected',
+  'Test-Java21AndNewerAreAccepted',
+  'Test-UnrecognizedOrFailingJavaIsRejected',
+  'Test-DefaultInstallRunsEveryComponent',
+  'Test-ExistingClisAreUpdatedByDefault',
+  'Test-SelectionAndHarnessesAreForwarded',
+  'Test-ForceUpdateRefreshesSelectedComponents',
+  'Test-UnrelatedGitHooksAreSkipped',
+  'Test-ComponentFailureDoesNotStopIndependentComponents',
+  'Test-UnconfiguredTelemetryBehavior',
+  'Test-GitHooksRejectUnsafeExistingDirectories',
+  'Test-GitHooksRejectNonRepositoryAndDivergence',
+  'Test-ApmUninstallBehavior',
+  'Test-ApmUninstallFailureDoesNotStopTelemetry',
+  'Test-TelemetryUninstallLifecycle',
+  'Test-TelemetryPrefersInvokableManagedExecutable',
+  'Test-TelemetryUsesAndPreservesExternalCommandWhenManagedIsAbsent',
+  'Test-TelemetryHookFailurePreservesManagedExecutable',
+  'Test-TelemetryReceiptAndOwnershipBehavior',
+  'Test-TelemetryDanglingHookIsExistingState',
+  'Test-TelemetryHookInspectionFailureDoesNotWriteReceipt',
+  'Test-TelemetryPurgeRemovesOnlyPackageDirectories',
+  'Test-TelemetryPurgePreservesDirectoryReparsePoint',
+  'Test-GitHooksUninstallDeactivatesOnlyExactManagedPath',
+  'Test-GitHooksUninstallPreservesMixedConfigValues',
+  'Test-GitHooksUninstallPreservesWhitespaceDistinctValue',
+  'Test-GitHooksUninstallReportsConfigReadFailure',
+  'Test-GitHooksUninstallOwnershipChecks',
+  'Test-GitHooksUninstallPreservesDirectoryReparsePoint',
+  'Test-GitHooksUninstallReportsInspectionFailures',
+  'Test-GitHooksUninstallDeactivatesBeforeValidationFailure',
+  'Test-GitHooksUninstallWithoutGitContinues'
+)
+foreach ($testCase in $testCases) {
+  if (-not $env:QDI_TEST_FILTER -or $testCase -eq $env:QDI_TEST_FILTER) { & $testCase }
+}
 Write-Host 'PASS: PowerShell developer installer tests'
