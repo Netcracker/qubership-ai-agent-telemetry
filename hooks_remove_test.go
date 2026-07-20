@@ -135,6 +135,28 @@ func TestRemoveGroupedHooksKeepsPreExistingEmptyManagedEvent(t *testing.T) {
 	}
 }
 
+func TestRemoveGroupedHooksDoesNotMaterializeMissingManagedEvent(t *testing.T) {
+	root := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{
+				"hooks": []any{newCanonicalCodexHandler()},
+			}},
+		},
+	}
+
+	changed, err := removeCodexHook(root)
+	if err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+	if hooksValue, exists := root["hooks"]; exists {
+		hooks := hooksValue.(map[string]any)
+		if _, materialized := hooks["PostToolUse"]; materialized {
+			t.Fatal("missing managed event was materialized")
+		}
+		t.Fatalf("empty hooks object remains: %#v", hooks)
+	}
+}
+
 func TestRemoveGroupedHooksKeepsExtendedGroupWithEmptyHooks(t *testing.T) {
 	root := map[string]any{
 		"hooks": map[string]any{

@@ -41,17 +41,19 @@ func removeGroupedHooks(
 				}
 			}
 			if removed && len(keptHandlers) == 0 && onlyHookGroupFields(group) {
-				changed = true
 				continue
 			}
 			keptGroups = append(keptGroups, group)
 		}
-		if eventRemoved && len(keptGroups) == 0 {
+		if !eventRemoved {
+			continue
+		}
+		if len(keptGroups) == 0 {
 			delete(hooks, spec.event)
-		} else if !reflect.DeepEqual(groups, keptGroups) {
+		} else {
 			hooks[spec.event] = keptGroups
 		}
-		changed = changed || eventRemoved
+		changed = true
 	}
 	if changed && len(hooks) == 0 {
 		delete(root, "hooks")
