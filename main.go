@@ -51,7 +51,7 @@ func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 		return 0
 	case "self-update":
 		if err := runSelfUpdate(version, stdout); err != nil {
-			fmt.Fprintln(stderr, "self-update:", err)
+			_, _ = fmt.Fprintln(stderr, "self-update:", err)
 			return 1
 		}
 		return 0
@@ -64,25 +64,25 @@ func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 		}
 		cfg := pkgConfigDir()
 		if cfg == "" {
-			fmt.Fprintln(stderr, "configure: no user config directory available")
+			_, _ = fmt.Fprintln(stderr, "configure: no user config directory available")
 			return 1
 		}
 		endpoint := configureEndpoint(opts.Endpoint)
 		token := readSecret("Collector token (leave blank to skip): ")
 		if err := applyConfigure(cfg, endpoint, opts.CAPath, token, opts.RepoAllow, opts.Delivery); err != nil {
-			fmt.Fprintln(stderr, "configure:", err)
+			_, _ = fmt.Fprintln(stderr, "configure:", err)
 			return 1
 		}
 		results := installManagedHooks(userHomeDir(), opts.Hooks, stderr)
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(stderr, "outbox:", err)
+			_, _ = fmt.Fprintln(stderr, "outbox:", err)
 			return 1
 		}
 		settings := resolveDeliverySettings()
 		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy(), settings), false))
 		if err := hookInstallError(results); err != nil {
-			fmt.Fprintln(stderr, "configure hooks:", err)
+			_, _ = fmt.Fprintln(stderr, "configure hooks:", err)
 			return 1
 		}
 		if codexHookChanged(results) {
@@ -124,12 +124,12 @@ func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 	case "selftest":
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(stderr, "outbox:", err)
+			_, _ = fmt.Fprintln(stderr, "outbox:", err)
 			return 1
 		}
 		tlsCfg, cerr := caTLSConfig(pkgConfigDir())
 		if cerr != nil {
-			fmt.Fprintln(stderr, "ca:", cerr)
+			_, _ = fmt.Fprintln(stderr, "ca:", cerr)
 		}
 		res, err := runSelftest(s, resolveEndpoint(""), resolveToken(), tlsCfg, selftestTimeout)
 		if err != nil {
@@ -145,13 +145,13 @@ func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 	case "ingest":
 		agent, endpoint, err := parseIngestFlags(args[1:])
 		if err != nil {
-			fmt.Fprintln(stderr, "ingest:", err)
+			_, _ = fmt.Fprintln(stderr, "ingest:", err)
 			return 0
 		}
 		endpoint = resolveEndpoint(endpoint)
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(stderr, "outbox:", err)
+			_, _ = fmt.Fprintln(stderr, "outbox:", err)
 			return 0 // never fail the hook
 		}
 		raw, _ := io.ReadAll(os.Stdin)
@@ -161,23 +161,23 @@ func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 		endpoint = resolveEndpoint(endpoint)
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(stderr, "outbox:", err)
+			_, _ = fmt.Fprintln(stderr, "outbox:", err)
 			return 0
 		}
 		tlsCfg, err := caTLSConfig(pkgConfigDir())
 		if err != nil {
-			fmt.Fprintln(stderr, "ca:", err)
+			_, _ = fmt.Fprintln(stderr, "ca:", err)
 		}
 		settings := resolveDeliverySettings()
 		if _, err := Flush(s, endpoint, resolveToken(), tlsCfg, settings.FlushTimeout); err != nil {
-			fmt.Fprintln(stderr, "flush:", err)
+			_, _ = fmt.Fprintln(stderr, "flush:", err)
 		}
 		return 0
 	case "status":
 		verbose := parseStatusFlags(args[1:])
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(stderr, "outbox:", err)
+			_, _ = fmt.Fprintln(stderr, "outbox:", err)
 			return 0
 		}
 		settings := resolveDeliverySettings()

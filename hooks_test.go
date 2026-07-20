@@ -22,7 +22,7 @@ func TestInstallManagedHooksWithCleansBeforeInstalling(t *testing.T) {
 		&warnings,
 		func(_ string, warnings io.Writer) {
 			calls = append(calls, "cleanup")
-			fmt.Fprintln(warnings, "cleanup warning")
+			_, _ = fmt.Fprintln(warnings, "cleanup warning")
 		},
 		func(_ string, _ []hookTarget) []hookInstallResult {
 			calls = append(calls, "install")
