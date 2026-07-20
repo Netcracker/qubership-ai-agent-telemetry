@@ -15,7 +15,9 @@ import (
 const legacyTelemetryAPMPackage = "Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry"
 
 type globalAPMManifest struct {
-	Dependencies []string `yaml:"dependencies"`
+	Dependencies struct {
+		APM []yaml.Node `yaml:"apm"`
+	} `yaml:"dependencies"`
 }
 
 func normalizeAPMDependency(value string) string {
@@ -31,8 +33,14 @@ func hasLegacyTelemetryAPMDependency(data []byte) (bool, error) {
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
 		return false, err
 	}
-	for _, dependency := range manifest.Dependencies {
-		if strings.EqualFold(normalizeAPMDependency(dependency), legacyTelemetryAPMPackage) {
+	for index, dependency := range manifest.Dependencies.APM {
+		if dependency.Kind == yaml.MappingNode {
+			continue
+		}
+		if dependency.Kind != yaml.ScalarNode || dependency.Tag != "!!str" {
+			return false, fmt.Errorf("dependencies.apm entry %d must be a string or mapping", index)
+		}
+		if strings.EqualFold(normalizeAPMDependency(dependency.Value), legacyTelemetryAPMPackage) {
 			return true, nil
 		}
 	}

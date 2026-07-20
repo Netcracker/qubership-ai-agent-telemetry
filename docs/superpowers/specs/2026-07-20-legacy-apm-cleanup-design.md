@@ -3,7 +3,7 @@
 `ai-agent-telemetry` attempts to remove its legacy global APM dependency before it installs CLI-managed hooks. The
 cleanup lives in the cross-platform Go binary so every installation path applies the same compatibility rule.
 
-Status: proposed design.
+Status: implemented design.
 
 ## Problem
 
@@ -43,17 +43,20 @@ Three alternatives were rejected:
 The cleanup follows these steps:
 
 1. Read `<home>/.apm/apm.yml`.
-2. Decode the top-level `dependencies` sequence as YAML.
-3. Normalize each string dependency by trimming whitespace and removing an optional revision suffix that starts with
+2. Decode the `dependencies.apm` sequence from the current APM manifest schema.
+3. Inspect string entries in that sequence. Valid object-form APM dependencies and other dependency categories do not
+   prevent detection, but they are not treated as matches.
+4. Normalize each string dependency by trimming whitespace and removing an optional revision suffix that starts with
    `#`.
-4. Compare the normalized value with the legacy package path using case-insensitive equality.
-5. Locate `apm` on `PATH` when a matching dependency is present.
-6. Run `apm uninstall -g <legacy-package>`.
-7. Report any cleanup failure as a warning.
-8. Install and canonicalize the requested CLI-managed hooks regardless of the cleanup result.
+5. Compare the normalized value with the legacy package path using case-insensitive equality.
+6. Locate `apm` on `PATH` when a matching dependency is present.
+7. Run `apm uninstall -g <legacy-package>`.
+8. Report any cleanup failure as a warning.
+9. Install and canonicalize the requested CLI-managed hooks regardless of the cleanup result.
 
 Plain, single-quoted, and double-quoted YAML scalars follow the same parsing path. Revision pins and trailing comments
-are accepted. Near matches and values under unrelated YAML keys are ignored.
+are accepted. Near matches, object-form entries, and values under `dependencies.mcp`, `dependencies.lsp`, or unrelated
+YAML keys are ignored.
 
 The operation is idempotent. A missing manifest or dependency is a silent no-op. `configure --hooks=none` does not run
 cleanup because it does not install CLI-managed hooks.
@@ -91,8 +94,9 @@ warnings. Production wiring uses `os.UserHomeDir`, `exec.LookPath`, `exec.Comman
 `installHooks` remains responsible for harness configuration files. A small orchestration function runs cleanup and
 then delegates to `installHooks`. The `configure` and `hooks install` command paths both use this function.
 
-`gopkg.in/yaml.v3` becomes a direct Go dependency. A typed top-level manifest structure limits matching to
-`dependencies` and avoids platform-specific line parsing.
+`gopkg.in/yaml.v3` becomes a direct Go dependency. A typed manifest structure limits matching to string entries under
+`dependencies.apm` and avoids platform-specific line parsing. YAML nodes preserve valid object-form entries without
+requiring this compatibility cleanup to reproduce APM package-identity resolution.
 
 The POSIX and PowerShell installers continue to install or update the telemetry binary and invoke its public commands.
 They contain no legacy package constant, YAML matching, or direct `apm uninstall` call.
@@ -102,8 +106,8 @@ They contain no legacy package constant, YAML matching, or direct `apm uninstall
 Go unit tests cover:
 
 - missing manifest and absent dependency no-ops;
-- plain, quoted, revision-pinned, and commented dependency forms;
-- near-match and unrelated-list rejection;
+- plain, quoted, revision-pinned, and commented entries under `dependencies.apm`;
+- near-match rejection and isolation from `mcp`, `lsp`, unrelated lists, and valid object-form APM entries;
 - unreadable and malformed manifest warnings;
 - missing `apm` warnings;
 - exact uninstall arguments;

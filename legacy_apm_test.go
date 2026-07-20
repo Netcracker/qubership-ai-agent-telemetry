@@ -23,7 +23,7 @@ func writeGlobalAPMManifest(t *testing.T, contents string) string {
 }
 
 func TestCleanupLegacyTelemetryAPMWithUninstallsMatchingDependency(t *testing.T) {
-	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"#sha\n")
+	home := writeGlobalAPMManifest(t, "dependencies:\n  apm:\n    - "+legacyTelemetryAPMPackage+"#sha\n")
 	var gotName string
 	var gotArgs []string
 	var warnings strings.Builder
@@ -67,7 +67,7 @@ func TestCleanupLegacyTelemetryAPMWithBlankHomeDoesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 		manifest := filepath.Join(dir, "apm.yml")
-		contents := []byte("dependencies:\n  - " + legacyTelemetryAPMPackage + "\n")
+		contents := []byte("dependencies:\n  apm:\n    - " + legacyTelemetryAPMPackage + "\n")
 		if err := os.WriteFile(manifest, contents, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -101,7 +101,7 @@ func TestCleanupLegacyTelemetryAPMWithBlankHomeDoesNothing(t *testing.T) {
 }
 
 func TestCleanupLegacyTelemetryAPMWithAbsentDependencyDoesNothing(t *testing.T) {
-	home := writeGlobalAPMManifest(t, "dependencies:\n  - another/package\n")
+	home := writeGlobalAPMManifest(t, "dependencies:\n  apm:\n    - another/package\n")
 	var lookedUp, ran bool
 	cleanupLegacyTelemetryAPMWith(
 		home,
@@ -148,7 +148,7 @@ func TestCleanupLegacyTelemetryAPMWithWarnsWhenManifestIsMalformed(t *testing.T)
 }
 
 func TestCleanupLegacyTelemetryAPMWithWarnsWhenAPMIsMissing(t *testing.T) {
-	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"\n")
+	home := writeGlobalAPMManifest(t, "dependencies:\n  apm:\n    - "+legacyTelemetryAPMPackage+"\n")
 	var warnings strings.Builder
 	cleanupLegacyTelemetryAPMWith(
 		home,
@@ -168,7 +168,7 @@ func TestCleanupLegacyTelemetryAPMWithWarnsWhenAPMIsMissing(t *testing.T) {
 }
 
 func TestCleanupLegacyTelemetryAPMWithReportsFailedUninstall(t *testing.T) {
-	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"\n")
+	home := writeGlobalAPMManifest(t, "dependencies:\n  apm:\n    - "+legacyTelemetryAPMPackage+"\n")
 	var warnings strings.Builder
 	cleanupLegacyTelemetryAPMWith(
 		home,
@@ -184,7 +184,7 @@ func TestCleanupLegacyTelemetryAPMWithReportsFailedUninstall(t *testing.T) {
 }
 
 func TestCleanupLegacyTelemetryAPMWithMarksTruncatedOutput(t *testing.T) {
-	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"\n")
+	home := writeGlobalAPMManifest(t, "dependencies:\n  apm:\n    - "+legacyTelemetryAPMPackage+"\n")
 	var warnings strings.Builder
 	cleanupLegacyTelemetryAPMWith(
 		home,
@@ -201,7 +201,7 @@ func TestCleanupLegacyTelemetryAPMWithMarksTruncatedOutput(t *testing.T) {
 }
 
 func TestCleanupLegacyTelemetryAPMWithSuppressesSuccessfulOutput(t *testing.T) {
-	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"\n")
+	home := writeGlobalAPMManifest(t, "dependencies:\n  apm:\n    - "+legacyTelemetryAPMPackage+"\n")
 	var warnings strings.Builder
 	cleanupLegacyTelemetryAPMWith(
 		home,
@@ -230,15 +230,27 @@ func TestHasLegacyTelemetryAPMDependency(t *testing.T) {
 		yaml string
 		want bool
 	}{
-		{name: "plain", yaml: "dependencies:\n  - " + legacyTelemetryAPMPackage + "\n", want: true},
-		{name: "revision", yaml: "dependencies:\n  - " + legacyTelemetryAPMPackage + "#v1.0.0\n", want: true},
-		{name: "single quoted", yaml: "dependencies:\n  - '" + legacyTelemetryAPMPackage + "#sha'\n", want: true},
-		{name: "double quoted", yaml: "dependencies:\n  - \"" + legacyTelemetryAPMPackage + "#sha\"\n", want: true},
-		{name: "comment", yaml: "dependencies:\n  - " + legacyTelemetryAPMPackage + "#sha # old hook\n", want: true},
-		{name: "case insensitive", yaml: "dependencies:\n  - netcracker/Qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry\n", want: true},
-		{name: "near match", yaml: "dependencies:\n  - " + legacyTelemetryAPMPackage + "-extra\n"},
+		{name: "plain", yaml: "dependencies:\n  apm:\n    - " + legacyTelemetryAPMPackage + "\n", want: true},
+		{name: "revision", yaml: "dependencies:\n  apm:\n    - " + legacyTelemetryAPMPackage + "#v1.0.0\n", want: true},
+		{name: "single quoted", yaml: "dependencies:\n  apm:\n    - '" + legacyTelemetryAPMPackage + "#sha'\n", want: true},
+		{name: "double quoted", yaml: "dependencies:\n  apm:\n    - \"" + legacyTelemetryAPMPackage + "#sha\"\n", want: true},
+		{name: "comment", yaml: "dependencies:\n  apm:\n    - " + legacyTelemetryAPMPackage + "#sha # old hook\n", want: true},
+		{name: "case insensitive", yaml: "dependencies:\n  apm:\n    - netcracker/Qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry\n", want: true},
+		{name: "near match", yaml: "dependencies:\n  apm:\n    - " + legacyTelemetryAPMPackage + "-extra\n"},
+		{
+			name: "other dependency categories",
+			yaml: "dependencies:\n  mcp:\n    - " + legacyTelemetryAPMPackage +
+				"\n  lsp:\n    - " + legacyTelemetryAPMPackage + "\n",
+		},
+		{
+			name: "object form neighbor",
+			yaml: "dependencies:\n  apm:\n    - git: example.com/team/package\n    - " +
+				legacyTelemetryAPMPackage + "\n",
+			want: true,
+		},
+		{name: "object form only", yaml: "dependencies:\n  apm:\n    - git: example.com/team/package\n"},
 		{name: "unrelated list", yaml: "examples:\n  - " + legacyTelemetryAPMPackage + "\n"},
-		{name: "absent", yaml: "dependencies:\n  - another/package\n"},
+		{name: "absent", yaml: "dependencies:\n  apm:\n    - another/package\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -256,5 +268,11 @@ func TestHasLegacyTelemetryAPMDependency(t *testing.T) {
 func TestHasLegacyTelemetryAPMDependencyRejectsMalformedYAML(t *testing.T) {
 	if _, err := hasLegacyTelemetryAPMDependency([]byte("dependencies: [\n")); err == nil {
 		t.Fatal("expected malformed YAML error")
+	}
+}
+
+func TestHasLegacyTelemetryAPMDependencyRejectsInvalidAPMEntryType(t *testing.T) {
+	if _, err := hasLegacyTelemetryAPMDependency([]byte("dependencies:\n  apm:\n    - 42\n")); err == nil {
+		t.Fatal("expected invalid dependencies.apm entry error")
 	}
 }
