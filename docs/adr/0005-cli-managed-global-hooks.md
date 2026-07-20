@@ -45,6 +45,15 @@ configuration. `--hooks=all`, `--hooks=none`, or a comma-separated target list c
 `ai-agent-telemetry hooks install` is the noninteractive repair path. It can select targets with
 `--target=<list>` and never reads or changes the endpoint, token, CA, or repository policy.
 
+Before either command installs a nonempty set of CLI-managed hooks, the CLI checks the global APM manifest at
+`~/.apm/apm.yml` for the exact legacy telemetry package dependency. When it finds the dependency, it asks APM to
+uninstall it globally. The CLI does not inspect or edit repository-local APM manifests.
+
+Cleanup is best effort. Read, parse, executable lookup, and uninstall failures produce warnings on `stderr` but do not
+change the command exit code. The CLI continues canonicalizing the requested native hooks, and configuration and hook
+installation results determine success. Because `configure` writes machine configuration first, that configuration
+remains written after a cleanup warning or a later hook failure.
+
 Each native adapter recognizes only canonical telemetry commands, retained APM provenance, and
 explicitly supported legacy commands. It removes duplicate owned entries and preserves unrelated
 top-level fields, events, groups, handlers, and extension fields. Repeated installation is
@@ -64,9 +73,10 @@ each hook as `installed`, `missing`, or `invalid`; `selftest` proves collector d
 must be fully restarted after hook changes. The CLI does not modify private harness trust state.
 Users inspect and approve the telemetry command when prompted.
 
-The `agent-packages/ai-agent-telemetry` APM hook package remains as a legacy compatibility surface
-for existing consumers. New setups use the machine-wide hooks installed with the CLI. A parity
-test keeps the package's three command strings aligned with the CLI.
+The `agent-packages/ai-agent-telemetry` APM hook package remains as a compatibility surface for existing
+repository-local consumers. Automatic cleanup removes only its global dependency when possible; it does not remove
+the package from project manifests. New setups use the machine-wide hooks installed with the CLI. A parity test keeps
+the package's command strings aligned with the CLI.
 
 This ADR supersedes the APM-first installation assumptions in earlier design and decision records.
 Those historical records remain unchanged because they document the constraints that led here.
@@ -76,6 +86,7 @@ Those historical records remain unchanged because they document the constraints 
 - One installer run configures telemetry across repositories for Claude Code, Codex, and Cursor.
 - Updating an already configured binary refreshes hooks without collector prompts.
 - Native user configuration remains under user control; malformed files require explicit repair.
+- Legacy global APM cleanup can warn and leave the dependency installed without blocking native hook installation.
 - Hook status and collector delivery remain separate checks.
 - Harness trust remains a user decision, so installation may require review after a command change.
-- Existing APM consumers can migrate without an immediate package removal.
+- Existing repository-local APM consumers can migrate without an immediate package removal.
