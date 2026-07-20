@@ -6,6 +6,8 @@ compose_file=$backend_dir/docker-compose.yml
 env_file=$backend_dir/.env.example
 caddyfile=$backend_dir/Caddyfile
 readme=$backend_dir/README.md
+datasource_file=$backend_dir/grafana/provisioning/datasources/victorialogs.yaml
+health_dashboard=$backend_dir/grafana/dashboards/telemetry-health.json
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -18,8 +20,12 @@ done
 
 grep -q '@ingest path /v1/logs' "$caddyfile" || fail 'ingest path matcher is missing'
 grep -q '@grafana path /grafana/\\*' "$caddyfile" || fail 'Grafana path matcher is missing'
+grep -q '@grafana_login {' "$caddyfile" || fail 'Grafana login matcher is missing'
+grep -q 'path /grafana/login' "$caddyfile" || fail 'Grafana login path is missing'
 grep -q '@dashboard_entry path / /grafana' "$caddyfile" || fail 'dashboard entry redirect matcher is missing'
 grep -q '@vmui path /select/\\*' "$caddyfile" || fail 'VMUI path matcher is missing'
+grep -q 'header_up X-WEBAUTH-USER viewer-{http.auth.user.id}' "$caddyfile" ||
+  fail 'Grafana auth proxy must isolate viewer identities from native administrators'
 
 rendered=$(mktemp)
 trap 'rm -f "$rendered"' EXIT HUP INT TERM
@@ -30,8 +36,14 @@ jq -e '[.services.collector.ports, .services.victorialogs.ports] | all(. == null
 jq -e '(.services.grafana.build.context // "") | endswith("/telemetry-backend/grafana")' "$rendered" >/dev/null ||
   fail 'Grafana build context is missing'
 jq -e '.services.grafana.ports == null' "$rendered" >/dev/null || fail 'Grafana must not publish ports'
-jq -e '.services.grafana.environment.GF_AUTH_ANONYMOUS_ORG_ROLE == "Viewer"' "$rendered" >/dev/null ||
-  fail 'Grafana anonymous Viewer role is missing'
+jq -e '.services.grafana.environment.GF_AUTH_ANONYMOUS_ENABLED == "false"' "$rendered" >/dev/null ||
+  fail 'Grafana anonymous access must be disabled'
+jq -e '.services.grafana.environment.GF_AUTH_PROXY_ENABLED == "true"' "$rendered" >/dev/null ||
+  fail 'Grafana auth proxy must be enabled'
+jq -e '.services.grafana.environment.GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN == "true"' "$rendered" >/dev/null ||
+  fail 'Grafana auth proxy must issue a login token'
+jq -e '.services.grafana.environment.GF_USERS_AUTO_ASSIGN_ORG_ROLE == "Viewer"' "$rendered" >/dev/null ||
+  fail 'Grafana auth proxy users must receive the Viewer role'
 jq -e '.services.grafana.environment.GF_USERS_ALLOW_SIGN_UP == "false"' "$rendered" >/dev/null ||
   fail 'Grafana user sign-up must be disabled'
 jq -e '.services.grafana.environment.GF_PLUGINS_PREINSTALL_DISABLED == "true"' "$rendered" >/dev/null ||
@@ -40,6 +52,33 @@ jq -e '.services.grafana.environment.GF_ANALYTICS_REPORTING_ENABLED == "false"' 
   fail 'Grafana anonymous usage reporting must be disabled'
 [ -d "$backend_dir/grafana/provisioning/plugins" ] || fail 'Grafana plugin provisioning directory is missing'
 [ -d "$backend_dir/grafana/provisioning/alerting" ] || fail 'Grafana alerting provisioning directory is missing'
+grep -q '^    uid: victorialogs$' "$datasource_file" || fail 'VictoriaLogs datasource UID changed'
+grep -q '^    editable: true$' "$datasource_file" ||
+  fail 'VictoriaLogs datasource must allow administrator edits'
+
+for panel_spec in \
+  'Event ID coverage:coverage_percent:80:95' \
+  'Machine ID coverage:coverage_percent:80:95' \
+  'Duplicate delivery rate:duplicate_percent:0.1:1' \
+  'MCP duration coverage:coverage_percent:80:95'; do
+  panel_title=${panel_spec%%:*}
+  panel_values=${panel_spec#*:}
+  percent_field=${panel_values%%:*}
+  panel_values=${panel_values#*:}
+  warning_threshold=${panel_values%%:*}
+  critical_threshold=${panel_values#*:}
+  jq -e --arg title "$panel_title" --arg field "$percent_field" \
+    --argjson warning "$warning_threshold" --argjson critical "$critical_threshold" '
+    .panels[] | select(.title == $title) |
+    .fieldConfig.defaults.unit == "percent" and
+    .fieldConfig.overrides == [] and
+    .fieldConfig.defaults.thresholds.mode == "absolute" and
+    [.fieldConfig.defaults.thresholds.steps[].value] == [null, $warning, $critical] and
+    (.targets | length) == 1 and
+    (.targets[0].expr | endswith("| keep " + $field))
+  ' "$health_dashboard" >/dev/null ||
+    fail "$panel_title must return and format only $percent_field with semantic thresholds"
+done
 
 for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_USER \
   GRAFANA_ADMIN_PASSWORD 'grafana cli admin reset-admin-password' 'Executive overview' 'Skill adoption' \

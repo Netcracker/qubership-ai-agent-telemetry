@@ -62,14 +62,16 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Open these URLs and enter `DASHBOARD_AUTH_USER` plus the original dashboard password:
+Open these URLs and enter `DASHBOARD_AUTH_USER` plus the original dashboard password. Grafana exchanges the Basic
+Auth credentials for a login cookie, so the browser prompts once per Grafana session:
 
 - `https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/` for management dashboards;
 - `https://<SITE_ADDRESS>:<HTTPS_PORT>/select/vmui/` for ad hoc VictoriaLogs queries.
 
-For Grafana administration, open `https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/login` after passing Caddy Basic Auth,
-then enter `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`. Normal viewers remain anonymous Viewer users inside
-Grafana and cannot edit provisioned dashboards.
+For Grafana administration, open
+`https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/login?disableAutoLogin=true` after passing Caddy Basic Auth. Then enter
+`GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD`. The shared dashboard user receives the Viewer role under an isolated
+Grafana identity and cannot edit provisioned dashboards, even if both configured usernames happen to match.
 
 With `CADDY_TLS=internal`, trust the generated Caddy root certificate in the browser or accept the local certificate
 warning. Do not disable certificate verification for production clients.
@@ -121,6 +123,11 @@ datasources:
       basicAuthPassword: <dashboard-password>
 ```
 
+To point the bundled dashboards at a remote server temporarily, sign in as the Grafana administrator and open
+**Connections > Data sources > VictoriaLogs**. Replace the URL and configure Basic Auth with the remote Caddy viewer
+credentials. Keep the `victorialogs` UID so every provisioned dashboard uses the updated datasource. Grafana restores
+the internal datasource settings the next time provisioning runs.
+
 ## Operations
 
 | Task | Command |
@@ -144,6 +151,7 @@ docker compose exec grafana grafana cli admin reset-admin-password '<new-admin-p
 | Path | Backend | Authentication |
 | --- | --- | --- |
 | `/v1/logs` | OpenTelemetry Collector `:4318` | `Authorization: Bearer <INGEST_TOKEN>` |
-| `/grafana/*` | Grafana `:3000` | Caddy Basic Auth; anonymous Viewer or Grafana admin session inside |
+| `/grafana/login` | Grafana `:3000` | Caddy Basic Auth, then a Grafana Viewer or administrator session |
+| other `/grafana/*` paths | Grafana `:3000` | Grafana session cookie |
 | `/select/*` | VictoriaLogs `:9428` | Caddy Basic Auth |
 | everything else | None | `404 not found` |

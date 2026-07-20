@@ -43,7 +43,6 @@
                 {"key": "agent", "value": {"stringValue": "claude"}},
                 {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000011"}},
                 {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-a"}},
-                {"key": "mcp.server.name", "value": {"stringValue": "github"}},
                 {"key": "mcp.tool.name", "value": {"stringValue": "search"}},
                 {"key": "mcp.outcome", "value": {"stringValue": "succeeded"}},
                 {"key": "mcp.duration_ms", "value": {"intValue": "120"}}

@@ -14,9 +14,13 @@ project=telemetry-dashboard-contract-$$
 env_file=$tmp_dir/backend.env
 ca_cert=$tmp_dir/caddy-root.crt
 rendered_fixture=$tmp_dir/otel-events.json
-dashboard_user=viewer
+# Deliberately collides with GRAFANA_ADMIN_USER to prove the auth-proxy prefix prevents privilege escalation.
+dashboard_user='admin'
 dashboard_password='fixture-viewer-password'
 ingest_token='fixture-ingest-token'
+http_port=${TEST_HTTP_PORT:-18080}
+https_port=${TEST_HTTPS_PORT:-18443}
+base_url=https://localhost:$https_port
 
 compose() {
   docker compose -p "$project" --env-file "$env_file" -f "$compose_file" "$@"
@@ -38,8 +42,8 @@ password_hash=$(docker run --rm caddy:2 caddy hash-password --plaintext "$dashbo
   printf '%s\n' 'GRAFANA_ADMIN_USER=admin'
   printf '%s\n' 'GRAFANA_ADMIN_PASSWORD=fixture-admin-password'
   printf '%s\n' 'VL_RETENTION=30d'
-  printf '%s\n' 'HTTP_PORT=18080'
-  printf '%s\n' 'HTTPS_PORT=18443'
+  printf 'HTTP_PORT=%s\n' "$http_port"
+  printf 'HTTPS_PORT=%s\n' "$https_port"
 } >"$env_file"
 
 if [ "${TEST_WITH_GRAFANA:-}" = 1 ]; then
@@ -61,7 +65,7 @@ done
 attempt=0
 while :; do
   status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-    --cacert "$ca_cert" https://localhost:18443/unknown || true)
+    --cacert "$ca_cert" "$base_url/unknown" || true)
   [ "$status" = 404 ] && break
   attempt=$((attempt + 1))
   [ "$attempt" -lt 60 ] || {
@@ -85,7 +89,7 @@ curl --fail --silent --show-error --cacert "$ca_cert" \
   --header "Authorization: Bearer $ingest_token" \
   --header 'Content-Type: application/json' \
   --data-binary "@$rendered_fixture" \
-  https://localhost:18443/v1/logs >/dev/null
+  "$base_url/v1/logs" >/dev/null
 
 attempt=0
 while :; do
@@ -94,7 +98,7 @@ while :; do
     --data-urlencode 'query={service.name="ai-agent-telemetry"} | stats count() total' \
     --data-urlencode "start=$hour" \
     --data-urlencode "end=$((hour + 3600))" \
-    https://localhost:18443/select/logsql/query |
+    "$base_url/select/logsql/query" |
     jq -sr 'if length == 1 then .[0].total // empty else empty end')
   [ "$total" = 8 ] && break
   attempt=$((attempt + 1))
@@ -105,7 +109,7 @@ while :; do
   sleep 1
 done
 
-export TEST_BASE_URL='https://localhost:18443'
+export TEST_BASE_URL="$base_url"
 export TEST_CA_CERT="$ca_cert"
 export TEST_DASHBOARD_USER="$dashboard_user"
 export TEST_DASHBOARD_PASSWORD="$dashboard_password"

@@ -8,6 +8,6 @@ datasources:
     access: proxy
     url: http://victorialogs:9428
     isDefault: true
-    editable: false
+    editable: true
     jsonData:
       maxLines: 1000
