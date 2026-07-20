@@ -345,10 +345,11 @@ write_telemetry_receipt() {
 }
 
 telemetry_hooks_may_exist() {
-  [ -e "$HOME/.claude/settings.json" ] ||
-    [ -e "$HOME/.codex/hooks.json" ] ||
-    [ -e "$HOME/.cursor/hooks.json" ] ||
-    [ -e "$HOME/.codex/rules/ai-agent-telemetry.rules" ]
+  [ -e "$HOME/.claude/settings.json" ] || [ -L "$HOME/.claude/settings.json" ] ||
+    [ -e "$HOME/.codex/hooks.json" ] || [ -L "$HOME/.codex/hooks.json" ] ||
+    [ -e "$HOME/.cursor/hooks.json" ] || [ -L "$HOME/.cursor/hooks.json" ] ||
+    [ -e "$HOME/.codex/rules/ai-agent-telemetry.rules" ] ||
+    [ -L "$HOME/.codex/rules/ai-agent-telemetry.rules" ]
 }
 
 telemetry_uninstall() {
@@ -469,12 +470,21 @@ git_hooks_verify() {
 }
 
 git_hooks_uninstall() {
+  command -v git >/dev/null 2>&1 || {
+    printf '%s: git-hooks: cannot uninstall because Git is not on PATH. Install Git and retry.\n' \
+      "$PROGRAM" >&2
+    return 1
+  }
   init_git_hooks
   _desired_hooks_path=$(git_hooks_desired_path) || return 1
   _current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || :)
-  if [ -n "$_current_hooks_path" ] && [ -d "$_current_hooks_path" ]; then
-    _current_hooks_path=$(CDPATH='' cd -- "$_current_hooks_path" && pwd -P) || return 1
-  fi
+  case $_current_hooks_path in
+    /*)
+      if [ -d "$_current_hooks_path" ]; then
+        _current_hooks_path=$(CDPATH='' cd -- "$_current_hooks_path" && pwd -P) || return 1
+      fi
+      ;;
+  esac
   if [ "$_current_hooks_path" = "$_desired_hooks_path" ]; then
     git config --global --unset-all core.hooksPath || return 1
   fi
@@ -485,13 +495,21 @@ git_hooks_uninstall() {
       "$PROGRAM" "$GIT_HOOKS_DIR" >&2
     return 1
   fi
-  _origin=$(git -C "$GIT_HOOKS_DIR" remote get-url origin 2>/dev/null) || return 1
+  _origin=$(git -C "$GIT_HOOKS_DIR" remote get-url origin 2>/dev/null) || {
+    printf '%s: git-hooks: cannot read origin for %s. Preserving the directory.\n' \
+      "$PROGRAM" "$GIT_HOOKS_DIR" >&2
+    return 1
+  }
   if [ "$_origin" != "$GIT_HOOKS_REPOSITORY" ]; then
     printf '%s: git-hooks: preserving %s because its origin is %s.\n' \
       "$PROGRAM" "$GIT_HOOKS_DIR" "$_origin" >&2
     return 1
   fi
-  _status=$(git -C "$GIT_HOOKS_DIR" status --porcelain) || return 1
+  _status=$(git -C "$GIT_HOOKS_DIR" status --porcelain) || {
+    printf '%s: git-hooks: cannot inspect worktree status for %s. Preserving the directory.\n' \
+      "$PROGRAM" "$GIT_HOOKS_DIR" >&2
+    return 1
+  }
   if [ -n "$_status" ]; then
     printf '%s: git-hooks: preserving modified worktree %s.\n' "$PROGRAM" "$GIT_HOOKS_DIR" >&2
     return 1

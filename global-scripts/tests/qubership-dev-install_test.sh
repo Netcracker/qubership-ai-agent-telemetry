@@ -71,7 +71,7 @@ setup_component_fixture() {
   export QUBERSHIP_DEV_GIT_HOOKS_DIR="$XDG_DATA_HOME/qubership/pre-commit-global"
   export PATH="$FIXTURE_ROOT/bin:/usr/bin:/bin"
   unset CYBER_FERRET_PASSWORD QDI_FAIL_APM_COMMAND QDI_FAIL_TELEMETRY_HOOKS
-  unset QDI_GIT_STATUS QDI_GIT_PULL_FAIL
+  unset QDI_GIT_STATUS QDI_GIT_PULL_FAIL QDI_FAIL_GIT_ORIGIN QDI_FAIL_GIT_STATUS
   unset QDI_TEST_JAVA_EXIT_CODE QDI_TEST_JAVA_SPEC_VERSION
   mkdir -p "$HOME" "$FIXTURE_ROOT/bin" "$XDG_CONFIG_HOME/ai-agent-telemetry"
   printf 'AI_AGENT_TELEMETRY_ENDPOINT=https://telemetry.example.test\n' \
@@ -142,11 +142,13 @@ if [ "${1:-}" = -C ] && [ "${3:-}" = rev-parse ]; then
   exit 0
 fi
 if [ "${1:-}" = -C ] && [ "${3:-}" = remote ] && [ "${4:-}" = get-url ]; then
+  [ "${QDI_FAIL_GIT_ORIGIN:-0}" -eq 0 ] || exit 8
   [ -f "$QDI_GIT_ORIGIN_FILE" ] || exit 1
   cat "$QDI_GIT_ORIGIN_FILE"
   exit 0
 fi
 if [ "${1:-}" = -C ] && [ "${3:-}" = status ]; then
+  [ "${QDI_FAIL_GIT_STATUS:-0}" -eq 0 ] || exit 8
   [ -z "${QDI_GIT_STATUS:-}" ] || printf '%s\n' "$QDI_GIT_STATUS"
   exit 0
 fi
@@ -208,6 +210,7 @@ teardown_component_fixture() {
   unset QDI_TEST_LOG QDI_GIT_CONFIG
   unset QDI_MARKETPLACE_STATE QDI_APM_INSTALLER QDI_APM_CLI QDI_TELEMETRY_INSTALLER QDI_TELEMETRY_CLI
   unset QDI_GIT_ORIGIN_FILE QDI_GIT_STATUS QDI_GIT_PULL_FAIL
+  unset QDI_FAIL_GIT_ORIGIN QDI_FAIL_GIT_STATUS
   unset QDI_TELEMETRY_RECEIPT QDI_TELEMETRY_CONFIG_DIR QDI_TELEMETRY_CACHE_DIR
   unset QDI_TELEMETRY_HOOK QDI_MANAGED_TELEMETRY_BIN QDI_FAIL_TELEMETRY_HOOKS
   unset QUBERSHIP_DEV_APM_INSTALL_URL
@@ -581,6 +584,18 @@ test_telemetry_uninstall_fails_closed_without_cli_or_receipt() {
   teardown_component_fixture
 }
 
+test_telemetry_uninstall_treats_dangling_hook_symlink_as_existing() {
+  setup_component_fixture
+  mkdir -p "$(dirname "$QDI_TELEMETRY_HOOK")"
+  ln -s "$FIXTURE_ROOT/missing-hook-target" "$QDI_TELEMETRY_HOOK"
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 1 ] || fail "expected dangling-hook telemetry uninstall failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "native hook files exist"
+  [ -L "$QDI_TELEMETRY_HOOK" ] || fail "removed dangling hook symlink"
+  [ ! -e "$QDI_TELEMETRY_RECEIPT" ] || fail "wrote receipt with dangling native hook symlink"
+  teardown_component_fixture
+}
+
 test_telemetry_uninstall_writes_receipt_when_no_hooks_exist() {
   setup_component_fixture
   run_fixture_installer --uninstall --components telemetry
@@ -668,6 +683,64 @@ test_git_hooks_uninstall_deactivates_exact_managed_path() {
   assert_log_contains "git config --global --unset-all core.hooksPath"
   [ ! -e "$QDI_GIT_CONFIG" ] || fail "managed core.hooksPath remains configured"
   assert_log_not_contains "java "
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_fails_without_git_and_continues() {
+  setup_component_fixture
+  isolated_path="$FIXTURE_ROOT/no-git-bin"
+  mkdir -p "$isolated_path"
+  for tool in awk cat dirname mkdir mv rm sh; do
+    ln -s "$(command -v "$tool")" "$isolated_path/$tool"
+  done
+  PATH=$isolated_path
+  export PATH
+  run_fixture_installer --uninstall --components git-hooks,telemetry
+  [ "$RUN_CODE" -eq 1 ] || fail "expected missing-Git uninstall failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "git-hooks: cannot uninstall because Git is not on PATH"
+  assert_contains "$RUN_OUTPUT" "git-hooks        FAILED"
+  assert_contains "$RUN_OUTPUT" "telemetry        OK"
+  [ -f "$QDI_TELEMETRY_RECEIPT" ] || fail "later telemetry component did not run"
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_preserves_relative_configured_path() {
+  setup_component_fixture
+  managed_parent=$(dirname "$QUBERSHIP_DEV_GIT_HOOKS_DIR")
+  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
+  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
+  printf 'pre-commit-global/hooks-global\n' > "$QDI_GIT_CONFIG"
+  set +e
+  RUN_OUTPUT=$(CDPATH='' cd -- "$managed_parent" && sh "$INSTALLER" --uninstall --components git-hooks 2>&1)
+  RUN_CODE=$?
+  set -e
+  [ "$RUN_CODE" -eq 0 ] || fail "relative-path Git hooks uninstall failed: $RUN_OUTPUT"
+  [ "$(cat "$QDI_GIT_CONFIG")" = pre-commit-global/hooks-global ] ||
+    fail "unset relative core.hooksPath after cwd-based canonicalization"
+  assert_log_not_contains "git config --global --unset-all core.hooksPath"
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_reports_origin_inspection_failure() {
+  setup_component_fixture
+  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
+  export QDI_FAIL_GIT_ORIGIN=1
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 1 ] || fail "expected origin inspection failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "git-hooks: cannot read origin for $QUBERSHIP_DEV_GIT_HOOKS_DIR"
+  [ -d "$QUBERSHIP_DEV_GIT_HOOKS_DIR" ] || fail "removed clone after origin inspection failure"
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_reports_status_inspection_failure() {
+  setup_component_fixture
+  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
+  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
+  export QDI_FAIL_GIT_STATUS=1
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 1 ] || fail "expected status inspection failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "git-hooks: cannot inspect worktree status for $QUBERSHIP_DEV_GIT_HOOKS_DIR"
+  [ -d "$QUBERSHIP_DEV_GIT_HOOKS_DIR" ] || fail "removed clone after status inspection failure"
   teardown_component_fixture
 }
 
@@ -761,6 +834,7 @@ test_telemetry_hook_failure_preserves_managed_binary
 test_telemetry_uninstall_preserves_external_path_command
 test_telemetry_uninstall_accepts_valid_receipt_on_repeat
 test_telemetry_uninstall_fails_closed_without_cli_or_receipt
+test_telemetry_uninstall_treats_dangling_hook_symlink_as_existing
 test_telemetry_uninstall_writes_receipt_when_no_hooks_exist
 test_telemetry_purge_removes_only_package_config_and_cache
 test_unconfigured_telemetry_fails_non_interactively
@@ -768,6 +842,10 @@ test_unconfigured_telemetry_configures_interactively
 test_git_hooks_reject_wrong_origin_and_dirty_clone
 test_git_hooks_reject_non_repository_and_divergence
 test_git_hooks_uninstall_deactivates_exact_managed_path
+test_git_hooks_uninstall_fails_without_git_and_continues
+test_git_hooks_uninstall_preserves_relative_configured_path
+test_git_hooks_uninstall_reports_origin_inspection_failure
+test_git_hooks_uninstall_reports_status_inspection_failure
 test_git_hooks_uninstall_preserves_unrelated_path
 test_git_hooks_uninstall_accepts_missing_clone
 test_git_hooks_uninstall_removes_clean_expected_clone
