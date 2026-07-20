@@ -82,10 +82,39 @@ qubership-dev-install.sh --skip git-hooks
 ./qubership-dev-install.ps1 -Skip git-hooks
 ```
 
+## Uninstall
+
+Remove every managed component while preserving telemetry settings and buffered events:
+
+```sh
+qubership-dev-install.sh --uninstall
+```
+
+```powershell
+./qubership-dev-install.ps1 -Uninstall
+```
+
+Add `--purge` or `-Purge` to also delete the telemetry configuration and cache. **Purge permanently deletes the
+collector token, private CA, machine identity, repository policy, delivery settings, diagnostics, and unsent events.**
+
+The uninstall keeps the APM CLI, the `qubership-ai-packages` marketplace registration, shared PATH entries, and the
+nonsensitive telemetry hook-removal receipt. It preserves unrelated harness hooks, external telemetry commands, and
+an unrelated global Git hooks path. A modified managed Git hooks clone is preserved and reported as a failure for
+manual review.
+
+After you inspect and resolve changes in a preserved Git hooks clone, rerun uninstall. If you have verified that no
+other global package uses the marketplace, you can remove its registration as an optional cleanup step:
+
+```sh
+apm marketplace remove qubership-ai-packages --yes
+```
+
 ## Options
 
 | POSIX | PowerShell | Behavior |
 | --- | --- | --- |
+| `--uninstall` | `-Uninstall` | Remove selected managed components while preserving telemetry data. |
+| `--purge` | `-Purge` | Also delete telemetry configuration and cache; requires uninstall mode. |
 | `--components <list>` | `-Components <list>` | Select components. The default is `all`. |
 | `--skip <list>` | `-Skip <list>` | Exclude components from the selected set. |
 | `--harnesses <list>` | `-Harnesses <list>` | Select agent harnesses. The default is `all`. |
@@ -93,6 +122,9 @@ qubership-dev-install.sh --skip git-hooks
 | `--force-update` | `-ForceUpdate` | Force update operations for every selected component. |
 | `--non-interactive` | `-NonInteractive` | Fail instead of prompting for missing prerequisites. |
 | `-h`, `--help` | `-Help` | Print command help. |
+
+Uninstall mode rejects harness selection and install-only options: force Git hooks replacement, force update, and
+non-interactive prerequisite handling. Component selection and exclusion remain available.
 
 Existing APM and telemetry CLIs are updated before configuration on every run. `--force-update` also performs these
 component-specific operations:

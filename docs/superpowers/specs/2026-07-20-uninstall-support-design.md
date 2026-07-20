@@ -4,7 +4,7 @@
 The Qubership developer installers gain an uninstall mode that composes this command with removal of the managed APM
 package and global Git hooks.
 
-Status: proposed design.
+Status: implemented design.
 
 ## Problem
 
