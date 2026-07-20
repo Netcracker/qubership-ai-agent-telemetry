@@ -50,6 +50,8 @@ setup_component_fixture() {
   export HOME="$FIXTURE_ROOT/home"
   export XDG_DATA_HOME="$FIXTURE_ROOT/data"
   export XDG_CONFIG_HOME="$FIXTURE_ROOT/config"
+  export XDG_STATE_HOME="$FIXTURE_ROOT/state"
+  export XDG_CACHE_HOME="$FIXTURE_ROOT/cache"
   export QDI_TEST_LOG="$FIXTURE_ROOT/commands.log"
   export QDI_GIT_CONFIG="$FIXTURE_ROOT/git-hooks-path"
   export QDI_MARKETPLACE_STATE="$FIXTURE_ROOT/marketplace-added"
@@ -58,12 +60,18 @@ setup_component_fixture() {
   export QDI_GIT_ORIGIN_FILE="$FIXTURE_ROOT/git-origin"
   export QDI_APM_INSTALLER="$FIXTURE_ROOT/apm-installer.sh"
   export QDI_APM_CLI="$FIXTURE_ROOT/apm"
+  export QDI_TELEMETRY_RECEIPT="$XDG_STATE_HOME/ai-agent-telemetry/hooks-uninstalled"
+  export QDI_TELEMETRY_CONFIG_DIR="$XDG_CONFIG_HOME/ai-agent-telemetry"
+  export QDI_TELEMETRY_CACHE_DIR="$XDG_CACHE_HOME/ai-agent-telemetry"
+  export QDI_TELEMETRY_HOOK="$HOME/.codex/hooks.json"
+  export QDI_MANAGED_TELEMETRY_BIN="$HOME/.local/bin/ai-agent-telemetry"
   export QUBERSHIP_DEV_APM_INSTALL_URL=https://example.test/apm-unix
   export QUBERSHIP_DEV_TELEMETRY_INSTALL_URL=https://example.test/install.sh
   export QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY=https://example.test/pre-commit-global.git
   export QUBERSHIP_DEV_GIT_HOOKS_DIR="$XDG_DATA_HOME/qubership/pre-commit-global"
   export PATH="$FIXTURE_ROOT/bin:/usr/bin:/bin"
-  unset CYBER_FERRET_PASSWORD QDI_FAIL_APM_COMMAND QDI_GIT_STATUS QDI_GIT_PULL_FAIL
+  unset CYBER_FERRET_PASSWORD QDI_FAIL_APM_COMMAND QDI_FAIL_TELEMETRY_HOOKS
+  unset QDI_GIT_STATUS QDI_GIT_PULL_FAIL
   unset QDI_TEST_JAVA_EXIT_CODE QDI_TEST_JAVA_SPEC_VERSION
   mkdir -p "$HOME" "$FIXTURE_ROOT/bin" "$XDG_CONFIG_HOME/ai-agent-telemetry"
   printf 'AI_AGENT_TELEMETRY_ENDPOINT=https://telemetry.example.test\n' \
@@ -113,6 +121,10 @@ printf 'git %s\n' "$*" >> "$QDI_TEST_LOG"
 if [ "${1:-}" = config ] && [ "${2:-}" = --global ] && [ "${3:-}" = --get ]; then
   [ -f "$QDI_GIT_CONFIG" ] || exit 1
   cat "$QDI_GIT_CONFIG"
+  exit 0
+fi
+if [ "${1:-}" = config ] && [ "${2:-}" = --global ] && [ "${3:-}" = --unset-all ]; then
+  rm -f "$QDI_GIT_CONFIG"
   exit 0
 fi
 if [ "${1:-}" = config ] && [ "${2:-}" = --global ] && [ "${3:-}" = core.hooksPath ]; then
@@ -179,6 +191,10 @@ EOF
 cat > "$QDI_TELEMETRY_CLI" <<'EOF'
 #!/bin/sh
 printf 'ai-agent-telemetry %s\n' "$*" >> "$QDI_TEST_LOG"
+if [ "${QDI_FAIL_TELEMETRY_HOOKS:-0}" -eq 1 ] &&
+  [ "${1:-}" = hooks ] && [ "${2:-}" = uninstall ]; then
+  exit 9
+fi
 EOF
 
   chmod +x "$FIXTURE_ROOT/bin/java" "$FIXTURE_ROOT/bin/apm" "$FIXTURE_ROOT/bin/git" \
@@ -188,9 +204,12 @@ EOF
 
 teardown_component_fixture() {
   rm -rf "$FIXTURE_ROOT"
-  unset FIXTURE_ROOT HOME XDG_DATA_HOME XDG_CONFIG_HOME QDI_TEST_LOG QDI_GIT_CONFIG
+  unset FIXTURE_ROOT HOME XDG_DATA_HOME XDG_CONFIG_HOME XDG_STATE_HOME XDG_CACHE_HOME
+  unset QDI_TEST_LOG QDI_GIT_CONFIG
   unset QDI_MARKETPLACE_STATE QDI_APM_INSTALLER QDI_APM_CLI QDI_TELEMETRY_INSTALLER QDI_TELEMETRY_CLI
   unset QDI_GIT_ORIGIN_FILE QDI_GIT_STATUS QDI_GIT_PULL_FAIL
+  unset QDI_TELEMETRY_RECEIPT QDI_TELEMETRY_CONFIG_DIR QDI_TELEMETRY_CACHE_DIR
+  unset QDI_TELEMETRY_HOOK QDI_MANAGED_TELEMETRY_BIN QDI_FAIL_TELEMETRY_HOOKS
   unset QUBERSHIP_DEV_APM_INSTALL_URL
   unset QUBERSHIP_DEV_TELEMETRY_INSTALL_URL QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY
   unset QUBERSHIP_DEV_GIT_HOOKS_DIR QDI_FAIL_APM_COMMAND CYBER_FERRET_PASSWORD
@@ -226,6 +245,9 @@ test_help_describes_public_options() {
   assert_contains "$output" "--force-git-hooks"
   assert_contains "$output" "--force-update"
   assert_contains "$output" "--non-interactive"
+  assert_contains "$output" "--uninstall"
+  assert_contains "$output" "--purge"
+  assert_contains "$output" "Uninstall the selected Qubership developer tools."
 }
 
 test_invalid_component_fails_before_installation() {
@@ -241,6 +263,14 @@ test_empty_selection_fails_before_installation() {
   assert_exit_with 2 'no components selected' --components telemetry --skip telemetry
   assert_exit_with 2 'component list contains an empty value' --components=apm,,telemetry
   assert_exit_with 2 'harness list contains an empty value' --harnesses=claude,
+}
+
+test_uninstall_option_combinations_are_rejected_before_changes() {
+  assert_exit_with 2 '--purge requires --uninstall' --purge
+  assert_exit_with 2 '--harnesses is not valid with --uninstall' --uninstall --harnesses claude
+  assert_exit_with 2 '--force-update is not valid with --uninstall' --uninstall --force-update
+  assert_exit_with 2 '--force-git-hooks is not valid with --uninstall' --uninstall --force-git-hooks
+  assert_exit_with 2 '--non-interactive is not valid with --uninstall' --uninstall --non-interactive
 }
 
 test_git_hook_prerequisites_fail_non_interactively() {
@@ -453,6 +483,130 @@ test_component_failure_does_not_stop_independent_components() {
   teardown_component_fixture
 }
 
+test_apm_uninstall_skips_missing_manifest() {
+  setup_component_fixture
+  run_fixture_installer --uninstall --components apm
+  [ "$RUN_CODE" -eq 0 ] || fail "missing-manifest uninstall failed: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "apm              SKIPPED"
+  assert_log_not_contains "apm uninstall"
+  teardown_component_fixture
+}
+
+test_apm_uninstall_invokes_global_package_removal() {
+  setup_component_fixture
+  mkdir -p "$HOME/.apm"
+  : > "$HOME/.apm/apm.yml"
+  : > "$QDI_MARKETPLACE_STATE"
+  run_fixture_installer --uninstall --components apm
+  [ "$RUN_CODE" -eq 0 ] || fail "APM uninstall failed: $RUN_OUTPUT"
+  assert_log_contains "apm uninstall -g qubership-global-essentials@qubership-ai-packages"
+  assert_contains "$RUN_OUTPUT" "apm              OK"
+  [ -x "$FIXTURE_ROOT/bin/apm" ] || fail "removed APM CLI"
+  [ -f "$QDI_MARKETPLACE_STATE" ] || fail "removed marketplace marker"
+  teardown_component_fixture
+}
+
+test_apm_uninstall_failure_does_not_stop_telemetry() {
+  setup_component_fixture
+  mkdir -p "$HOME/.apm" "$(dirname "$QDI_MANAGED_TELEMETRY_BIN")"
+  : > "$HOME/.apm/apm.yml"
+  cp "$QDI_TELEMETRY_CLI" "$QDI_MANAGED_TELEMETRY_BIN"
+  chmod +x "$QDI_MANAGED_TELEMETRY_BIN"
+  export QDI_FAIL_APM_COMMAND=uninstall
+  run_fixture_installer --uninstall --components apm,telemetry
+  [ "$RUN_CODE" -eq 1 ] || fail "expected aggregated uninstall failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "apm              FAILED"
+  assert_contains "$RUN_OUTPUT" "telemetry        OK"
+  assert_log_contains "ai-agent-telemetry hooks uninstall"
+  teardown_component_fixture
+}
+
+test_telemetry_uninstall_removes_hooks_before_managed_binary() {
+  setup_component_fixture
+  mkdir -p "$(dirname "$QDI_MANAGED_TELEMETRY_BIN")" "$QDI_TELEMETRY_CACHE_DIR"
+  : > "$QDI_TELEMETRY_CACHE_DIR/cache.db"
+  cp "$QDI_TELEMETRY_CLI" "$QDI_MANAGED_TELEMETRY_BIN"
+  chmod +x "$QDI_MANAGED_TELEMETRY_BIN"
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 0 ] || fail "telemetry uninstall failed: $RUN_OUTPUT"
+  assert_log_contains "ai-agent-telemetry hooks uninstall"
+  [ ! -e "$QDI_MANAGED_TELEMETRY_BIN" ] || fail "managed telemetry binary was preserved"
+  [ -d "$QDI_TELEMETRY_CONFIG_DIR" ] || fail "normal uninstall removed telemetry config"
+  [ -d "$QDI_TELEMETRY_CACHE_DIR" ] || fail "normal uninstall removed telemetry cache"
+  assert_contains "$RUN_OUTPUT" "Uninstall summary"
+  teardown_component_fixture
+}
+
+test_telemetry_hook_failure_preserves_managed_binary() {
+  setup_component_fixture
+  mkdir -p "$(dirname "$QDI_MANAGED_TELEMETRY_BIN")"
+  cp "$QDI_TELEMETRY_CLI" "$QDI_MANAGED_TELEMETRY_BIN"
+  chmod +x "$QDI_MANAGED_TELEMETRY_BIN"
+  export QDI_FAIL_TELEMETRY_HOOKS=1
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 1 ] || fail "expected telemetry hook failure: $RUN_OUTPUT"
+  [ -x "$QDI_MANAGED_TELEMETRY_BIN" ] || fail "removed managed binary after hook failure"
+  teardown_component_fixture
+}
+
+test_telemetry_uninstall_preserves_external_path_command() {
+  setup_component_fixture
+  cp "$QDI_TELEMETRY_CLI" "$FIXTURE_ROOT/bin/ai-agent-telemetry"
+  chmod +x "$FIXTURE_ROOT/bin/ai-agent-telemetry"
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 0 ] || fail "external telemetry uninstall failed: $RUN_OUTPUT"
+  assert_log_contains "ai-agent-telemetry hooks uninstall"
+  [ -x "$FIXTURE_ROOT/bin/ai-agent-telemetry" ] || fail "removed external telemetry command"
+  teardown_component_fixture
+}
+
+test_telemetry_uninstall_accepts_valid_receipt_on_repeat() {
+  setup_component_fixture
+  mkdir -p "$(dirname "$QDI_TELEMETRY_RECEIPT")"
+  printf 'version=1\nstate=uninstalled\n' > "$QDI_TELEMETRY_RECEIPT"
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 0 ] || fail "repeat telemetry uninstall failed: $RUN_OUTPUT"
+  [ -f "$QDI_TELEMETRY_RECEIPT" ] || fail "removed telemetry receipt"
+  teardown_component_fixture
+}
+
+test_telemetry_uninstall_fails_closed_without_cli_or_receipt() {
+  setup_component_fixture
+  mkdir -p "$(dirname "$QDI_TELEMETRY_HOOK")"
+  : > "$QDI_TELEMETRY_HOOK"
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 1 ] || fail "expected unsafe telemetry uninstall failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "native hook files exist"
+  [ -e "$QDI_TELEMETRY_HOOK" ] || fail "removed hook without telemetry ownership proof"
+  teardown_component_fixture
+}
+
+test_telemetry_uninstall_writes_receipt_when_no_hooks_exist() {
+  setup_component_fixture
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 0 ] || fail "receipt-only telemetry uninstall failed: $RUN_OUTPUT"
+  [ "$(cat "$QDI_TELEMETRY_RECEIPT")" = "$(printf 'version=1\nstate=uninstalled')" ] ||
+    fail "telemetry receipt has unexpected content"
+  teardown_component_fixture
+}
+
+test_telemetry_purge_removes_only_package_config_and_cache() {
+  setup_component_fixture
+  mkdir -p "$QDI_TELEMETRY_CONFIG_DIR" "$QDI_TELEMETRY_CACHE_DIR"
+  mkdir -p "$(dirname "$QDI_TELEMETRY_RECEIPT")"
+  : > "$QDI_TELEMETRY_CONFIG_DIR/config.yaml"
+  : > "$QDI_TELEMETRY_CACHE_DIR/cache.db"
+  : > "$QDI_MARKETPLACE_STATE"
+  printf 'version=1\nstate=uninstalled\n' > "$QDI_TELEMETRY_RECEIPT"
+  run_fixture_installer --uninstall --purge --components telemetry
+  [ "$RUN_CODE" -eq 0 ] || fail "telemetry purge failed: $RUN_OUTPUT"
+  [ ! -e "$QDI_TELEMETRY_CONFIG_DIR" ] || fail "telemetry config directory remains"
+  [ ! -e "$QDI_TELEMETRY_CACHE_DIR" ] || fail "telemetry cache directory remains"
+  [ -f "$QDI_TELEMETRY_RECEIPT" ] || fail "purge removed telemetry receipt"
+  [ -f "$QDI_MARKETPLACE_STATE" ] || fail "purge removed marketplace marker"
+  teardown_component_fixture
+}
+
 test_unconfigured_telemetry_fails_non_interactively() {
   setup_component_fixture
   rm -f "$XDG_CONFIG_HOME/ai-agent-telemetry/env"
@@ -506,10 +660,85 @@ test_git_hooks_reject_non_repository_and_divergence() {
   teardown_component_fixture
 }
 
+test_git_hooks_uninstall_deactivates_exact_managed_path() {
+  setup_component_fixture
+  printf '%s/hooks-global\n' "$QUBERSHIP_DEV_GIT_HOOKS_DIR" > "$QDI_GIT_CONFIG"
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 0 ] || fail "Git hooks deactivation failed: $RUN_OUTPUT"
+  assert_log_contains "git config --global --unset-all core.hooksPath"
+  [ ! -e "$QDI_GIT_CONFIG" ] || fail "managed core.hooksPath remains configured"
+  assert_log_not_contains "java "
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_preserves_unrelated_path() {
+  setup_component_fixture
+  printf '/other/hooks\n' > "$QDI_GIT_CONFIG"
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 0 ] || fail "unrelated Git hooks uninstall failed: $RUN_OUTPUT"
+  [ "$(cat "$QDI_GIT_CONFIG")" = /other/hooks ] || fail "changed unrelated core.hooksPath"
+  assert_log_not_contains "git config --global --unset-all core.hooksPath"
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_accepts_missing_clone() {
+  setup_component_fixture
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 0 ] || fail "missing Git hooks clone uninstall failed: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "git-hooks        OK"
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_removes_clean_expected_clone() {
+  setup_component_fixture
+  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
+  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 0 ] || fail "clean Git hooks clone uninstall failed: $RUN_OUTPUT"
+  [ ! -e "$QUBERSHIP_DEV_GIT_HOOKS_DIR" ] || fail "clean managed Git hooks clone remains"
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_preserves_wrong_origin_clone() {
+  setup_component_fixture
+  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
+  printf 'https://example.test/unrelated.git\n' > "$QDI_GIT_ORIGIN_FILE"
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 1 ] || fail "expected wrong-origin uninstall failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "because its origin is https://example.test/unrelated.git"
+  [ -d "$QUBERSHIP_DEV_GIT_HOOKS_DIR" ] || fail "removed wrong-origin Git hooks clone"
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_preserves_dirty_clone() {
+  setup_component_fixture
+  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
+  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
+  export QDI_GIT_STATUS=' M hooks-global/pre-commit'
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 1 ] || fail "expected dirty-clone uninstall failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "preserving modified worktree"
+  [ -d "$QUBERSHIP_DEV_GIT_HOOKS_DIR" ] || fail "removed modified Git hooks clone"
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_deactivates_before_clone_validation_failure() {
+  setup_component_fixture
+  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
+  (CDPATH='' cd -- "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global" && pwd -P) > "$QDI_GIT_CONFIG"
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 1 ] || fail "expected non-worktree uninstall failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "because it is not a Git worktree"
+  [ ! -e "$QDI_GIT_CONFIG" ] || fail "core.hooksPath remains after clone validation failure"
+  [ -d "$QUBERSHIP_DEV_GIT_HOOKS_DIR" ] || fail "removed non-worktree Git hooks directory"
+  teardown_component_fixture
+}
+
 test_help_describes_public_options
 test_invalid_component_fails_before_installation
 test_invalid_harness_fails_before_installation
 test_empty_selection_fails_before_installation
+test_uninstall_option_combinations_are_rejected_before_changes
 test_git_hook_prerequisites_fail_non_interactively
 test_git_hook_prerequisites_are_not_checked_when_skipped
 test_declined_prerequisite_installation_stops_bootstrap
@@ -524,8 +753,25 @@ test_force_update_refreshes_selected_components
 test_force_update_refreshes_git_hooks_through_symlink
 test_existing_unrelated_git_hooks_are_skipped
 test_component_failure_does_not_stop_independent_components
+test_apm_uninstall_skips_missing_manifest
+test_apm_uninstall_invokes_global_package_removal
+test_apm_uninstall_failure_does_not_stop_telemetry
+test_telemetry_uninstall_removes_hooks_before_managed_binary
+test_telemetry_hook_failure_preserves_managed_binary
+test_telemetry_uninstall_preserves_external_path_command
+test_telemetry_uninstall_accepts_valid_receipt_on_repeat
+test_telemetry_uninstall_fails_closed_without_cli_or_receipt
+test_telemetry_uninstall_writes_receipt_when_no_hooks_exist
+test_telemetry_purge_removes_only_package_config_and_cache
 test_unconfigured_telemetry_fails_non_interactively
 test_unconfigured_telemetry_configures_interactively
 test_git_hooks_reject_wrong_origin_and_dirty_clone
 test_git_hooks_reject_non_repository_and_divergence
+test_git_hooks_uninstall_deactivates_exact_managed_path
+test_git_hooks_uninstall_preserves_unrelated_path
+test_git_hooks_uninstall_accepts_missing_clone
+test_git_hooks_uninstall_removes_clean_expected_clone
+test_git_hooks_uninstall_preserves_wrong_origin_clone
+test_git_hooks_uninstall_preserves_dirty_clone
+test_git_hooks_uninstall_deactivates_before_clone_validation_failure
 printf 'PASS: POSIX developer installer tests\n'

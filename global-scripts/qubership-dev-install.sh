@@ -15,18 +15,20 @@ MINIMUM_JAVA_MAJOR=21
 
 usage() {
   cat <<'EOF'
-Install the baseline Qubership developer tools.
+Install or uninstall the baseline Qubership developer tools.
 
 Usage:
   qubership-dev-install.sh [options]
 
 Options:
-  --components <list>   Install only these components: apm, telemetry, git-hooks, or all.
+  --components <list>   Select these components: apm, telemetry, git-hooks, or all.
   --skip <list>         Exclude components from the selected set.
   --harnesses <list>    Configure these harnesses: claude, codex, cursor, or all.
   --force-git-hooks     Replace an existing global Git hooks path.
   --force-update        Force update operations for every selected component.
   --non-interactive     Do not prompt for missing prerequisites.
+  --uninstall           Uninstall the selected Qubership developer tools.
+  --purge               Remove telemetry config and cache during uninstall.
   -h, --help            Show this help text.
 EOF
 }
@@ -264,6 +266,15 @@ apm_verify() {
   apm deps list -g >/dev/null
 }
 
+apm_uninstall() {
+  [ -f "$HOME/.apm/apm.yml" ] || return 10
+  command -v apm >/dev/null 2>&1 || {
+    printf '%s: apm: cannot remove the global package because apm is not on PATH.\n' "$PROGRAM" >&2
+    return 1
+  }
+  apm uninstall -g qubership-global-essentials@qubership-ai-packages
+}
+
 telemetry_install() {
   _telemetry_url=${QUBERSHIP_DEV_TELEMETRY_INSTALL_URL:-https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh}
   _telemetry_was_installed=0
@@ -313,6 +324,67 @@ telemetry_verify() {
   "$TELEMETRY_BIN" selftest
 }
 
+telemetry_receipt_path() {
+  printf '%s/ai-agent-telemetry/hooks-uninstalled' "${XDG_STATE_HOME:-$HOME/.local/state}"
+}
+
+telemetry_receipt_valid() {
+  _path=$(telemetry_receipt_path)
+  [ -f "$_path" ] || return 1
+  _value=$(cat "$_path") || return 1
+  [ "$_value" = "$(printf 'version=1\nstate=uninstalled')" ]
+}
+
+write_telemetry_receipt() {
+  _path=$(telemetry_receipt_path)
+  _dir=$(dirname "$_path")
+  mkdir -p "$_dir" || return 1
+  _tmp="$_path.tmp.$$"
+  (umask 077 && printf 'version=1\nstate=uninstalled\n' > "$_tmp") || return 1
+  mv -f "$_tmp" "$_path"
+}
+
+telemetry_hooks_may_exist() {
+  [ -e "$HOME/.claude/settings.json" ] ||
+    [ -e "$HOME/.codex/hooks.json" ] ||
+    [ -e "$HOME/.cursor/hooks.json" ] ||
+    [ -e "$HOME/.codex/rules/ai-agent-telemetry.rules" ]
+}
+
+telemetry_uninstall() {
+  _managed_bin=$HOME/.local/bin/ai-agent-telemetry
+  _telemetry_bin=
+  if [ -x "$_managed_bin" ]; then
+    _telemetry_bin=$_managed_bin
+  elif command -v ai-agent-telemetry >/dev/null 2>&1; then
+    _telemetry_bin=ai-agent-telemetry
+  fi
+
+  if [ -n "$_telemetry_bin" ]; then
+    "$_telemetry_bin" hooks uninstall || return 1
+  elif telemetry_receipt_valid; then
+    :
+  elif telemetry_hooks_may_exist; then
+    printf '%s: telemetry: native hook files exist, but no telemetry CLI or valid removal receipt is available.\n' \
+      "$PROGRAM" >&2
+    return 1
+  else
+    write_telemetry_receipt || return 1
+  fi
+
+  rm -f "$_managed_bin" || return 1
+  if [ "$PURGE" -eq 1 ]; then
+    _config_dir=${XDG_CONFIG_HOME:-$HOME/.config}/ai-agent-telemetry
+    _cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/ai-agent-telemetry
+    rm -rf "$_config_dir" "$_cache_dir" || return 1
+  fi
+}
+
+init_git_hooks() {
+  GIT_HOOKS_DIR=${QUBERSHIP_DEV_GIT_HOOKS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/qubership/pre-commit-global}
+  GIT_HOOKS_REPOSITORY=${QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY:-https://github.com/exadmin/pre-commit-global.git}
+}
+
 git_hooks_desired_path() (
   _hooks_path=$GIT_HOOKS_DIR/hooks-global
   if [ -d "$_hooks_path" ]; then
@@ -326,8 +398,7 @@ git_hooks_desired_path() (
 )
 
 git_hooks_install() {
-  GIT_HOOKS_DIR=${QUBERSHIP_DEV_GIT_HOOKS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/qubership/pre-commit-global}
-  GIT_HOOKS_REPOSITORY=${QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY:-https://github.com/exadmin/pre-commit-global.git}
+  init_git_hooks
   _prospective_hooks_path=$(git_hooks_desired_path) || return 1
   _current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || :)
   if [ -n "$_current_hooks_path" ] && [ "$_current_hooks_path" != "$_prospective_hooks_path" ] && \
@@ -397,6 +468,37 @@ git_hooks_verify() {
   [ "$_configured_hooks_path" = "$_desired_hooks_path" ]
 }
 
+git_hooks_uninstall() {
+  init_git_hooks
+  _desired_hooks_path=$(git_hooks_desired_path) || return 1
+  _current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || :)
+  if [ -n "$_current_hooks_path" ] && [ -d "$_current_hooks_path" ]; then
+    _current_hooks_path=$(CDPATH='' cd -- "$_current_hooks_path" && pwd -P) || return 1
+  fi
+  if [ "$_current_hooks_path" = "$_desired_hooks_path" ]; then
+    git config --global --unset-all core.hooksPath || return 1
+  fi
+
+  [ -e "$GIT_HOOKS_DIR" ] || return 0
+  if ! git -C "$GIT_HOOKS_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf '%s: git-hooks: preserving %s because it is not a Git worktree.\n' \
+      "$PROGRAM" "$GIT_HOOKS_DIR" >&2
+    return 1
+  fi
+  _origin=$(git -C "$GIT_HOOKS_DIR" remote get-url origin 2>/dev/null) || return 1
+  if [ "$_origin" != "$GIT_HOOKS_REPOSITORY" ]; then
+    printf '%s: git-hooks: preserving %s because its origin is %s.\n' \
+      "$PROGRAM" "$GIT_HOOKS_DIR" "$_origin" >&2
+    return 1
+  fi
+  _status=$(git -C "$GIT_HOOKS_DIR" status --porcelain) || return 1
+  if [ -n "$_status" ]; then
+    printf '%s: git-hooks: preserving modified worktree %s.\n' "$PROGRAM" "$GIT_HOOKS_DIR" >&2
+    return 1
+  fi
+  rm -rf "$GIT_HOOKS_DIR"
+}
+
 SUMMARY=
 HAS_FAILURES=0
 
@@ -409,6 +511,32 @@ record_result() {
 run_component() {
   _component=$1
   _prefix=$(registry_value "$_component" 4)
+  if [ "$MODE" = uninstall ]; then
+    printf '\n[%s] UNINSTALLING\n' "$_component"
+    "${_prefix}_uninstall"
+    _code=$?
+    record_component_code "$_component" "$_code"
+    return
+  fi
+  run_install_component "$_component" "$_prefix"
+}
+
+record_component_code() {
+  _component=$1
+  _code=$2
+  if [ "$_code" -eq 10 ]; then
+    record_result "$_component" SKIPPED
+  elif [ "$_code" -eq 0 ]; then
+    record_result "$_component" OK
+  else
+    record_result "$_component" FAILED
+    HAS_FAILURES=1
+  fi
+}
+
+run_install_component() {
+  _component=$1
+  _prefix=$2
   printf '\n[%s] INSTALLING\n' "$_component"
   "${_prefix}_install"
   _code=$?
@@ -417,25 +545,24 @@ run_component() {
     "${_prefix}_configure"
     _code=$?
   fi
-  if [ "$_code" -eq 10 ]; then
-    record_result "$_component" SKIPPED
-    return 0
-  fi
+  [ "$_code" -ne 10 ] || {
+    record_component_code "$_component" "$_code"
+    return
+  }
   if [ "$_code" -eq 0 ]; then
     printf '[%s] VERIFYING\n' "$_component"
     "${_prefix}_verify"
     _code=$?
   fi
-  if [ "$_code" -eq 0 ]; then
-    record_result "$_component" OK
-  else
-    record_result "$_component" FAILED
-    HAS_FAILURES=1
-  fi
+  record_component_code "$_component" "$_code"
 }
 
 print_summary() {
-  printf '\nInstallation summary\n'
+  if [ "$MODE" = uninstall ]; then
+    printf '\nUninstall summary\n'
+  else
+    printf '\nInstallation summary\n'
+  fi
   printf '%b' "$SUMMARY" | while IFS='|' read -r _component _status; do
     [ -n "$_component" ] || continue
     printf '%-16s %s\n' "$_component" "$_status"
@@ -455,6 +582,12 @@ HARNESSES=$DEFAULT_HARNESSES
 FORCE_GIT_HOOKS=0
 FORCE_UPDATE=0
 NON_INTERACTIVE=0
+HARNESSES_SET=0
+FORCE_GIT_HOOKS_SET=0
+FORCE_UPDATE_SET=0
+NON_INTERACTIVE_SET=0
+MODE=install
+PURGE=0
 
 while [ "$#" -gt 0 ]; do
   case $1 in
@@ -472,18 +605,41 @@ while [ "$#" -gt 0 ]; do
       shift
       SKIP_COMPONENTS=$(option_value --skip "${1:-}") || exit $?
       ;;
-    --harnesses=*) HARNESSES=${1#--harnesses=} ;;
+    --harnesses=*)
+      HARNESSES=${1#--harnesses=}
+      HARNESSES_SET=1
+      ;;
     --harnesses)
       shift
       HARNESSES=$(option_value --harnesses "${1:-}") || exit $?
+      HARNESSES_SET=1
       ;;
-    --force-git-hooks) FORCE_GIT_HOOKS=1 ;;
-    --force-update) FORCE_UPDATE=1 ;;
-    --non-interactive) NON_INTERACTIVE=1 ;;
+    --force-git-hooks)
+      FORCE_GIT_HOOKS=1
+      FORCE_GIT_HOOKS_SET=1
+      ;;
+    --force-update)
+      FORCE_UPDATE=1
+      FORCE_UPDATE_SET=1
+      ;;
+    --non-interactive)
+      NON_INTERACTIVE=1
+      NON_INTERACTIVE_SET=1
+      ;;
+    --uninstall) MODE=uninstall ;;
+    --purge) PURGE=1 ;;
     *) argument_error "unknown option \"$1\"" ;;
   esac
   shift
 done
+
+[ "$PURGE" -eq 0 ] || [ "$MODE" = uninstall ] || argument_error '--purge requires --uninstall'
+if [ "$MODE" = uninstall ]; then
+  [ "$HARNESSES_SET" -eq 0 ] || argument_error '--harnesses is not valid with --uninstall'
+  [ "$FORCE_UPDATE_SET" -eq 0 ] || argument_error '--force-update is not valid with --uninstall'
+  [ "$FORCE_GIT_HOOKS_SET" -eq 0 ] || argument_error '--force-git-hooks is not valid with --uninstall'
+  [ "$NON_INTERACTIVE_SET" -eq 0 ] || argument_error '--non-interactive is not valid with --uninstall'
+fi
 
 COMPONENTS=$(normalize_list component "$COMPONENTS" "$DEFAULT_COMPONENTS") || exit $?
 if [ -n "$SKIP_COMPONENTS" ]; then
@@ -491,9 +647,11 @@ if [ -n "$SKIP_COMPONENTS" ]; then
   COMPONENTS=$(remove_items "$COMPONENTS" "$SKIP_COMPONENTS")
 fi
 [ -n "$COMPONENTS" ] || argument_error "no components selected"
-HARNESSES=$(normalize_list harness "$HARNESSES" "$DEFAULT_HARNESSES") || exit $?
+if [ "$MODE" = install ]; then
+  HARNESSES=$(normalize_list harness "$HARNESSES" "$DEFAULT_HARNESSES") || exit $?
+fi
 
-if contains_csv "$COMPONENTS" git-hooks; then
+if [ "$MODE" = install ] && contains_csv "$COMPONENTS" git-hooks; then
   require_git_hook_prerequisites || exit 1
 fi
 
