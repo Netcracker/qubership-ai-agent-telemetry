@@ -5,6 +5,8 @@ param(
   [switch]$ForceGitHooks,
   [switch]$ForceUpdate,
   [switch]$NonInteractive,
+  [switch]$Uninstall,
+  [switch]$Purge,
   [switch]$Help
 )
 
@@ -21,7 +23,7 @@ $HarnessRegistry = @('claude', 'codex', 'cursor')
 
 function Show-Usage {
   @'
-Install the baseline Qubership developer tools.
+Install or uninstall the baseline Qubership developer tools.
 
 Usage:
   qubership-dev-install.ps1 [options]
@@ -33,6 +35,8 @@ Options:
   -ForceGitHooks       Replace an existing global Git hooks path.
   -ForceUpdate         Force update operations for every selected component.
   -NonInteractive      Do not prompt for missing prerequisites.
+  -Uninstall           Uninstall the selected Qubership developer tools.
+  -Purge               Remove telemetry config and cache during uninstall.
   -Help                Show this help text.
 '@
 }
@@ -135,6 +139,7 @@ function Confirm-GitHookPrerequisites {
 }
 
 function Invoke-Checked([string]$Command, [string[]]$Arguments) {
+  $global:LASTEXITCODE = 0
   & $Command @Arguments | Out-Host
   if ($LASTEXITCODE -ne 0) {
     throw "Command failed with exit code ${LASTEXITCODE}: $Command $($Arguments -join ' ')"
@@ -214,6 +219,19 @@ function Test-Apm {
   Invoke-Checked $script:ApmCommand @('deps', 'list', '-g')
 }
 
+function Uninstall-Apm {
+  $manifest = Join-Path $env:USERPROFILE '.apm/apm.yml'
+  if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+    $script:ComponentSkipped = $true
+    return
+  }
+  $command = (Get-Command apm -ErrorAction SilentlyContinue).Source
+  if ([string]::IsNullOrWhiteSpace($command)) {
+    throw 'cannot remove the global package because apm is not on PATH.'
+  }
+  Invoke-Checked $command @('uninstall', '-g', 'qubership-global-essentials@qubership-ai-packages')
+}
+
 function Install-Telemetry {
   $wasInstalled = -not [string]::IsNullOrWhiteSpace((Find-TelemetryCommand))
   $source = if ($env:QUBERSHIP_DEV_TELEMETRY_INSTALL_URL) {
@@ -273,20 +291,105 @@ function Test-Telemetry {
   Invoke-Checked $script:TelemetryCommand @('selftest')
 }
 
-function Install-GitHooks {
+function Get-TelemetryReceiptPath {
+  $stateRoot = if ($env:XDG_STATE_HOME) {
+    $env:XDG_STATE_HOME
+  } else {
+    Join-Path $env:USERPROFILE '.local/state'
+  }
+  return Join-Path $stateRoot 'ai-agent-telemetry/hooks-uninstalled'
+}
+
+function Test-TelemetryReceipt {
+  $path = Get-TelemetryReceiptPath
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+  return [System.IO.File]::ReadAllText($path) -eq "version=1`nstate=uninstalled`n"
+}
+
+function Write-TelemetryReceipt {
+  $path = Get-TelemetryReceiptPath
+  $dir = Split-Path -Parent $path
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $temp = "$path.tmp-$PID-$([guid]::NewGuid().ToString('N'))"
+  [System.IO.File]::WriteAllText($temp, "version=1`nstate=uninstalled`n")
+  Move-Item -Force -LiteralPath $temp -Destination $path
+}
+
+function Test-NativePathEntry([string]$Path) {
+  return $null -ne (Get-Item -Force -LiteralPath $Path -ErrorAction SilentlyContinue)
+}
+
+function Test-TelemetryHooksMayExist {
+  foreach ($relativePath in @(
+    '.claude/settings.json',
+    '.codex/hooks.json',
+    '.cursor/hooks.json',
+    '.codex/rules/ai-agent-telemetry.rules'
+  )) {
+    if (Test-NativePathEntry (Join-Path $env:USERPROFILE $relativePath)) { return $true }
+  }
+  return $false
+}
+
+function Uninstall-Telemetry {
+  $managedExecutable = Join-Path $env:USERPROFILE '.local/bin/ai-agent-telemetry.exe'
+  $telemetryCommand = (Get-Command ai-agent-telemetry -ErrorAction SilentlyContinue).Source
+  if ([string]::IsNullOrWhiteSpace($telemetryCommand) -and
+      (Test-Path -LiteralPath $managedExecutable -PathType Leaf)) {
+    $telemetryCommand = $managedExecutable
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($telemetryCommand)) {
+    Invoke-Checked $telemetryCommand @('hooks', 'uninstall')
+  } elseif (Test-TelemetryReceipt) {
+    # The receipt proves that the Go hook uninstaller completed successfully.
+  } elseif (Test-TelemetryHooksMayExist) {
+    throw 'native hook files exist, but no telemetry CLI or valid removal receipt is available.'
+  } else {
+    Write-TelemetryReceipt
+  }
+
+  if (Test-NativePathEntry $managedExecutable) {
+    Remove-Item -Force -ErrorAction Stop -LiteralPath $managedExecutable
+  }
+  if ($Purge) {
+    $configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+    $cacheRoot = if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { Join-Path $env:USERPROFILE '.cache' }
+    foreach ($path in @(
+      (Join-Path $configRoot 'ai-agent-telemetry'),
+      (Join-Path $cacheRoot 'ai-agent-telemetry')
+    )) {
+      if (Test-NativePathEntry $path) {
+        Remove-Item -Recurse -Force -ErrorAction Stop -LiteralPath $path
+      }
+    }
+  }
+}
+
+function Initialize-GitHooks {
   $script:GitHooksDir = if ($env:QUBERSHIP_DEV_GIT_HOOKS_DIR) {
     $env:QUBERSHIP_DEV_GIT_HOOKS_DIR
   } else {
     Join-Path $env:LOCALAPPDATA 'Qubership/pre-commit-global'
   }
-  $repository = if ($env:QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY) {
+  $script:GitHooksRepository = if ($env:QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY) {
     $env:QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY
   } else {
     'https://github.com/exadmin/pre-commit-global.git'
   }
+}
+
+function Get-ResolvedGitHooksPath {
+  $path = Join-Path $script:GitHooksDir 'hooks-global'
+  if (Test-Path -LiteralPath $path) { return (Resolve-Path -LiteralPath $path).Path }
+  return [System.IO.Path]::GetFullPath($path)
+}
+
+function Install-GitHooks {
+  Initialize-GitHooks
 
   $hooksDir = Join-Path $script:GitHooksDir 'hooks-global'
-  $prospectivePath = [System.IO.Path]::GetFullPath($hooksDir)
+  $prospectivePath = Get-ResolvedGitHooksPath
   $currentOutput = & git config --global --get core.hooksPath 2>$null
   $currentPath = if ($LASTEXITCODE -eq 0) { ($currentOutput | Out-String).Trim() } else { '' }
   if ($currentPath -and $currentPath -ne $prospectivePath -and -not $ForceGitHooks) {
@@ -298,13 +401,13 @@ function Install-GitHooks {
   }
   if (-not (Test-Path $script:GitHooksDir)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:GitHooksDir) | Out-Null
-    Invoke-Checked 'git' @('clone', $repository, $script:GitHooksDir)
+    Invoke-Checked 'git' @('clone', $script:GitHooksRepository, $script:GitHooksDir)
   }
   & git -C $script:GitHooksDir rev-parse --is-inside-work-tree *> $null
   if ($LASTEXITCODE -ne 0) { throw "$($script:GitHooksDir) is not the managed Git repository." }
   $origin = (& git -C $script:GitHooksDir remote get-url origin 2>$null | Out-String).Trim()
   if ($LASTEXITCODE -ne 0) { throw 'Cannot read the Git hooks repository origin.' }
-  if ($origin -ne $repository) { throw "Git hooks repository has unexpected origin $origin." }
+  if ($origin -ne $script:GitHooksRepository) { throw "Git hooks repository has unexpected origin $origin." }
   $gitStatus = (& git -C $script:GitHooksDir status --porcelain --untracked-files=all 2>$null | Out-String).Trim()
   if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the Git hooks repository status.' }
   if ($gitStatus) { throw 'Git hooks repository has local changes; refusing to activate or update it.' }
@@ -351,9 +454,69 @@ function Test-GitHooks {
   if ($currentPath -ne $desiredPath) { throw "core.hooksPath is not set to $desiredPath." }
 }
 
+function Uninstall-GitHooks {
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw 'cannot uninstall because Git is not on PATH. Install Git and retry.'
+  }
+  Initialize-GitHooks
+  $desiredPath = Get-ResolvedGitHooksPath
+  $global:LASTEXITCODE = 0
+  $currentOutput = & git config --global --get core.hooksPath 2>$null
+  $currentPath = if ($LASTEXITCODE -eq 0) { ($currentOutput | Out-String).Trim() } else { '' }
+  $resolvedCurrentPath = $currentPath
+  if ($currentPath -and [System.IO.Path]::IsPathRooted($currentPath)) {
+    $resolvedCurrentPath = if (Test-Path -LiteralPath $currentPath) {
+      (Resolve-Path -LiteralPath $currentPath).Path
+    } else {
+      [System.IO.Path]::GetFullPath($currentPath)
+    }
+  }
+  if ($currentPath -and [System.IO.Path]::IsPathRooted($currentPath) -and
+      $resolvedCurrentPath -eq $desiredPath) {
+    Invoke-Checked 'git' @('config', '--global', '--unset-all', 'core.hooksPath')
+  }
+
+  if (-not (Test-Path -LiteralPath $script:GitHooksDir)) { return }
+  $global:LASTEXITCODE = 0
+  & git -C $script:GitHooksDir rev-parse --is-inside-work-tree *> $null
+  if ($LASTEXITCODE -ne 0) {
+    throw "preserving $($script:GitHooksDir) because it is not a Git worktree."
+  }
+
+  $global:LASTEXITCODE = 0
+  $originOutput = & git -C $script:GitHooksDir remote get-url origin 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    throw "cannot read origin for $($script:GitHooksDir). Preserving the directory."
+  }
+  $origin = ($originOutput | Out-String).Trim()
+  if ($origin -ne $script:GitHooksRepository) {
+    throw "preserving $($script:GitHooksDir) because its origin is $origin."
+  }
+
+  $global:LASTEXITCODE = 0
+  $statusOutput = & git -C $script:GitHooksDir status --porcelain 2>$null
+  if ($LASTEXITCODE -ne 0) {
+    throw "cannot inspect worktree status for $($script:GitHooksDir). Preserving the directory."
+  }
+  $status = ($statusOutput | Out-String).Trim()
+  if ($status) { throw "preserving modified worktree $($script:GitHooksDir)." }
+  Remove-Item -Recurse -Force -LiteralPath $script:GitHooksDir
+}
+
 function Invoke-Component([string]$Component) {
   $prefix = $ComponentRegistry[$Component].Prefix
   $script:ComponentSkipped = $false
+  if ($Uninstall) {
+    Write-Host "`n[$Component] UNINSTALLING"
+    try {
+      & "Uninstall-$prefix"
+      if ($script:ComponentSkipped) { return 'SKIPPED' }
+      return 'OK'
+    } catch {
+      [Console]::Error.WriteLine("${Program}: ${Component}: $($_.Exception.Message)")
+      return 'FAILED'
+    }
+  }
   Write-Host "`n[$Component] INSTALLING"
   try {
     & "Install-$prefix"
@@ -379,15 +542,31 @@ if ($Help) {
   exit 0
 }
 
+if ($Purge -and -not $Uninstall) { Stop-ArgumentError '-Purge requires -Uninstall' }
+if ($Uninstall) {
+  if ($PSBoundParameters.ContainsKey('Harnesses')) {
+    Stop-ArgumentError '-Harnesses is not valid with -Uninstall'
+  }
+  if ($PSBoundParameters.ContainsKey('ForceUpdate')) {
+    Stop-ArgumentError '-ForceUpdate is not valid with -Uninstall'
+  }
+  if ($PSBoundParameters.ContainsKey('ForceGitHooks')) {
+    Stop-ArgumentError '-ForceGitHooks is not valid with -Uninstall'
+  }
+  if ($PSBoundParameters.ContainsKey('NonInteractive')) {
+    Stop-ArgumentError '-NonInteractive is not valid with -Uninstall'
+  }
+}
+
 $selectedComponents = @(Normalize-Selection 'component' $Components @($ComponentRegistry.Keys))
 if ($Skip.Count -gt 0) {
   $skippedComponents = @(Normalize-Selection 'component' $Skip @($ComponentRegistry.Keys))
   $selectedComponents = @($selectedComponents | Where-Object { $skippedComponents -notcontains $_ })
 }
 if ($selectedComponents.Count -eq 0) { Stop-ArgumentError 'no components selected' }
-$selectedHarnesses = @(Normalize-Selection 'harness' $Harnesses $HarnessRegistry)
+$selectedHarnesses = if ($Uninstall) { @() } else { @(Normalize-Selection 'harness' $Harnesses $HarnessRegistry) }
 
-if ($selectedComponents -contains 'git-hooks') {
+if (-not $Uninstall -and $selectedComponents -contains 'git-hooks') {
   if (-not (Confirm-GitHookPrerequisites)) { exit 1 }
 }
 
@@ -396,7 +575,8 @@ foreach ($component in $selectedComponents) {
   $results[$component] = Invoke-Component $component
 }
 
-Write-Host "`nInstallation summary"
+$summaryTitle = if ($Uninstall) { 'Uninstall summary' } else { 'Installation summary' }
+Write-Host "`n$summaryTitle"
 $hasFailures = $false
 foreach ($component in $selectedComponents) {
   $status = $results[$component]
