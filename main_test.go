@@ -268,6 +268,94 @@ func TestRunHooksInstallAcceptsTargets(t *testing.T) {
 	}
 }
 
+func TestRunHooksInstallContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies: [\n")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	var out, stderr strings.Builder
+	code := runWithStderr(
+		[]string{"hooks", "install", "--target=claude"},
+		func(value string) { out.WriteString(value) },
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out.String())
+	}
+	if !strings.Contains(stderr.String(), "could not verify or remove") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if _, err := os.Stat(hookPath(home, hookClaude)); err != nil {
+		t.Fatalf("Claude hook not installed after cleanup warning: %v", err)
+	}
+}
+
+func TestRunConfigureContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies: [\n")
+	configHome := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("AI_AGENT_TELEMETRY_ENDPOINT", "")
+	t.Setenv("AI_AGENT_TELEMETRY_TOKEN", "")
+	t.Setenv(envRepoAllow, "")
+	var out, stderr strings.Builder
+	code := runWithStderr(
+		[]string{"configure", "--endpoint=https://otel.example/v1/logs"},
+		func(value string) { out.WriteString(value) },
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out.String())
+	}
+	if !strings.Contains(stderr.String(), "could not verify or remove") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(configHome, pkgName, "env")); err != nil {
+		t.Fatalf("telemetry env not written: %v", err)
+	}
+	for _, target := range allHookTargets {
+		if _, err := os.Stat(hookPath(home, target)); err != nil {
+			t.Fatalf("%s hook not installed after cleanup warning: %v", target, err)
+		}
+	}
+}
+
+func TestRunConfigureHooksNoneSkipsLegacyAPMCleanup(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies: [\n")
+	configHome := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("AI_AGENT_TELEMETRY_ENDPOINT", "")
+	t.Setenv("AI_AGENT_TELEMETRY_TOKEN", "")
+	t.Setenv(envRepoAllow, "")
+	var out, stderr strings.Builder
+	code := runWithStderr(
+		[]string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks=none"},
+		func(value string) { out.WriteString(value) },
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0; output = %q", code, out.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want no cleanup warning", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(configHome, pkgName, "env")); err != nil {
+		t.Fatalf("telemetry env not written: %v", err)
+	}
+	for _, target := range allHookTargets {
+		if _, err := os.Stat(hookPath(home, target)); !os.IsNotExist(err) {
+			t.Fatalf("%s hook exists with --hooks=none: %v", target, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".apm", "apm.yml")); err != nil {
+		t.Fatalf("legacy APM manifest changed with --hooks=none: %v", err)
+	}
+}
+
 func TestRunHooksInstallRejectsEmptyTargetWithoutWritingFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

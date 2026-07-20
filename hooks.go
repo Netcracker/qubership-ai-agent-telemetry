@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -103,6 +104,23 @@ func installHooks(home string, targets []hookTarget) []hookInstallResult {
 		results = append(results, hookInstallResult{Target: target, Path: path, Changed: changed, Err: err})
 	}
 	return results
+}
+
+func installManagedHooks(home string, targets []hookTarget, warnings io.Writer) []hookInstallResult {
+	return installManagedHooksWith(home, targets, warnings, cleanupLegacyTelemetryAPM, installHooks)
+}
+
+func installManagedHooksWith(
+	home string,
+	targets []hookTarget,
+	warnings io.Writer,
+	cleanup func(string, io.Writer),
+	install func(string, []hookTarget) []hookInstallResult,
+) []hookInstallResult {
+	if len(targets) > 0 {
+		cleanup(home, warnings)
+	}
+	return install(home, targets)
 }
 
 func hookInstallError(results []hookInstallResult) error {

@@ -26,6 +26,10 @@ func main() {
 }
 
 func run(args []string, stdout func(string)) int {
+	return runWithStderr(args, stdout, os.Stderr)
+}
+
+func runWithStderr(args []string, stdout func(string), stderr io.Writer) int {
 	if len(args) == 0 {
 		stdout(rootHelp())
 		return 2
@@ -47,7 +51,7 @@ func run(args []string, stdout func(string)) int {
 		return 0
 	case "self-update":
 		if err := runSelfUpdate(version, stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "self-update:", err)
+			fmt.Fprintln(stderr, "self-update:", err)
 			return 1
 		}
 		return 0
@@ -60,25 +64,25 @@ func run(args []string, stdout func(string)) int {
 		}
 		cfg := pkgConfigDir()
 		if cfg == "" {
-			fmt.Fprintln(os.Stderr, "configure: no user config directory available")
+			fmt.Fprintln(stderr, "configure: no user config directory available")
 			return 1
 		}
 		endpoint := configureEndpoint(opts.Endpoint)
 		token := readSecret("Collector token (leave blank to skip): ")
 		if err := applyConfigure(cfg, endpoint, opts.CAPath, token, opts.RepoAllow, opts.Delivery); err != nil {
-			fmt.Fprintln(os.Stderr, "configure:", err)
+			fmt.Fprintln(stderr, "configure:", err)
 			return 1
 		}
-		results := installHooks(userHomeDir(), opts.Hooks)
+		results := installManagedHooks(userHomeDir(), opts.Hooks, stderr)
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "outbox:", err)
+			fmt.Fprintln(stderr, "outbox:", err)
 			return 1
 		}
 		settings := resolveDeliverySettings()
 		stdout(formatStatus(gatherStatus(s, cfg, resolveEndpoint(""), resolveTelemetryPolicy(), settings), false))
 		if err := hookInstallError(results); err != nil {
-			fmt.Fprintln(os.Stderr, "configure hooks:", err)
+			fmt.Fprintln(stderr, "configure hooks:", err)
 			return 1
 		}
 		if codexHookChanged(results) {
@@ -97,7 +101,7 @@ func run(args []string, stdout func(string)) int {
 			stdout("hooks: no user home directory available\n")
 			return 1
 		}
-		results := installHooks(home, targets)
+		results := installManagedHooks(home, targets, stderr)
 		for _, result := range results {
 			if result.Err != nil {
 				stdout(fmt.Sprintf("%s: failed: %s\n", result.Target, result.Path))
@@ -120,12 +124,12 @@ func run(args []string, stdout func(string)) int {
 	case "selftest":
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "outbox:", err)
+			fmt.Fprintln(stderr, "outbox:", err)
 			return 1
 		}
 		tlsCfg, cerr := caTLSConfig(pkgConfigDir())
 		if cerr != nil {
-			fmt.Fprintln(os.Stderr, "ca:", cerr)
+			fmt.Fprintln(stderr, "ca:", cerr)
 		}
 		res, err := runSelftest(s, resolveEndpoint(""), resolveToken(), tlsCfg, selftestTimeout)
 		if err != nil {
@@ -141,13 +145,13 @@ func run(args []string, stdout func(string)) int {
 	case "ingest":
 		agent, endpoint, err := parseIngestFlags(args[1:])
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "ingest:", err)
+			fmt.Fprintln(stderr, "ingest:", err)
 			return 0
 		}
 		endpoint = resolveEndpoint(endpoint)
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "outbox:", err)
+			fmt.Fprintln(stderr, "outbox:", err)
 			return 0 // never fail the hook
 		}
 		raw, _ := io.ReadAll(os.Stdin)
@@ -157,23 +161,23 @@ func run(args []string, stdout func(string)) int {
 		endpoint = resolveEndpoint(endpoint)
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "outbox:", err)
+			fmt.Fprintln(stderr, "outbox:", err)
 			return 0
 		}
 		tlsCfg, err := caTLSConfig(pkgConfigDir())
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "ca:", err)
+			fmt.Fprintln(stderr, "ca:", err)
 		}
 		settings := resolveDeliverySettings()
 		if _, err := Flush(s, endpoint, resolveToken(), tlsCfg, settings.FlushTimeout); err != nil {
-			fmt.Fprintln(os.Stderr, "flush:", err)
+			fmt.Fprintln(stderr, "flush:", err)
 		}
 		return 0
 	case "status":
 		verbose := parseStatusFlags(args[1:])
 		s, err := DefaultOutbox()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "outbox:", err)
+			fmt.Fprintln(stderr, "outbox:", err)
 			return 0
 		}
 		settings := resolveDeliverySettings()

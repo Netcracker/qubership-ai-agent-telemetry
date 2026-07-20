@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +12,57 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestInstallManagedHooksWithCleansBeforeInstalling(t *testing.T) {
+	var calls []string
+	var warnings strings.Builder
+	results := installManagedHooksWith(
+		"/home/test",
+		[]hookTarget{hookClaude},
+		&warnings,
+		func(_ string, warnings io.Writer) {
+			calls = append(calls, "cleanup")
+			fmt.Fprintln(warnings, "cleanup warning")
+		},
+		func(_ string, _ []hookTarget) []hookInstallResult {
+			calls = append(calls, "install")
+			return []hookInstallResult{{Target: hookClaude, Path: "/hook"}}
+		},
+	)
+	if !reflect.DeepEqual(calls, []string{"cleanup", "install"}) {
+		t.Fatalf("calls = %v", calls)
+	}
+	if err := hookInstallError(results); err != nil {
+		t.Fatalf("hook result changed by cleanup warning: %v", err)
+	}
+}
+
+func TestInstallManagedHooksWithSkipsCleanupForNoTargets(t *testing.T) {
+	cleanupCalled := false
+	installCalled := false
+	results := installManagedHooksWith(
+		"/home/test",
+		nil,
+		io.Discard,
+		func(string, io.Writer) { cleanupCalled = true },
+		func(_ string, targets []hookTarget) []hookInstallResult {
+			installCalled = true
+			if len(targets) != 0 {
+				t.Fatalf("targets = %v, want empty", targets)
+			}
+			return nil
+		},
+	)
+	if cleanupCalled {
+		t.Fatal("cleanup called with no targets")
+	}
+	if !installCalled {
+		t.Fatal("install not called with empty targets")
+	}
+	if results != nil {
+		t.Fatalf("results = %#v, want nil", results)
+	}
+}
 
 func TestInstallHooksContinuesAfterFailure(t *testing.T) {
 	home := t.TempDir()
