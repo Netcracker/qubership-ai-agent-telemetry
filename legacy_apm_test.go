@@ -1,6 +1,186 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func writeGlobalAPMManifest(t *testing.T, contents string) string {
+	t.Helper()
+	home := t.TempDir()
+	dir := filepath.Join(home, ".apm")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "apm.yml"), []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+func TestCleanupLegacyTelemetryAPMWithUninstallsMatchingDependency(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"#sha\n")
+	var gotName string
+	var gotArgs []string
+	var warnings strings.Builder
+	cleanupLegacyTelemetryAPMWith(
+		home,
+		&warnings,
+		func(name string) (string, error) { return "/tools/apm", nil },
+		func(name string, args ...string) (string, error) {
+			gotName = name
+			gotArgs = append([]string(nil), args...)
+			return "removed\n", nil
+		},
+	)
+	if gotName != "/tools/apm" || !reflect.DeepEqual(gotArgs, []string{"uninstall", "-g", legacyTelemetryAPMPackage}) {
+		t.Fatalf("command = %q %v", gotName, gotArgs)
+	}
+	if warnings.Len() != 0 {
+		t.Fatalf("warnings = %q, want none", warnings.String())
+	}
+}
+
+func TestCleanupLegacyTelemetryAPMWithMissingManifestDoesNothing(t *testing.T) {
+	var lookedUp, ran bool
+	cleanupLegacyTelemetryAPMWith(
+		t.TempDir(),
+		&strings.Builder{},
+		func(string) (string, error) { lookedUp = true; return "apm", nil },
+		func(string, ...string) (string, error) { ran = true; return "", nil },
+	)
+	if lookedUp || ran {
+		t.Fatalf("lookedUp = %v, ran = %v, want neither", lookedUp, ran)
+	}
+}
+
+func TestCleanupLegacyTelemetryAPMWithAbsentDependencyDoesNothing(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies:\n  - another/package\n")
+	var lookedUp, ran bool
+	cleanupLegacyTelemetryAPMWith(
+		home,
+		&strings.Builder{},
+		func(string) (string, error) { lookedUp = true; return "apm", nil },
+		func(string, ...string) (string, error) { ran = true; return "", nil },
+	)
+	if lookedUp || ran {
+		t.Fatalf("lookedUp = %v, ran = %v, want neither", lookedUp, ran)
+	}
+}
+
+func TestCleanupLegacyTelemetryAPMWithWarnsWhenManifestIsUnreadable(t *testing.T) {
+	home := t.TempDir()
+	manifestPath := filepath.Join(home, ".apm", "apm.yml")
+	if err := os.MkdirAll(manifestPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var warnings strings.Builder
+	cleanupLegacyTelemetryAPMWith(
+		home,
+		&warnings,
+		func(string) (string, error) { t.Fatal("lookPath called"); return "", nil },
+		func(string, ...string) (string, error) { t.Fatal("runCommand called"); return "", nil },
+	)
+	if !strings.Contains(warnings.String(), "warning: legacy APM cleanup could not verify or remove the telemetry dependency:") {
+		t.Fatalf("warnings = %q", warnings.String())
+	}
+}
+
+func TestCleanupLegacyTelemetryAPMWithWarnsWhenManifestIsMalformed(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies: [\n")
+	manifestPath := filepath.Join(home, ".apm", "apm.yml")
+	var warnings strings.Builder
+	cleanupLegacyTelemetryAPMWith(
+		home,
+		&warnings,
+		func(string) (string, error) { t.Fatal("lookPath called"); return "", nil },
+		func(string, ...string) (string, error) { t.Fatal("runCommand called"); return "", nil },
+	)
+	if !strings.Contains(warnings.String(), "could not verify or remove the telemetry dependency: parse "+manifestPath) {
+		t.Fatalf("warnings = %q", warnings.String())
+	}
+}
+
+func TestCleanupLegacyTelemetryAPMWithWarnsWhenAPMIsMissing(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"\n")
+	var warnings strings.Builder
+	cleanupLegacyTelemetryAPMWith(
+		home,
+		&warnings,
+		func(name string) (string, error) {
+			if name != "apm" {
+				t.Fatalf("lookPath name = %q, want apm", name)
+			}
+			return "", errors.New("not found")
+		},
+		func(string, ...string) (string, error) { t.Fatal("runCommand called"); return "", nil },
+	)
+	want := "warning: legacy APM cleanup could not remove the telemetry dependency: apm was not found on PATH\n"
+	if warnings.String() != want {
+		t.Fatalf("warnings = %q, want %q", warnings.String(), want)
+	}
+}
+
+func TestCleanupLegacyTelemetryAPMWithReportsFailedUninstall(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"\n")
+	var warnings strings.Builder
+	cleanupLegacyTelemetryAPMWith(
+		home,
+		&warnings,
+		func(string) (string, error) { return "/tools/apm", nil },
+		func(string, ...string) (string, error) { return "stdout\nstderr\n", errors.New("exit status 1") },
+	)
+	want := "warning: legacy APM cleanup failed: /tools/apm uninstall -g " + legacyTelemetryAPMPackage +
+		": exit status 1\napm output:\nstdout\nstderr\n"
+	if warnings.String() != want {
+		t.Fatalf("warnings = %q, want %q", warnings.String(), want)
+	}
+}
+
+func TestCleanupLegacyTelemetryAPMWithMarksTruncatedOutput(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"\n")
+	var warnings strings.Builder
+	cleanupLegacyTelemetryAPMWith(
+		home,
+		&warnings,
+		func(string) (string, error) { return "apm", nil },
+		func(string, ...string) (string, error) { return strings.Repeat("x", (4<<10)+1), errors.New("failed") },
+	)
+	if !strings.Contains(warnings.String(), strings.Repeat("x", 4<<10)+"\n[apm output truncated]\n") {
+		t.Fatalf("warnings do not contain bounded output and truncation marker: %q", warnings.String())
+	}
+	if strings.Contains(warnings.String(), strings.Repeat("x", (4<<10)+1)) {
+		t.Fatal("warnings contain unbounded subprocess output")
+	}
+}
+
+func TestCleanupLegacyTelemetryAPMWithSuppressesSuccessfulOutput(t *testing.T) {
+	home := writeGlobalAPMManifest(t, "dependencies:\n  - "+legacyTelemetryAPMPackage+"\n")
+	var warnings strings.Builder
+	cleanupLegacyTelemetryAPMWith(
+		home,
+		&warnings,
+		func(string) (string, error) { return "apm", nil },
+		func(string, ...string) (string, error) { return "successful internal output\n", nil },
+	)
+	if warnings.Len() != 0 {
+		t.Fatalf("warnings = %q, want successful output suppressed", warnings.String())
+	}
+}
+
+func TestLimitAPMDiagnostic(t *testing.T) {
+	diagnostic, truncated := limitAPMDiagnostic(" \n" + strings.Repeat("x", (4<<10)+1) + "\n ")
+	if diagnostic != strings.Repeat("x", 4<<10) {
+		t.Fatalf("diagnostic length = %d, want %d", len(diagnostic), 4<<10)
+	}
+	if !truncated {
+		t.Fatal("truncated = false, want true")
+	}
+}
 
 func TestHasLegacyTelemetryAPMDependency(t *testing.T) {
 	tests := []struct {
