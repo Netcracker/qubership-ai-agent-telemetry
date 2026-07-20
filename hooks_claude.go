@@ -13,6 +13,10 @@ func mergeClaudeHook(root map[string]any) (bool, error) {
 	return mergeGroupedHooks(root, claudeHookSpecs, newCanonicalClaudeHandler, isOwnedClaudeHandler)
 }
 
+func removeClaudeHook(root map[string]any) (bool, error) {
+	return removeGroupedHooks(root, claudeHookSpecs, isOwnedClaudeHandler)
+}
+
 func inspectClaudeHook(root map[string]any) bool {
 	copyRoot := cloneJSONObject(root)
 	changed, err := mergeClaudeHook(copyRoot)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -57,6 +58,24 @@ func updateCodexRule(path string) (bool, error) {
 		return false, err
 	}
 	if err := writeFileAtomically(writePath, []byte(codexExecutionPolicy), 0o600); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func removeCodexRule(path string, warnings io.Writer) (bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !bytes.Equal(data, []byte(codexExecutionPolicy)) {
+		_, _ = fmt.Fprintf(warnings, "warning: preserved modified Codex execution policy: %s\n", path)
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil {
 		return false, err
 	}
 	return true, nil

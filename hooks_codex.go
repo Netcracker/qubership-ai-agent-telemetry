@@ -15,6 +15,10 @@ func mergeCodexHook(root map[string]any) (bool, error) {
 	return mergeGroupedHooks(root, codexHookSpecs, newCanonicalCodexHandler, isOwnedCodexHandler)
 }
 
+func removeCodexHook(root map[string]any) (bool, error) {
+	return removeGroupedHooks(root, codexHookSpecs, isOwnedCodexHandler)
+}
+
 func inspectCodexHook(root map[string]any) bool {
 	copyRoot := cloneJSONObject(root)
 	changed, err := mergeCodexHook(copyRoot)
