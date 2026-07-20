@@ -19,6 +19,7 @@ func removeGroupedHooks(
 	for _, spec := range specs {
 		groups := events[spec.event]
 		keptGroups := make([]any, 0, len(groups))
+		eventRemoved := false
 		for _, value := range groups {
 			group := cloneJSONObject(value.(map[string]any))
 			handlers, hasHandlers := group["hooks"].([]any)
@@ -33,6 +34,7 @@ func removeGroupedHooks(
 				keptHandlers = append(keptHandlers, handler)
 			}
 			if removed {
+				eventRemoved = true
 				delete(group, "_apm_source")
 				if hasHandlers {
 					group["hooks"] = keptHandlers
@@ -43,13 +45,13 @@ func removeGroupedHooks(
 				continue
 			}
 			keptGroups = append(keptGroups, group)
-			changed = changed || removed
 		}
-		if len(keptGroups) == 0 {
+		if eventRemoved && len(keptGroups) == 0 {
 			delete(hooks, spec.event)
 		} else if !reflect.DeepEqual(groups, keptGroups) {
 			hooks[spec.event] = keptGroups
 		}
+		changed = changed || eventRemoved
 	}
 	if changed && len(hooks) == 0 {
 		delete(root, "hooks")

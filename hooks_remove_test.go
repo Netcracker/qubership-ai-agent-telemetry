@@ -109,6 +109,32 @@ func TestRemoveGroupedHooksRemovesEmptyOwnedGroupAndManagedEvent(t *testing.T) {
 	}
 }
 
+func TestRemoveGroupedHooksKeepsPreExistingEmptyManagedEvent(t *testing.T) {
+	root := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{
+				"hooks": []any{newCanonicalCodexHandler()},
+			}},
+			"PostToolUse": []any{},
+		},
+	}
+
+	changed, err := removeCodexHook(root)
+	if err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+	hooks, exists := root["hooks"].(map[string]any)
+	if !exists {
+		t.Fatal("hooks object containing pre-existing empty event was removed")
+	}
+	if _, exists := hooks["Stop"]; exists {
+		t.Fatal("event emptied by owned removal remains")
+	}
+	if event, exists := hooks["PostToolUse"]; !exists || len(event.([]any)) != 0 {
+		t.Fatalf("pre-existing empty event = %#v, exists = %v", event, exists)
+	}
+}
+
 func TestRemoveGroupedHooksKeepsExtendedGroupWithEmptyHooks(t *testing.T) {
 	root := map[string]any{
 		"hooks": map[string]any{
