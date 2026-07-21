@@ -108,7 +108,7 @@ datasource_health=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
 [ "$(printf '%s' "$datasource_health" | jq -r '.status')" = OK ] ||
   fail 'VictoriaLogs datasource health check failed'
 
-for uid in ai-agent-executive ai-agent-skills ai-agent-mcp ai-agent-commands ai-agent-health; do
+for uid in ai-agent-health ai-agent-telemetry-adoption; do
   curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
     --cookie "$viewer_cookie" \
     "$TEST_BASE_URL/grafana/api/dashboards/uid/$uid" >/dev/null || fail "dashboard $uid was not provisioned"

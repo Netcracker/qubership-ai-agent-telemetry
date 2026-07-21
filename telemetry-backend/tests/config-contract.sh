@@ -92,8 +92,7 @@ done
 for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD \
   "administrator username is \`admin\`" 'Upgrade an existing stack' 'docker compose config' \
   'com.docker.compose.volume=grafana-data' "Do not run \`docker compose down -v\`" \
-  'grafana cli admin reset-admin-password' 'Executive overview' 'Skill adoption' \
-  'MCP usage and reliability' 'Command adoption' 'Telemetry health'; do
+  'grafana cli admin reset-admin-password' 'Adoption overview' 'Telemetry health'; do
   grep -Fq "$text" "$readme" || fail "backend README is missing: $text"
 done
 printf 'PASS: backend configuration contract\n'

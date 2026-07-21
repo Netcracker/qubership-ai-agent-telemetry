@@ -117,18 +117,18 @@ docker compose exec grafana grafana cli admin reset-admin-password '<new-admin-p
 
 The default time range is 30 days, except Telemetry health, which defaults to seven days.
 
-- **Executive overview** — active installations, repositories, sessions, adoption trend, and top usage.
-- **Skill adoption** — reach and frequency by skill, trend, concentration, and repository detail.
-- **MCP usage and reliability** — calls, tools, servers, failure rate, latency, outcomes, and repository detail.
-- **Command adoption** — Claude Code command coverage, trends, sources, and repository detail.
+- **Adoption overview** — installs, repositories, and sessions; skill and MCP activity over time; onboarding growth;
+  per-machine, per-harness, and per-OS breakdowns; and skills and MCP tools per repository.
 - **Telemetry health** — delivery-ID coverage, duplicates, duration coverage, versions, harnesses, and missing fields.
 
-Filters expose repositories, harnesses, operating systems, CLI versions, skills, commands, and MCP names where they
-apply. Dashboards never display raw machine, session, or event identifiers.
+Filters expose repositories, harnesses, operating systems, and CLI versions. Panels do not display raw session or event
+identifiers. The per-machine activity ranking on the Adoption overview is the one exception: the machine is the unit of
+analysis there, so its ID labels each row.
 
-Event totals use distinct `event.id` values to collapse delivery retries. Legacy records without an ID remain visible
-in active installation and repository counts but cannot be included safely in deduplicated event totals. MCP failure
-rate excludes `unknown` outcomes, and latency uses only events that contain `mcp.duration_ms`.
+The two dashboards count events differently, by design. Telemetry health measures raw `event.id` coverage, so its
+event-based panels reflect only records that carry an ID. Adoption overview instead synthesizes a stable ID from the
+delivery stream and the original event time for records that lack one. That collapses delivery retries while still
+counting harnesses whose events predate `event.id`.
 
 ## Connect another Grafana through Caddy
 

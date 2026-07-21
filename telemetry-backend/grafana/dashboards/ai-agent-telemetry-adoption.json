@@ -1,0 +1,1377 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "editable": false,
+ "graphTooltip": 1,
+ "links": [
+  {
+   "title": "Telemetry health",
+   "type": "link",
+   "url": "/grafana/d/ai-agent-health"
+  }
+ ],
+ "panels": [
+  {
+   "id": 1,
+   "type": "text",
+   "title": "",
+   "transparent": true,
+   "gridPos": {
+    "h": 2,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "options": {
+    "mode": "markdown",
+    "content": "> \u26a0\ufe0f **Limitation:** we only see sessions in which at least one skill or MCP tool ran. Sessions with no skill or MCP activity are not visible."
+   }
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Installs",
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 0,
+    "y": 2
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "Machines",
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(machine.id) installs",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "colorMode": "none",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "description": "Distinct machines that sent at least one telemetry event."
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Used in repositories",
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 8,
+    "y": 2
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "Repositories",
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | format if (!repo.remote:*) \"(unknown)\" as repo.remote | replace (\"git@github.com:\", \"\") at repo.remote | replace (\"github.com/\", \"\") at repo.remote | replace (\".git\", \"\") at repo.remote | format \"<lc:repo.remote>\" as repo.remote | stats count_uniq(repo.remote) repositories",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "colorMode": "none",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "description": "Distinct repositories where skill or MCP activity was recorded."
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Sessions caught",
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 16,
+    "y": 2
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "Sessions",
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(agent, session.id) sessions",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "colorMode": "none",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "description": "Distinct agent sessions with at least one skill or MCP event."
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Telemetry activity",
+   "description": "Deduplicated skill executions vs MCP tool calls over time (stacked).",
+   "gridPos": {
+    "h": 7,
+    "w": 24,
+    "x": 0,
+    "y": 6
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "maxDataPoints": 80,
+   "fieldConfig": {
+    "defaults": {
+     "min": 0,
+     "unit": "short",
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 85,
+      "lineWidth": 1,
+      "barAlignment": 0,
+      "barWidthFactor": 0.9,
+      "stacking": {
+       "mode": "normal",
+       "group": "A"
+      },
+      "axisSoftMin": 0
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Skill events"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#5794F2"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "MCP calls"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#B877D9"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "queryType": "statsRange",
+     "step": "$__interval",
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | stats count_uniq(event.id) \"Skill events\""
+    },
+    {
+     "refId": "B",
+     "queryType": "statsRange",
+     "step": "$__interval",
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"mcp_tool_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | stats count_uniq(event.id) \"MCP calls\""
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Onboarding over time",
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 13
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "min": 0,
+     "unit": "short",
+     "decimals": 0,
+     "custom": {
+      "drawStyle": "line",
+      "lineInterpolation": "stepAfter",
+      "lineWidth": 2,
+      "fillOpacity": 15,
+      "showPoints": "always",
+      "pointSize": 6,
+      "spanNulls": true
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Machines"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#5794F2"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Repositories"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "#FF9830"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats by (machine.id) min(_time) as _time | stats by (_time:1d) count() machines | sort by (_time)",
+     "queryType": "logs",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | format if (!repo.remote:*) \"(unknown)\" as repo.remote | replace (\"git@github.com:\", \"\") at repo.remote | replace (\"github.com/\", \"\") at repo.remote | replace (\".git\", \"\") at repo.remote | format \"<lc:repo.remote>\" as repo.remote | stats by (repo.remote) min(_time) as _time | stats by (_time:1d) count() repositories | sort by (_time)",
+     "queryType": "logs",
+     "refId": "B"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "transformations": [
+    {
+     "id": "extractFields",
+     "options": {
+      "source": "labels"
+     }
+    },
+    {
+     "id": "convertFieldType",
+     "options": {
+      "conversions": [
+       {
+        "targetField": "machines",
+        "destinationType": "number"
+       },
+       {
+        "targetField": "repositories",
+        "destinationType": "number"
+       }
+      ]
+     }
+    },
+    {
+     "id": "calculateField",
+     "options": {
+      "mode": "cumulativeFunctions",
+      "cumulative": {
+       "field": "machines",
+       "reducer": "sum"
+      },
+      "alias": "Machines",
+      "replaceFields": false
+     }
+    },
+    {
+     "id": "calculateField",
+     "options": {
+      "mode": "cumulativeFunctions",
+      "cumulative": {
+       "field": "repositories",
+       "reducer": "sum"
+      },
+      "alias": "Repositories",
+      "replaceFields": false
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Line": true,
+       "labels": true,
+       "machines": true,
+       "repositories": true
+      }
+     }
+    }
+   ],
+   "description": "Cumulative count of machines and repositories by the day they first sent telemetry.",
+   "timeFrom": "30d"
+  },
+  {
+   "id": 7,
+   "type": "bargauge",
+   "title": "Activity per machine",
+   "gridPos": {
+    "h": 9,
+    "w": 8,
+    "x": 0,
+    "y": 21
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels[\"machine.id\"]}",
+     "unit": "short",
+     "min": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | stats by (machine.id) count_uniq(event.id) activity | sort by (activity) desc | limit 15",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "displayMode": "gradient",
+    "namePlacement": "left",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showUnfilled": true,
+    "valueMode": "color"
+   },
+   "description": "Skill and MCP events per machine (deduplicated)."
+  },
+  {
+   "id": 8,
+   "type": "bargauge",
+   "title": "Top skills executed",
+   "gridPos": {
+    "h": 9,
+    "w": 8,
+    "x": 8,
+    "y": 21
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels[\"skill.name\"]}",
+     "unit": "short",
+     "min": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | stats by (skill.name) count_uniq(event.id) events | sort by (events) desc | limit 10",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "displayMode": "gradient",
+    "namePlacement": "left",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showUnfilled": true,
+    "valueMode": "color"
+   }
+  },
+  {
+   "id": 9,
+   "type": "barchart",
+   "title": "Top MCPs",
+   "gridPos": {
+    "h": 9,
+    "w": 8,
+    "x": 16,
+    "y": 21
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "min": 0,
+     "unit": "short",
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"mcp_tool_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | format if (!mcp.server.name:*) \"Unknown\" as mcp.server.name | stats by (mcp.server.name, mcp.tool.name) count_uniq(event.id) calls | sort by (calls) desc | limit 20",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "stacking": "normal",
+    "xField": "mcp.server.name",
+    "showValue": "never",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "transformations": [
+    {
+     "id": "joinByLabels",
+     "options": {
+      "join": [
+       "mcp.server.name"
+      ],
+      "value": "mcp.tool.name"
+     }
+    }
+   ],
+   "description": "MCP calls per server; segments are the tools of that server."
+  },
+  {
+   "id": 10,
+   "type": "bargauge",
+   "title": "Machines by harness",
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 0,
+    "y": 30
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels[\"agent\"]}",
+     "unit": "short",
+     "min": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats by (agent) count_uniq(machine.id) machines | sort by (machines) desc",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "displayMode": "gradient",
+    "namePlacement": "left",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showUnfilled": true,
+    "valueMode": "color"
+   },
+   "description": "Machines with at least one event per AI harness. A machine can use several harnesses, so the sum may exceed total installs."
+  },
+  {
+   "id": 11,
+   "type": "bargauge",
+   "title": "Machines by OS",
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 12,
+    "y": 30
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "displayName": "${__field.labels[\"os.type\"]}",
+     "unit": "short",
+     "min": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats by (os.type) count_uniq(machine.id) machines | sort by (machines) desc",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "displayMode": "gradient",
+    "namePlacement": "left",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showUnfilled": true,
+    "valueMode": "color"
+   },
+   "description": "Machines with at least one event per operating system."
+  },
+  {
+   "id": 12,
+   "type": "row",
+   "title": "Skills per repository",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 36
+   },
+   "panels": []
+  },
+  {
+   "id": 13,
+   "type": "table",
+   "title": "Skills per repository (matrix)",
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 37
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "-",
+     "custom": {
+      "filterable": false
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byType",
+       "options": "number"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background",
+         "mode": "basic",
+         "applyToRow": false
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "transparent",
+           "value": null
+          },
+          {
+           "color": "dark-blue",
+           "value": 1
+          },
+          {
+           "color": "semi-dark-blue",
+           "value": 5
+          },
+          {
+           "color": "blue",
+           "value": 15
+          },
+          {
+           "color": "light-blue",
+           "value": 30
+          },
+          {
+           "color": "super-light-blue",
+           "value": 60
+          }
+         ]
+        }
+       },
+       {
+        "id": "custom.align",
+        "value": "center"
+       },
+       {
+        "id": "custom.minWidth",
+        "value": 210
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Repository"
+      },
+      "properties": [
+       {
+        "id": "custom.minWidth",
+        "value": 260
+       }
+      ]
+     }
+    ]
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | format if (!repo.remote:*) \"(unknown)\" as repo.remote | replace (\"git@github.com:\", \"\") at repo.remote | replace (\"github.com/\", \"\") at repo.remote | replace (\".git\", \"\") at repo.remote | format \"<lc:repo.remote>\" as repo.remote | stats by (repo.remote, skill.name) count_uniq(event.id) events | sort by (events) desc | limit 40",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "showHeader": true
+   },
+   "transformations": [
+    {
+     "id": "joinByLabels",
+     "options": {
+      "join": [
+       "repo.remote"
+      ],
+      "value": "skill.name"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "renameByName": {
+       "repo.remote": "Repository"
+      }
+     }
+    }
+   ],
+   "description": "Repository \u00d7 skill matrix; cell color scales with the number of executions."
+  },
+  {
+   "id": 14,
+   "type": "barchart",
+   "title": "Skills per repository (stacked)",
+   "gridPos": {
+    "h": 12,
+    "w": 12,
+    "x": 0,
+    "y": 47
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "min": 0,
+     "unit": "short",
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | format if (!repo.remote:*) \"(unknown)\" as repo.remote | replace (\"git@github.com:\", \"\") at repo.remote | replace (\"github.com/\", \"\") at repo.remote | replace (\".git\", \"\") at repo.remote | format \"<lc:repo.remote>\" as repo.remote | stats by (repo.remote, skill.name) count_uniq(event.id) events | sort by (events) desc | limit 40",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "stacking": "normal",
+    "xField": "repo.remote",
+    "showValue": "never",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "transformations": [
+    {
+     "id": "joinByLabels",
+     "options": {
+      "join": [
+       "repo.remote"
+      ],
+      "value": "skill.name"
+     }
+    }
+   ],
+   "description": "One bar per repository; segments are skills."
+  },
+  {
+   "id": 15,
+   "type": "table",
+   "title": "Skills per repository (table)",
+   "gridPos": {
+    "h": 12,
+    "w": 12,
+    "x": 12,
+    "y": 47
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "filterable": true
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"skill_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | format if (!repo.remote:*) \"(unknown)\" as repo.remote | replace (\"git@github.com:\", \"\") at repo.remote | replace (\"github.com/\", \"\") at repo.remote | replace (\".git\", \"\") at repo.remote | format \"<lc:repo.remote>\" as repo.remote | stats by (repo.remote, skill.name) count_uniq(event.id) events | sort by (events) desc | limit 40",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "desc": true,
+      "displayName": "Events"
+     }
+    ]
+   },
+   "transformations": [
+    {
+     "id": "seriesToRows",
+     "options": {}
+    },
+    {
+     "id": "extractFields",
+     "options": {
+      "format": "regexp",
+      "regExp": "/^(?<metric>[^{]+)\\{repo\\.remote=\"(?<repository>[^\"]+)\",skill\\.name=\"(?<skill>[^\"]+)\"\\}$/",
+      "source": "Metric"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Metric": true,
+       "Time": true,
+       "metric": true
+      },
+      "indexByName": {
+       "repository": 0,
+       "skill": 1,
+       "Value": 2
+      },
+      "renameByName": {
+       "Value": "Events",
+       "repository": "Repository",
+       "skill": "Skill"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": 16,
+   "type": "row",
+   "title": "MCPs per repository",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 59
+   },
+   "panels": []
+  },
+  {
+   "id": 17,
+   "type": "table",
+   "title": "MCPs per repository (matrix)",
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 60
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "noValue": "-",
+     "custom": {
+      "filterable": false
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byType",
+       "options": "number"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background",
+         "mode": "basic",
+         "applyToRow": false
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "transparent",
+           "value": null
+          },
+          {
+           "color": "dark-blue",
+           "value": 1
+          },
+          {
+           "color": "semi-dark-blue",
+           "value": 5
+          },
+          {
+           "color": "blue",
+           "value": 15
+          },
+          {
+           "color": "light-blue",
+           "value": 30
+          },
+          {
+           "color": "super-light-blue",
+           "value": 60
+          }
+         ]
+        }
+       },
+       {
+        "id": "custom.align",
+        "value": "center"
+       },
+       {
+        "id": "custom.minWidth",
+        "value": 210
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Repository"
+      },
+      "properties": [
+       {
+        "id": "custom.minWidth",
+        "value": 260
+       }
+      ]
+     }
+    ]
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"mcp_tool_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | format if (!repo.remote:*) \"(unknown)\" as repo.remote | replace (\"git@github.com:\", \"\") at repo.remote | replace (\"github.com/\", \"\") at repo.remote | replace (\".git\", \"\") at repo.remote | format \"<lc:repo.remote>\" as repo.remote | format if (!mcp.server.name:*) \"Unknown\" as mcp.server.name | stats by (repo.remote, mcp.server.name) count_uniq(event.id) calls | sort by (calls) desc | limit 50",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "showHeader": true
+   },
+   "transformations": [
+    {
+     "id": "joinByLabels",
+     "options": {
+      "join": [
+       "repo.remote"
+      ],
+      "value": "mcp.server.name"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "renameByName": {
+       "repo.remote": "Repository"
+      }
+     }
+    }
+   ],
+   "description": "Repository \u00d7 MCP server matrix; cell color scales with the number of calls."
+  },
+  {
+   "id": 18,
+   "type": "barchart",
+   "title": "MCPs per repository (stacked)",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 68
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "min": 0,
+     "unit": "short",
+     "custom": {
+      "fillOpacity": 85,
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"mcp_tool_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | format if (!repo.remote:*) \"(unknown)\" as repo.remote | replace (\"git@github.com:\", \"\") at repo.remote | replace (\"github.com/\", \"\") at repo.remote | replace (\".git\", \"\") at repo.remote | format \"<lc:repo.remote>\" as repo.remote | format if (!mcp.server.name:*) \"Unknown\" as mcp.server.name | stats by (repo.remote, mcp.server.name) count_uniq(event.id) calls | sort by (calls) desc | limit 50",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "orientation": "horizontal",
+    "stacking": "normal",
+    "xField": "repo.remote",
+    "showValue": "never",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "transformations": [
+    {
+     "id": "joinByLabels",
+     "options": {
+      "join": [
+       "repo.remote"
+      ],
+      "value": "mcp.server.name"
+     }
+    }
+   ],
+   "description": "One bar per repository; segments are MCP servers."
+  },
+  {
+   "id": 19,
+   "type": "table",
+   "title": "MCPs per repository (table)",
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 68
+   },
+   "datasource": {
+    "type": "victoriametrics-logs-datasource",
+    "uid": "victorialogs"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "filterable": true
+     }
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "victoriametrics-logs-datasource",
+      "uid": "victorialogs"
+     },
+     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" _msg:=\"mcp_tool_executed\" | format if (!event.id:*) \"legacy-<_stream_id>-<_time>\" as event.id | format if (!repo.remote:*) \"(unknown)\" as repo.remote | replace (\"git@github.com:\", \"\") at repo.remote | replace (\"github.com/\", \"\") at repo.remote | replace (\".git\", \"\") at repo.remote | format \"<lc:repo.remote>\" as repo.remote | format if (!mcp.server.name:*) \"Unknown\" as mcp.server.name | stats by (repo.remote, mcp.server.name, mcp.tool.name) count_uniq(event.id) calls | sort by (calls) desc | limit 50",
+     "queryType": "stats",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "desc": true,
+      "displayName": "Calls"
+     }
+    ]
+   },
+   "transformations": [
+    {
+     "id": "seriesToRows",
+     "options": {}
+    },
+    {
+     "id": "extractFields",
+     "options": {
+      "format": "regexp",
+      "regExp": "/^(?<metric>[^{]+)\\{mcp\\.server\\.name=\"(?<server>[^\"]+)\",mcp\\.tool\\.name=\"(?<tool>[^\"]+)\",repo\\.remote=\"(?<repository>[^\"]+)\"\\}$/",
+      "source": "Metric"
+     }
+    },
+    {
+     "id": "organize",
+     "options": {
+      "excludeByName": {
+       "Metric": true,
+       "Time": true,
+       "metric": true
+      },
+      "indexByName": {
+       "repository": 0,
+       "server": 1,
+       "tool": 2,
+       "Value": 3
+      },
+      "renameByName": {
+       "Value": "Calls",
+       "repository": "Repository",
+       "server": "MCP server",
+       "tool": "Tool"
+      }
+     }
+    }
+   ]
+  }
+ ],
+ "refresh": "15m",
+ "schemaVersion": 42,
+ "tags": [
+  "qubership",
+  "telemetry",
+  "adoption"
+ ],
+ "templating": {
+  "list": [
+   {
+    "allValue": ".*",
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    },
+    "datasource": {
+     "type": "victoriametrics-logs-datasource",
+     "uid": "victorialogs"
+    },
+    "includeAll": true,
+    "label": "Repository",
+    "multi": true,
+    "name": "repository",
+    "query": {
+     "field": "repo.remote",
+     "limit": 100,
+     "query": "{service.name=\"ai-agent-telemetry\"}",
+     "type": "fieldValue"
+    },
+    "refresh": 2,
+    "type": "query"
+   },
+   {
+    "allValue": ".*",
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    },
+    "datasource": {
+     "type": "victoriametrics-logs-datasource",
+     "uid": "victorialogs"
+    },
+    "includeAll": true,
+    "label": "Harness",
+    "multi": true,
+    "name": "harness",
+    "query": {
+     "field": "agent",
+     "limit": 20,
+     "query": "{service.name=\"ai-agent-telemetry\"}",
+     "type": "fieldValue"
+    },
+    "refresh": 2,
+    "type": "query"
+   },
+   {
+    "allValue": ".*",
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    },
+    "datasource": {
+     "type": "victoriametrics-logs-datasource",
+     "uid": "victorialogs"
+    },
+    "includeAll": true,
+    "label": "OS",
+    "multi": true,
+    "name": "os",
+    "query": {
+     "field": "os.type",
+     "limit": 20,
+     "query": "{service.name=\"ai-agent-telemetry\"}",
+     "type": "fieldValue"
+    },
+    "refresh": 2,
+    "type": "query"
+   },
+   {
+    "allValue": ".*",
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    },
+    "datasource": {
+     "type": "victoriametrics-logs-datasource",
+     "uid": "victorialogs"
+    },
+    "includeAll": true,
+    "label": "CLI version",
+    "multi": true,
+    "name": "version",
+    "query": {
+     "field": "service.version",
+     "limit": 50,
+     "query": "{service.name=\"ai-agent-telemetry\"}",
+     "type": "fieldValue"
+    },
+    "refresh": 2,
+    "type": "query"
+   }
+  ]
+ },
+ "time": {
+  "from": "now-30d",
+  "to": "now"
+ },
+ "timezone": "",
+ "title": "Adoption overview",
+ "uid": "ai-agent-telemetry-adoption",
+ "version": 3
+}
