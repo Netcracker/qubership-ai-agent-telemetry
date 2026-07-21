@@ -23,6 +23,39 @@ services:
       - victorialogs
     restart: unless-stopped
 
+  grafana:
+    build:
+      context: ./grafana
+      dockerfile: Dockerfile
+    environment:
+      - GF_SERVER_ROOT_URL=https://${SITE_ADDRESS}:${HTTPS_PORT:-443}/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_AUTH_PROXY_ENABLED=true
+      - GF_AUTH_PROXY_HEADER_NAME=X-WEBAUTH-USER
+      - GF_AUTH_PROXY_HEADER_PROPERTY=username
+      - GF_AUTH_PROXY_AUTO_SIGN_UP=true
+      - GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN=true
+      - GF_USERS_AUTO_ASSIGN_ORG=true
+      - GF_USERS_AUTO_ASSIGN_ORG_ROLE=Viewer
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_PLUGINS_PREINSTALL_DISABLED=true
+      - GF_PLUGINS_PLUGIN_ADMIN_ENABLED=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - backend
+    depends_on:
+      - victorialogs
+    restart: unless-stopped
+
   caddy:
     image: caddy:2
     ports:
@@ -32,6 +65,8 @@ services:
       - SITE_ADDRESS=${SITE_ADDRESS}
       - CADDY_TLS=${CADDY_TLS}
       - INGEST_TOKEN=${INGEST_TOKEN}
+      - DASHBOARD_AUTH_USER=${DASHBOARD_AUTH_USER:?set DASHBOARD_AUTH_USER}
+      - DASHBOARD_AUTH_PASSWORD_HASH=${DASHBOARD_AUTH_PASSWORD_HASH:?set DASHBOARD_AUTH_PASSWORD_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -43,9 +78,10 @@ services:
     restart: unless-stopped
 
 networks:
-  backend:
+  backend: {}
 
 volumes:
-  vlogs-data:
-  caddy-data:
-  caddy-config:
+  vlogs-data: {}
+  grafana-data: {}
+  caddy-data: {}
+  caddy-config: {}

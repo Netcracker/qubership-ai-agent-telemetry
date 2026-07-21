@@ -1,0 +1,13 @@
+apiVersion: 1
+
+providers:
+  - name: ai-agent-telemetry
+    orgId: 1
+    folder: AI Agent Telemetry
+    folderUid: ai-agent-telemetry
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
