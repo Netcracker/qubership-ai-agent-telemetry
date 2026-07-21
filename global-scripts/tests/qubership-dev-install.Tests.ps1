@@ -235,7 +235,22 @@ public static class $className {
   }
 }
 "@
-    Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $path -OutputType ConsoleApplication
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+      # PowerShell 7 cannot emit console applications with Add-Type. Use the
+      # Windows PowerShell compiler for this Windows-only test fixture.
+      $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+      $escapedSource = $source.Replace("'", "''")
+      $escapedPath = $path.Replace("'", "''")
+      $compilerScript = "Add-Type -TypeDefinition '$escapedSource' -Language CSharp " +
+        "-OutputAssembly '$escapedPath' -OutputType ConsoleApplication"
+      $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($compilerScript))
+      & $windowsPowerShell -NoProfile -NonInteractive -EncodedCommand $encodedCommand | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        throw "Windows PowerShell failed to compile the managed telemetry fixture"
+      }
+    } else {
+      Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $path -OutputType ConsoleApplication
+    }
   } else {
     [System.IO.File]::WriteAllText($path, @'
 #!/usr/bin/env pwsh

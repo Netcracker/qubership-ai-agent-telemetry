@@ -84,51 +84,51 @@ content, missing-file invalidation, and existing-file invalidation:
 package main
 
 import (
-	"os"
-	"path/filepath"
-	"testing"
+    "os"
+    "path/filepath"
+    "testing"
 )
 
 func TestHookReceiptPathFrom(t *testing.T) {
-	tests := []struct{ name, xdg, home, want string }{
-		{"XDG wins", "/state", "/home/u", filepath.Join("/state", pkgName, hookReceiptName)},
-		{"home fallback", "", "/home/u", filepath.Join("/home/u", ".local", "state", pkgName, hookReceiptName)},
-		{"unavailable", "", "", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := hookReceiptPathFrom(tt.xdg, tt.home); got != tt.want {
-				t.Fatalf("got %q, want %q", got, tt.want)
-			}
-		})
-	}
+    tests := []struct{ name, xdg, home, want string }{
+        {"XDG wins", "/state", "/home/u", filepath.Join("/state", pkgName, hookReceiptName)},
+        {"home fallback", "", "/home/u", filepath.Join("/home/u", ".local", "state", pkgName, hookReceiptName)},
+        {"unavailable", "", "", ""},
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            if got := hookReceiptPathFrom(tt.xdg, tt.home); got != tt.want {
+                t.Fatalf("got %q, want %q", got, tt.want)
+            }
+        })
+    }
 }
 
 func TestHookReceiptLifecycle(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("XDG_STATE_HOME", "")
-	if validHookReceipt(home) {
-		t.Fatal("missing receipt reported valid")
-	}
-	if err := writeHookReceipt(home); err != nil {
-		t.Fatal(err)
-	}
-	path := hookReceiptPath(home)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != hookReceiptContents || !validHookReceipt(home) {
-		t.Fatalf("receipt = %q, valid = %v", data, validHookReceipt(home))
-	}
-	if err := invalidateHookReceipt(home); err != nil {
-		t.Fatal(err)
-	}
-	if err := invalidateHookReceipt(home); err != nil {
-		t.Fatalf("missing receipt invalidation = %v", err)
-	}
+    home := t.TempDir()
+    t.Setenv("HOME", home)
+    t.Setenv("USERPROFILE", home)
+    t.Setenv("XDG_STATE_HOME", "")
+    if validHookReceipt(home) {
+        t.Fatal("missing receipt reported valid")
+    }
+    if err := writeHookReceipt(home); err != nil {
+        t.Fatal(err)
+    }
+    path := hookReceiptPath(home)
+    data, err := os.ReadFile(path)
+    if err != nil {
+        t.Fatal(err)
+    }
+    if string(data) != hookReceiptContents || !validHookReceipt(home) {
+        t.Fatalf("receipt = %q, valid = %v", data, validHookReceipt(home))
+    }
+    if err := invalidateHookReceipt(home); err != nil {
+        t.Fatal(err)
+    }
+    if err := invalidateHookReceipt(home); err != nil {
+        t.Fatalf("missing receipt invalidation = %v", err)
+    }
 }
 ```
 
@@ -150,66 +150,66 @@ Create `hook_receipt.go`:
 package main
 
 import (
-	"bytes"
-	"errors"
-	"os"
-	"path/filepath"
+    "bytes"
+    "errors"
+    "os"
+    "path/filepath"
 )
 
 const (
-	hookReceiptName     = "hooks-uninstalled"
-	hookReceiptContents = "version=1\nstate=uninstalled\n"
+    hookReceiptName     = "hooks-uninstalled"
+    hookReceiptContents = "version=1\nstate=uninstalled\n"
 )
 
 func stateBaseFrom(xdg, home string) string {
-	if xdg != "" {
-		return xdg
-	}
-	if home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".local", "state")
+    if xdg != "" {
+        return xdg
+    }
+    if home == "" {
+        return ""
+    }
+    return filepath.Join(home, ".local", "state")
 }
 
 func hookReceiptPathFrom(xdg, home string) string {
-	base := stateBaseFrom(xdg, home)
-	if base == "" {
-		return ""
-	}
-	return filepath.Join(base, pkgName, hookReceiptName)
+    base := stateBaseFrom(xdg, home)
+    if base == "" {
+        return ""
+    }
+    return filepath.Join(base, pkgName, hookReceiptName)
 }
 
 func hookReceiptPath(home string) string {
-	return hookReceiptPathFrom(os.Getenv("XDG_STATE_HOME"), home)
+    return hookReceiptPathFrom(os.Getenv("XDG_STATE_HOME"), home)
 }
 
 func validHookReceipt(home string) bool {
-	path := hookReceiptPath(home)
-	if path == "" {
-		return false
-	}
-	data, err := os.ReadFile(path)
-	return err == nil && bytes.Equal(data, []byte(hookReceiptContents))
+    path := hookReceiptPath(home)
+    if path == "" {
+        return false
+    }
+    data, err := os.ReadFile(path)
+    return err == nil && bytes.Equal(data, []byte(hookReceiptContents))
 }
 
 func writeHookReceipt(home string) error {
-	path := hookReceiptPath(home)
-	if path == "" {
-		return errUserHomeUnavailable
-	}
-	return writeFileAtomically(path, []byte(hookReceiptContents), 0o600)
+    path := hookReceiptPath(home)
+    if path == "" {
+        return errUserHomeUnavailable
+    }
+    return writeFileAtomically(path, []byte(hookReceiptContents), 0o600)
 }
 
 func invalidateHookReceipt(home string) error {
-	path := hookReceiptPath(home)
-	if path == "" {
-		return errUserHomeUnavailable
-	}
-	err := os.Remove(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
+    path := hookReceiptPath(home)
+    if path == "" {
+        return errUserHomeUnavailable
+    }
+    err := os.Remove(path)
+    if errors.Is(err, os.ErrNotExist) {
+        return nil
+    }
+    return err
 }
 ```
 
@@ -226,18 +226,18 @@ Use this test shape in `hooks_test.go`:
 
 ```go
 results, err := installManagedHooksWith(
-	"/home/test",
-	[]hookTarget{hookClaude},
-	io.Discard,
-	func(string) error { calls = append(calls, "invalidate"); return errors.New("receipt locked") },
-	func(string, io.Writer) { calls = append(calls, "cleanup") },
-	func(string, []hookTarget) []hookInstallResult { calls = append(calls, "install"); return nil },
+    "/home/test",
+    []hookTarget{hookClaude},
+    io.Discard,
+    func(string) error { calls = append(calls, "invalidate"); return errors.New("receipt locked") },
+    func(string, io.Writer) { calls = append(calls, "cleanup") },
+    func(string, []hookTarget) []hookInstallResult { calls = append(calls, "install"); return nil },
 )
 if err == nil || !strings.Contains(err.Error(), "receipt locked") {
-	t.Fatalf("error = %v", err)
+    t.Fatalf("error = %v", err)
 }
 if results != nil || !reflect.DeepEqual(calls, []string{"invalidate"}) {
-	t.Fatalf("results = %#v, calls = %v", results, calls)
+    t.Fatalf("results = %#v, calls = %v", results, calls)
 }
 ```
 
@@ -257,30 +257,30 @@ Change the managed install signatures and ordering in `hooks.go`:
 
 ```go
 func installManagedHooks(
-	home string,
-	targets []hookTarget,
-	warnings io.Writer,
+    home string,
+    targets []hookTarget,
+    warnings io.Writer,
 ) ([]hookInstallResult, error) {
-	return installManagedHooksWith(
-		home, targets, warnings, invalidateHookReceipt, cleanupLegacyTelemetryAPM, installHooks,
-	)
+    return installManagedHooksWith(
+        home, targets, warnings, invalidateHookReceipt, cleanupLegacyTelemetryAPM, installHooks,
+    )
 }
 
 func installManagedHooksWith(
-	home string,
-	targets []hookTarget,
-	warnings io.Writer,
-	invalidate func(string) error,
-	cleanup func(string, io.Writer),
-	install func(string, []hookTarget) []hookInstallResult,
+    home string,
+    targets []hookTarget,
+    warnings io.Writer,
+    invalidate func(string) error,
+    cleanup func(string, io.Writer),
+    install func(string, []hookTarget) []hookInstallResult,
 ) ([]hookInstallResult, error) {
-	if len(targets) > 0 {
-		if err := invalidate(home); err != nil {
-			return nil, fmt.Errorf("invalidate hook removal receipt: %w", err)
-		}
-		cleanup(home, warnings)
-	}
-	return install(home, targets), nil
+    if len(targets) > 0 {
+        if err := invalidate(home); err != nil {
+            return nil, fmt.Errorf("invalidate hook removal receipt: %w", err)
+        }
+        cleanup(home, warnings)
+    }
+    return install(home, targets), nil
 }
 ```
 
@@ -334,13 +334,13 @@ harness, call its removal merge and assert:
 
 ```go
 if changed, err := removeClaudeHook(root); err != nil || !changed {
-	t.Fatalf("changed = %v, error = %v", changed, err)
+    t.Fatalf("changed = %v, error = %v", changed, err)
 }
 if got := findCommands(root); !reflect.DeepEqual(got, []string{"user-hook"}) {
-	t.Fatalf("commands = %v", got)
+    t.Fatalf("commands = %v", got)
 }
 if root["theme"] != "dark" {
-	t.Fatal("unrelated root property was removed")
+    t.Fatal("unrelated root property was removed")
 }
 ```
 
@@ -372,70 +372,70 @@ Create `hooks_remove.go` with this generic grouped algorithm and a corresponding
 package main
 
 import (
-	"fmt"
-	"io"
-	"os"
-	"reflect"
+    "fmt"
+    "io"
+    "os"
+    "reflect"
 )
 
 func removeGroupedHooks(
-	root map[string]any,
-	specs []hookSpec,
-	isOwned func(map[string]any) bool,
+    root map[string]any,
+    specs []hookSpec,
+    isOwned func(map[string]any) bool,
 ) (bool, error) {
-	hooks, events, err := validateGroupedHooks(root, specs)
-	if err != nil || hooks == nil {
-		return false, err
-	}
-	changed := false
-	for _, spec := range specs {
-		groups := events[spec.event]
-		keptGroups := make([]any, 0, len(groups))
-		for _, value := range groups {
-			group := cloneJSONObject(value.(map[string]any))
-			handlers, hasHandlers := group["hooks"].([]any)
-			keptHandlers := make([]any, 0, len(handlers))
-			removed := group["_apm_source"] == hookAPMSource
-			for _, handlerValue := range handlers {
-				handler := handlerValue.(map[string]any)
-				if isOwned(handler) {
-					removed = true
-					continue
-				}
-				keptHandlers = append(keptHandlers, handler)
-			}
-			if removed {
-				delete(group, "_apm_source")
-				if hasHandlers {
-					group["hooks"] = keptHandlers
-				}
-			}
-			if removed && len(keptHandlers) == 0 && onlyHookGroupFields(group) {
-				changed = true
-				continue
-			}
-			keptGroups = append(keptGroups, group)
-			changed = changed || removed
-		}
-		if len(keptGroups) == 0 {
-			delete(hooks, spec.event)
-		} else if !reflect.DeepEqual(groups, keptGroups) {
-			hooks[spec.event] = keptGroups
-		}
-	}
-	if changed && len(hooks) == 0 {
-		delete(root, "hooks")
-	}
-	return changed, nil
+    hooks, events, err := validateGroupedHooks(root, specs)
+    if err != nil || hooks == nil {
+        return false, err
+    }
+    changed := false
+    for _, spec := range specs {
+        groups := events[spec.event]
+        keptGroups := make([]any, 0, len(groups))
+        for _, value := range groups {
+            group := cloneJSONObject(value.(map[string]any))
+            handlers, hasHandlers := group["hooks"].([]any)
+            keptHandlers := make([]any, 0, len(handlers))
+            removed := group["_apm_source"] == hookAPMSource
+            for _, handlerValue := range handlers {
+                handler := handlerValue.(map[string]any)
+                if isOwned(handler) {
+                    removed = true
+                    continue
+                }
+                keptHandlers = append(keptHandlers, handler)
+            }
+            if removed {
+                delete(group, "_apm_source")
+                if hasHandlers {
+                    group["hooks"] = keptHandlers
+                }
+            }
+            if removed && len(keptHandlers) == 0 && onlyHookGroupFields(group) {
+                changed = true
+                continue
+            }
+            keptGroups = append(keptGroups, group)
+            changed = changed || removed
+        }
+        if len(keptGroups) == 0 {
+            delete(hooks, spec.event)
+        } else if !reflect.DeepEqual(groups, keptGroups) {
+            hooks[spec.event] = keptGroups
+        }
+    }
+    if changed && len(hooks) == 0 {
+        delete(root, "hooks")
+    }
+    return changed, nil
 }
 
 func onlyHookGroupFields(group map[string]any) bool {
-	for key := range group {
-		if key != "matcher" && key != "hooks" {
-			return false
-		}
-	}
-	return true
+    for key := range group {
+        if key != "matcher" && key != "hooks" {
+            return false
+        }
+    }
+    return true
 }
 ```
 
@@ -444,32 +444,32 @@ only when filtering makes it empty, delete an empty `hooks` object, and never de
 
 ```go
 func removeCursorHook(root map[string]any) (bool, error) {
-	hooks, events, _, err := validateCursorHooks(root)
-	if err != nil || hooks == nil {
-		return false, err
-	}
-	changed := false
-	for _, event := range cursorHookEvents {
-		entries := events[event]
-		kept := make([]any, 0, len(entries))
-		for _, value := range entries {
-			entry := value.(map[string]any)
-			if isOwnedCursorHook(entry) {
-				changed = true
-				continue
-			}
-			kept = append(kept, entry)
-		}
-		if len(kept) == 0 && len(entries) > 0 {
-			delete(hooks, event)
-		} else if !reflect.DeepEqual(entries, kept) {
-			hooks[event] = kept
-		}
-	}
-	if changed && len(hooks) == 0 {
-		delete(root, "hooks")
-	}
-	return changed, nil
+    hooks, events, _, err := validateCursorHooks(root)
+    if err != nil || hooks == nil {
+        return false, err
+    }
+    changed := false
+    for _, event := range cursorHookEvents {
+        entries := events[event]
+        kept := make([]any, 0, len(entries))
+        for _, value := range entries {
+            entry := value.(map[string]any)
+            if isOwnedCursorHook(entry) {
+                changed = true
+                continue
+            }
+            kept = append(kept, entry)
+        }
+        if len(kept) == 0 && len(entries) > 0 {
+            delete(hooks, event)
+        } else if !reflect.DeepEqual(entries, kept) {
+            hooks[event] = kept
+        }
+    }
+    if changed && len(hooks) == 0 {
+        delete(root, "hooks")
+    }
+    return changed, nil
 }
 ```
 
@@ -477,7 +477,7 @@ Add grouped wrappers in the harness files:
 
 ```go
 func removeClaudeHook(root map[string]any) (bool, error) {
-	return removeGroupedHooks(root, claudeHookSpecs, isOwnedClaudeHandler)
+    return removeGroupedHooks(root, claudeHookSpecs, isOwnedClaudeHandler)
 }
 ```
 
@@ -495,21 +495,21 @@ Add to `codex_rule.go`:
 
 ```go
 func removeCodexRule(path string, warnings io.Writer) (bool, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if !bytes.Equal(data, []byte(codexExecutionPolicy)) {
-		_, _ = fmt.Fprintf(warnings, "warning: preserved modified Codex execution policy: %s\n", path)
-		return false, nil
-	}
-	if err := os.Remove(path); err != nil {
-		return false, err
-	}
-	return true, nil
+    data, err := os.ReadFile(path)
+    if errors.Is(err, os.ErrNotExist) {
+        return false, nil
+    }
+    if err != nil {
+        return false, err
+    }
+    if !bytes.Equal(data, []byte(codexExecutionPolicy)) {
+        _, _ = fmt.Fprintf(warnings, "warning: preserved modified Codex execution policy: %s\n", path)
+        return false, nil
+    }
+    if err := os.Remove(path); err != nil {
+        return false, err
+    }
+    return true, nil
 }
 ```
 
@@ -518,35 +518,35 @@ does not write when the removal merge returns false:
 
 ```go
 func uninstallHooks(home string, targets []hookTarget, warnings io.Writer) []hookInstallResult {
-	requested := make(map[hookTarget]bool, len(targets))
-	for _, target := range targets {
-		requested[target] = true
-	}
-	results := make([]hookInstallResult, 0, len(requested))
-	for _, target := range allHookTargets {
-		if !requested[target] {
-			continue
-		}
-		path := hookPath(home, target)
-		if path == "" {
-			results = append(results, hookInstallResult{Target: target, Err: errUserHomeUnavailable})
-			continue
-		}
-		merge := removeClaudeHook
-		if target == hookCodex {
-			merge = removeCodexHook
-		} else if target == hookCursor {
-			merge = removeCursorHook
-		}
-		changed, err := updateHookFile(path, merge)
-		if target == hookCodex {
-			ruleChanged, ruleErr := removeCodexRule(codexRulePath(home), warnings)
-			changed = changed || ruleChanged
-			err = errors.Join(err, ruleErr)
-		}
-		results = append(results, hookInstallResult{Target: target, Path: path, Changed: changed, Err: err})
-	}
-	return results
+    requested := make(map[hookTarget]bool, len(targets))
+    for _, target := range targets {
+        requested[target] = true
+    }
+    results := make([]hookInstallResult, 0, len(requested))
+    for _, target := range allHookTargets {
+        if !requested[target] {
+            continue
+        }
+        path := hookPath(home, target)
+        if path == "" {
+            results = append(results, hookInstallResult{Target: target, Err: errUserHomeUnavailable})
+            continue
+        }
+        merge := removeClaudeHook
+        if target == hookCodex {
+            merge = removeCodexHook
+        } else if target == hookCursor {
+            merge = removeCursorHook
+        }
+        changed, err := updateHookFile(path, merge)
+        if target == hookCodex {
+            ruleChanged, ruleErr := removeCodexRule(codexRulePath(home), warnings)
+            changed = changed || ruleChanged
+            err = errors.Join(err, ruleErr)
+        }
+        results = append(results, hookInstallResult{Target: target, Path: path, Changed: changed, Err: err})
+    }
+    return results
 }
 ```
 
@@ -591,16 +591,16 @@ action, and an unknown action. Use these expected values:
 
 ```go
 tests := []struct {
-	args       []string
-	wantAction hooksAction
-	want       []hookTarget
-	wantErr    bool
+    args       []string
+    wantAction hooksAction
+    want       []hookTarget
+    wantErr    bool
 }{
-	{[]string{"install"}, hooksInstall, allHookTargets, false},
-	{[]string{"uninstall"}, hooksUninstall, allHookTargets, false},
-	{[]string{"uninstall", "--target=claude,cursor"}, hooksUninstall, []hookTarget{hookClaude, hookCursor}, false},
-	{[]string{"uninstall", "--target=all"}, "", nil, true},
-	{[]string{"uninstall", "--target=none"}, "", nil, true},
+    {[]string{"install"}, hooksInstall, allHookTargets, false},
+    {[]string{"uninstall"}, hooksUninstall, allHookTargets, false},
+    {[]string{"uninstall", "--target=claude,cursor"}, hooksUninstall, []hookTarget{hookClaude, hookCursor}, false},
+    {[]string{"uninstall", "--target=all"}, "", nil, true},
+    {[]string{"uninstall", "--target=none"}, "", nil, true},
 }
 ```
 
@@ -632,45 +632,45 @@ Replace the parser return type in `hooks.go`:
 type hooksAction string
 
 const (
-	hooksInstall   hooksAction = "install"
-	hooksUninstall hooksAction = "uninstall"
+    hooksInstall   hooksAction = "install"
+    hooksUninstall hooksAction = "uninstall"
 )
 
 type hooksCommand struct {
-	Action  hooksAction
-	Targets []hookTarget
+    Action  hooksAction
+    Targets []hookTarget
 }
 
 func parseHooksCommand(args []string) (hooksCommand, error) {
-	if len(args) == 0 {
-		return hooksCommand{}, fmt.Errorf("missing hooks action")
-	}
-	action := hooksAction(args[0])
-	if action != hooksInstall && action != hooksUninstall {
-		return hooksCommand{}, fmt.Errorf("unknown hooks action %q", args[0])
-	}
-	rawTargets := ""
-	targetSet := false
-	for _, arg := range args[1:] {
-		if !strings.HasPrefix(arg, "--target=") {
-			return hooksCommand{}, fmt.Errorf("unknown hooks %s flag %q", action, arg)
-		}
-		if targetSet {
-			return hooksCommand{}, fmt.Errorf("hook target flag may be specified only once")
-		}
-		rawTargets = strings.TrimPrefix(arg, "--target=")
-		if rawTargets == "" {
-			return hooksCommand{}, fmt.Errorf("hook target value must not be empty")
-		}
-		targetSet = true
-	}
-	if targetSet && (rawTargets == "all" || rawTargets == "none") {
-		return hooksCommand{}, fmt.Errorf(
-			"hook target %q is not valid here; omit --target to process all hooks", rawTargets,
-		)
-	}
-	targets, err := parseHookTargets(rawTargets)
-	return hooksCommand{Action: action, Targets: targets}, err
+    if len(args) == 0 {
+        return hooksCommand{}, fmt.Errorf("missing hooks action")
+    }
+    action := hooksAction(args[0])
+    if action != hooksInstall && action != hooksUninstall {
+        return hooksCommand{}, fmt.Errorf("unknown hooks action %q", args[0])
+    }
+    rawTargets := ""
+    targetSet := false
+    for _, arg := range args[1:] {
+        if !strings.HasPrefix(arg, "--target=") {
+            return hooksCommand{}, fmt.Errorf("unknown hooks %s flag %q", action, arg)
+        }
+        if targetSet {
+            return hooksCommand{}, fmt.Errorf("hook target flag may be specified only once")
+        }
+        rawTargets = strings.TrimPrefix(arg, "--target=")
+        if rawTargets == "" {
+            return hooksCommand{}, fmt.Errorf("hook target value must not be empty")
+        }
+        targetSet = true
+    }
+    if targetSet && (rawTargets == "all" || rawTargets == "none") {
+        return hooksCommand{}, fmt.Errorf(
+            "hook target %q is not valid here; omit --target to process all hooks", rawTargets,
+        )
+    }
+    targets, err := parseHookTargets(rawTargets)
+    return hooksCommand{Action: action, Targets: targets}, err
 }
 ```
 
@@ -681,23 +681,23 @@ In `main.go`, parse once and switch on `command.Action`. Keep existing install o
 ```go
 results := uninstallHooks(home, command.Targets, stderr)
 for _, result := range results {
-	state := "unchanged"
-	if result.Err != nil {
-		state = "failed"
-	} else if result.Changed {
-		state = "removed"
-	}
-	stdout(fmt.Sprintf("%s: %s: %s\n", result.Target, state, result.Path))
+    state := "unchanged"
+    if result.Err != nil {
+        state = "failed"
+    } else if result.Changed {
+        state = "removed"
+    }
+    stdout(fmt.Sprintf("%s: %s: %s\n", result.Target, state, result.Path))
 }
 if err := hookInstallError(results); err != nil {
-	stdout("hooks: " + err.Error() + "\n")
-	return 1
+    stdout("hooks: " + err.Error() + "\n")
+    return 1
 }
 if fullHookTargetSet(command.Targets) {
-	if err := writeHookReceipt(home); err != nil {
-		_, _ = fmt.Fprintln(stderr, "hooks: write uninstall receipt:", err)
-		return 1
-	}
+    if err := writeHookReceipt(home); err != nil {
+        _, _ = fmt.Fprintln(stderr, "hooks: write uninstall receipt:", err)
+        return 1
+    }
 }
 return 0
 ```

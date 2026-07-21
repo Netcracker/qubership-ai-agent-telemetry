@@ -114,10 +114,13 @@ func uninstallHooks(home string, targets []hookTarget, warnings io.Writer) []hoo
 			results = append(results, hookInstallResult{Target: target, Err: errUserHomeUnavailable})
 			continue
 		}
-		merge := removeClaudeHook
-		if target == hookCodex {
+		var merge hookMergeFunc
+		switch target {
+		case hookClaude:
+			merge = removeClaudeHook
+		case hookCodex:
 			merge = removeCodexHook
-		} else if target == hookCursor {
+		case hookCursor:
 			merge = removeCursorHook
 		}
 		changed, err := updateHookFile(path, merge)
