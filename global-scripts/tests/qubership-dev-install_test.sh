@@ -72,6 +72,7 @@ setup_component_fixture() {
   export PATH="$FIXTURE_ROOT/bin:/usr/bin:/bin"
   unset CYBER_FERRET_PASSWORD QDI_FAIL_APM_COMMAND QDI_FAIL_TELEMETRY_HOOKS
   unset QDI_GIT_STATUS QDI_GIT_PULL_FAIL QDI_FAIL_GIT_ORIGIN QDI_FAIL_GIT_STATUS
+  unset QDI_FAIL_GIT_CONFIG_READ QDI_FAIL_RECEIPT_MOVE
   unset QDI_TEST_JAVA_EXIT_CODE QDI_TEST_JAVA_SPEC_VERSION
   mkdir -p "$HOME" "$FIXTURE_ROOT/bin" "$XDG_CONFIG_HOME/ai-agent-telemetry"
   printf 'AI_AGENT_TELEMETRY_ENDPOINT=https://telemetry.example.test\n' \
@@ -118,13 +119,25 @@ EOF
   cat > "$FIXTURE_ROOT/bin/git" <<'EOF'
 #!/bin/sh
 printf 'git %s\n' "$*" >> "$QDI_TEST_LOG"
-if [ "${1:-}" = config ] && [ "${2:-}" = --global ] && [ "${3:-}" = --get ]; then
+if [ "${1:-}" = config ] && [ "${2:-}" = --global ] &&
+  { [ "${3:-}" = --get ] || [ "${3:-}" = --get-all ]; }; then
+  [ "${QDI_FAIL_GIT_CONFIG_READ:-0}" -eq 0 ] || exit 8
   [ -f "$QDI_GIT_CONFIG" ] || exit 1
   cat "$QDI_GIT_CONFIG"
   exit 0
 fi
 if [ "${1:-}" = config ] && [ "${2:-}" = --global ] && [ "${3:-}" = --unset-all ]; then
-  rm -f "$QDI_GIT_CONFIG"
+  if [ "$#" -eq 4 ]; then
+    rm -f "$QDI_GIT_CONFIG"
+    exit 0
+  fi
+  grep -E "$5" "$QDI_GIT_CONFIG" >/dev/null || exit 5
+  grep -E -v "$5" "$QDI_GIT_CONFIG" > "$QDI_GIT_CONFIG.next" || :
+  if [ -s "$QDI_GIT_CONFIG.next" ]; then
+    mv "$QDI_GIT_CONFIG.next" "$QDI_GIT_CONFIG"
+  else
+    rm -f "$QDI_GIT_CONFIG" "$QDI_GIT_CONFIG.next"
+  fi
   exit 0
 fi
 if [ "${1:-}" = config ] && [ "${2:-}" = --global ] && [ "${3:-}" = core.hooksPath ]; then
@@ -157,6 +170,14 @@ if [ "${1:-}" = -C ] && [ "${3:-}" = pull ]; then
   exit 0
 fi
 exit 0
+EOF
+
+  cat > "$FIXTURE_ROOT/bin/mv" <<'EOF'
+#!/bin/sh
+if [ "${QDI_FAIL_RECEIPT_MOVE:-0}" -eq 1 ]; then
+  exit 9
+fi
+exec /bin/mv "$@"
 EOF
 
   cat > "$FIXTURE_ROOT/bin/curl" <<'EOF'
@@ -200,7 +221,7 @@ fi
 EOF
 
   chmod +x "$FIXTURE_ROOT/bin/java" "$FIXTURE_ROOT/bin/apm" "$FIXTURE_ROOT/bin/git" \
-    "$FIXTURE_ROOT/bin/curl" "$QDI_APM_INSTALLER" "$QDI_APM_CLI" \
+    "$FIXTURE_ROOT/bin/curl" "$FIXTURE_ROOT/bin/mv" "$QDI_APM_INSTALLER" "$QDI_APM_CLI" \
     "$QDI_TELEMETRY_INSTALLER" "$QDI_TELEMETRY_CLI"
 }
 
@@ -210,7 +231,7 @@ teardown_component_fixture() {
   unset QDI_TEST_LOG QDI_GIT_CONFIG
   unset QDI_MARKETPLACE_STATE QDI_APM_INSTALLER QDI_APM_CLI QDI_TELEMETRY_INSTALLER QDI_TELEMETRY_CLI
   unset QDI_GIT_ORIGIN_FILE QDI_GIT_STATUS QDI_GIT_PULL_FAIL
-  unset QDI_FAIL_GIT_ORIGIN QDI_FAIL_GIT_STATUS
+  unset QDI_FAIL_GIT_ORIGIN QDI_FAIL_GIT_STATUS QDI_FAIL_GIT_CONFIG_READ QDI_FAIL_RECEIPT_MOVE
   unset QDI_TELEMETRY_RECEIPT QDI_TELEMETRY_CONFIG_DIR QDI_TELEMETRY_CACHE_DIR
   unset QDI_TELEMETRY_HOOK QDI_MANAGED_TELEMETRY_BIN QDI_FAIL_TELEMETRY_HOOKS
   unset QUBERSHIP_DEV_APM_INSTALL_URL
@@ -573,6 +594,28 @@ test_telemetry_uninstall_accepts_valid_receipt_on_repeat() {
   teardown_component_fixture
 }
 
+test_telemetry_uninstall_rejects_receipt_without_final_newline() {
+  setup_component_fixture
+  mkdir -p "$(dirname "$QDI_TELEMETRY_RECEIPT")" "$(dirname "$QDI_TELEMETRY_HOOK")"
+  printf 'version=1\nstate=uninstalled' > "$QDI_TELEMETRY_RECEIPT"
+  : > "$QDI_TELEMETRY_HOOK"
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 1 ] || fail "accepted receipt without final newline: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "native hook files exist"
+  teardown_component_fixture
+}
+
+test_telemetry_uninstall_rejects_receipt_with_extra_newline() {
+  setup_component_fixture
+  mkdir -p "$(dirname "$QDI_TELEMETRY_RECEIPT")" "$(dirname "$QDI_TELEMETRY_HOOK")"
+  printf 'version=1\nstate=uninstalled\n\n' > "$QDI_TELEMETRY_RECEIPT"
+  : > "$QDI_TELEMETRY_HOOK"
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 1 ] || fail "accepted receipt with extra newline: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "native hook files exist"
+  teardown_component_fixture
+}
+
 test_telemetry_uninstall_fails_closed_without_cli_or_receipt() {
   setup_component_fixture
   mkdir -p "$(dirname "$QDI_TELEMETRY_HOOK")"
@@ -596,12 +639,57 @@ test_telemetry_uninstall_treats_dangling_hook_symlink_as_existing() {
   teardown_component_fixture
 }
 
+test_telemetry_uninstall_reports_hook_inspection_failure() {
+  setup_component_fixture
+  mkdir -p "$(dirname "$QDI_MANAGED_TELEMETRY_BIN")"
+  printf 'managed binary\n' > "$QDI_MANAGED_TELEMETRY_BIN"
+  printf 'not a directory\n' > "$HOME/.claude"
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 1 ] || fail "expected hook inspection failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "cannot inspect native hook path $HOME/.claude/settings.json"
+  [ -f "$QDI_MANAGED_TELEMETRY_BIN" ] || fail "removed managed binary after hook inspection failure"
+  [ ! -e "$QDI_TELEMETRY_RECEIPT" ] || fail "wrote receipt after hook inspection failure"
+  teardown_component_fixture
+}
+
+test_telemetry_uninstall_reports_unreadable_hook_parent() {
+  setup_component_fixture
+  mkdir -p "$(dirname "$QDI_MANAGED_TELEMETRY_BIN")" "$HOME/.claude"
+  printf 'managed binary\n' > "$QDI_MANAGED_TELEMETRY_BIN"
+  chmod 000 "$HOME/.claude"
+  if (CDPATH='' cd -- "$HOME/.claude" 2>/dev/null); then
+    chmod 700 "$HOME/.claude"
+    teardown_component_fixture
+    return
+  fi
+  run_fixture_installer --uninstall --components telemetry
+  chmod 700 "$HOME/.claude"
+  [ "$RUN_CODE" -eq 1 ] || fail "expected unreadable hook parent failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "cannot inspect native hook path $HOME/.claude/settings.json"
+  [ -f "$QDI_MANAGED_TELEMETRY_BIN" ] || fail "removed managed binary after hook inspection failure"
+  [ ! -e "$QDI_TELEMETRY_RECEIPT" ] || fail "wrote receipt after unreadable hook parent"
+  teardown_component_fixture
+}
+
 test_telemetry_uninstall_writes_receipt_when_no_hooks_exist() {
   setup_component_fixture
   run_fixture_installer --uninstall --components telemetry
   [ "$RUN_CODE" -eq 0 ] || fail "receipt-only telemetry uninstall failed: $RUN_OUTPUT"
   [ "$(cat "$QDI_TELEMETRY_RECEIPT")" = "$(printf 'version=1\nstate=uninstalled')" ] ||
     fail "telemetry receipt has unexpected content"
+  teardown_component_fixture
+}
+
+test_telemetry_receipt_write_failure_cleans_temporary_file() {
+  setup_component_fixture
+  export QDI_FAIL_RECEIPT_MOVE=1
+  run_fixture_installer --uninstall --components telemetry
+  [ "$RUN_CODE" -eq 1 ] || fail "expected receipt move failure: $RUN_OUTPUT"
+  _receipt_dir=$(dirname "$QDI_TELEMETRY_RECEIPT")
+  if find "$_receipt_dir" -maxdepth 1 -name 'hooks-uninstalled.tmp.*' -print | grep . >/dev/null; then
+    fail "left stale telemetry receipt temporary file"
+  fi
+  [ ! -e "$QDI_TELEMETRY_RECEIPT" ] || fail "wrote receipt after forced move failure"
   teardown_component_fixture
 }
 
@@ -686,11 +774,37 @@ test_git_hooks_uninstall_deactivates_exact_managed_path() {
   teardown_component_fixture
 }
 
+test_git_hooks_uninstall_preserves_mixed_config_values() {
+  setup_component_fixture
+  _managed_path=$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global
+  printf '%s\n' 'relative/hooks' "$_managed_path" '/other/hooks' > "$QDI_GIT_CONFIG"
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 0 ] || fail "mixed Git config uninstall failed: $RUN_OUTPUT"
+  [ "$(cat "$QDI_GIT_CONFIG")" = "$(printf 'relative/hooks\n/other/hooks')" ] ||
+    fail "changed unrelated Git hook values: $(cat "$QDI_GIT_CONFIG")"
+  assert_log_contains "git config --global --get-all core.hooksPath"
+  assert_log_contains "git config --global --unset-all core.hooksPath"
+  teardown_component_fixture
+}
+
+test_git_hooks_uninstall_reports_config_read_failure() {
+  setup_component_fixture
+  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
+  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
+  export QDI_FAIL_GIT_CONFIG_READ=1
+  run_fixture_installer --uninstall --components git-hooks
+  [ "$RUN_CODE" -eq 1 ] || fail "expected Git config read failure: $RUN_OUTPUT"
+  assert_contains "$RUN_OUTPUT" "cannot read global core.hooksPath values"
+  [ -d "$QUBERSHIP_DEV_GIT_HOOKS_DIR" ] || fail "removed clone after Git config read failure"
+  assert_log_not_contains "git -C $QUBERSHIP_DEV_GIT_HOOKS_DIR rev-parse"
+  teardown_component_fixture
+}
+
 test_git_hooks_uninstall_fails_without_git_and_continues() {
   setup_component_fixture
   isolated_path="$FIXTURE_ROOT/no-git-bin"
   mkdir -p "$isolated_path"
-  for tool in awk cat dirname mkdir mv rm sh; do
+  for tool in awk cat dirname mkdir mktemp mv rm sh; do
     ln -s "$(command -v "$tool")" "$isolated_path/$tool"
   done
   PATH=$isolated_path
@@ -807,49 +921,61 @@ test_git_hooks_uninstall_deactivates_before_clone_validation_failure() {
   teardown_component_fixture
 }
 
-test_help_describes_public_options
-test_invalid_component_fails_before_installation
-test_invalid_harness_fails_before_installation
-test_empty_selection_fails_before_installation
-test_uninstall_option_combinations_are_rejected_before_changes
-test_git_hook_prerequisites_fail_non_interactively
-test_git_hook_prerequisites_are_not_checked_when_skipped
-test_declined_prerequisite_installation_stops_bootstrap
-test_java_20_is_rejected
-test_java_21_and_newer_are_accepted
-test_unrecognized_or_failing_java_is_rejected
-test_default_install_runs_every_component
-test_missing_apm_uses_official_bootstrap_contract
-test_existing_clis_are_updated_by_default
-test_selection_and_harnesses_are_forwarded
-test_force_update_refreshes_selected_components
-test_force_update_refreshes_git_hooks_through_symlink
-test_existing_unrelated_git_hooks_are_skipped
-test_component_failure_does_not_stop_independent_components
-test_apm_uninstall_skips_missing_manifest
-test_apm_uninstall_invokes_global_package_removal
-test_apm_uninstall_failure_does_not_stop_telemetry
-test_telemetry_uninstall_removes_hooks_before_managed_binary
-test_telemetry_hook_failure_preserves_managed_binary
-test_telemetry_uninstall_preserves_external_path_command
-test_telemetry_uninstall_accepts_valid_receipt_on_repeat
-test_telemetry_uninstall_fails_closed_without_cli_or_receipt
-test_telemetry_uninstall_treats_dangling_hook_symlink_as_existing
-test_telemetry_uninstall_writes_receipt_when_no_hooks_exist
-test_telemetry_purge_removes_only_package_config_and_cache
-test_unconfigured_telemetry_fails_non_interactively
-test_unconfigured_telemetry_configures_interactively
-test_git_hooks_reject_wrong_origin_and_dirty_clone
-test_git_hooks_reject_non_repository_and_divergence
-test_git_hooks_uninstall_deactivates_exact_managed_path
-test_git_hooks_uninstall_fails_without_git_and_continues
-test_git_hooks_uninstall_preserves_relative_configured_path
-test_git_hooks_uninstall_reports_origin_inspection_failure
-test_git_hooks_uninstall_reports_status_inspection_failure
-test_git_hooks_uninstall_preserves_unrelated_path
-test_git_hooks_uninstall_accepts_missing_clone
-test_git_hooks_uninstall_removes_clean_expected_clone
-test_git_hooks_uninstall_preserves_wrong_origin_clone
-test_git_hooks_uninstall_preserves_dirty_clone
-test_git_hooks_uninstall_deactivates_before_clone_validation_failure
+for _test_name in \
+  test_help_describes_public_options \
+  test_invalid_component_fails_before_installation \
+  test_invalid_harness_fails_before_installation \
+  test_empty_selection_fails_before_installation \
+  test_uninstall_option_combinations_are_rejected_before_changes \
+  test_git_hook_prerequisites_fail_non_interactively \
+  test_git_hook_prerequisites_are_not_checked_when_skipped \
+  test_declined_prerequisite_installation_stops_bootstrap \
+  test_java_20_is_rejected \
+  test_java_21_and_newer_are_accepted \
+  test_unrecognized_or_failing_java_is_rejected \
+  test_default_install_runs_every_component \
+  test_missing_apm_uses_official_bootstrap_contract \
+  test_existing_clis_are_updated_by_default \
+  test_selection_and_harnesses_are_forwarded \
+  test_force_update_refreshes_selected_components \
+  test_force_update_refreshes_git_hooks_through_symlink \
+  test_existing_unrelated_git_hooks_are_skipped \
+  test_component_failure_does_not_stop_independent_components \
+  test_apm_uninstall_skips_missing_manifest \
+  test_apm_uninstall_invokes_global_package_removal \
+  test_apm_uninstall_failure_does_not_stop_telemetry \
+  test_telemetry_uninstall_removes_hooks_before_managed_binary \
+  test_telemetry_hook_failure_preserves_managed_binary \
+  test_telemetry_uninstall_preserves_external_path_command \
+  test_telemetry_uninstall_accepts_valid_receipt_on_repeat \
+  test_telemetry_uninstall_rejects_receipt_without_final_newline \
+  test_telemetry_uninstall_rejects_receipt_with_extra_newline \
+  test_telemetry_uninstall_fails_closed_without_cli_or_receipt \
+  test_telemetry_uninstall_treats_dangling_hook_symlink_as_existing \
+  test_telemetry_uninstall_reports_hook_inspection_failure \
+  test_telemetry_uninstall_reports_unreadable_hook_parent \
+  test_telemetry_uninstall_writes_receipt_when_no_hooks_exist \
+  test_telemetry_receipt_write_failure_cleans_temporary_file \
+  test_telemetry_purge_removes_only_package_config_and_cache \
+  test_unconfigured_telemetry_fails_non_interactively \
+  test_unconfigured_telemetry_configures_interactively \
+  test_git_hooks_reject_wrong_origin_and_dirty_clone \
+  test_git_hooks_reject_non_repository_and_divergence \
+  test_git_hooks_uninstall_deactivates_exact_managed_path \
+  test_git_hooks_uninstall_preserves_mixed_config_values \
+  test_git_hooks_uninstall_reports_config_read_failure \
+  test_git_hooks_uninstall_fails_without_git_and_continues \
+  test_git_hooks_uninstall_preserves_relative_configured_path \
+  test_git_hooks_uninstall_reports_origin_inspection_failure \
+  test_git_hooks_uninstall_reports_status_inspection_failure \
+  test_git_hooks_uninstall_preserves_unrelated_path \
+  test_git_hooks_uninstall_accepts_missing_clone \
+  test_git_hooks_uninstall_removes_clean_expected_clone \
+  test_git_hooks_uninstall_preserves_wrong_origin_clone \
+  test_git_hooks_uninstall_preserves_dirty_clone \
+  test_git_hooks_uninstall_deactivates_before_clone_validation_failure; do
+  if [ -z "${QDI_TEST_FILTER:-}" ] || [ "$QDI_TEST_FILTER" = "$_test_name" ]; then
+    "$_test_name"
+  fi
+done
 printf 'PASS: POSIX developer installer tests\n'

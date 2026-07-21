@@ -364,6 +364,27 @@ function Test-SafeRecursiveRemoval([string]$Path, [string]$Description) {
   if ($item.PSIsContainer -and $isReparsePoint) {
     throw "preserving $Path because it is a directory reparse point. Remove it manually after verifying its target."
   }
+  if (-not $item.PSIsContainer) { return $true }
+
+  $pending = New-Object 'System.Collections.Generic.Stack[string]'
+  $pending.Push($item.FullName)
+  while ($pending.Count -gt 0) {
+    $directory = $pending.Pop()
+    try {
+      $children = @(Get-ChildItem -Force -LiteralPath $directory -ErrorAction Stop)
+    } catch {
+      throw "preserving $Path because $directory cannot be inspected: $($_.Exception.Message)"
+    }
+    foreach ($child in $children) {
+      if (-not $child.PSIsContainer) { continue }
+      $childIsReparsePoint = ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+      if ($childIsReparsePoint) {
+        throw "preserving $Path because nested path $($child.FullName) is a directory reparse point. " +
+          'Remove it manually after verifying its target.'
+      }
+      $pending.Push($child.FullName)
+    }
+  }
   return $true
 }
 

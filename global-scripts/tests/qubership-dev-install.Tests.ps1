@@ -743,6 +743,30 @@ function Test-TelemetryPurgePreservesDirectoryReparsePoint {
   } finally { Teardown-ComponentFixture }
 }
 
+function Test-TelemetryPurgePreservesNestedDirectoryReparsePoint {
+  Setup-ComponentFixture
+  try {
+    $target = Join-Path $FixtureRoot 'external-nested-config-target'
+    $nestedPath = Join-Path $env:QDI_TELEMETRY_CONFIG_DIR 'nested-link'
+    if (-not (New-DirectoryReparseFixture $nestedPath $target)) { return }
+    New-Item -ItemType File -Path (Join-Path $target 'sentinel') | Out-Null
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:QDI_TELEMETRY_RECEIPT) | Out-Null
+    [System.IO.File]::WriteAllText($env:QDI_TELEMETRY_RECEIPT, "version=1`nstate=uninstalled`n")
+    $result = Invoke-Installer @('-Uninstall', '-Purge', '-Components', 'telemetry')
+    if ($result.Code -ne 1) { Fail "expected nested telemetry reparse-point failure: $($result.Output)" }
+    Assert-Contains $result.Output "preserving $env:QDI_TELEMETRY_CONFIG_DIR"
+    Assert-Contains $result.Output $nestedPath
+    Assert-Contains $result.Output 'directory reparse point'
+    if (-not (Test-NativeFixtureEntry $env:QDI_TELEMETRY_CONFIG_DIR)) {
+      Fail 'removed telemetry config root containing a nested reparse point'
+    }
+    if (-not (Test-NativeFixtureEntry $nestedPath)) { Fail 'removed nested telemetry reparse point' }
+    if (-not (Test-Path -LiteralPath (Join-Path $target 'sentinel'))) {
+      Fail 'recursed into nested telemetry config reparse target'
+    }
+  } finally { Teardown-ComponentFixture }
+}
+
 function Initialize-CleanGitHooksClone {
   New-Item -ItemType Directory -Force -Path `
     (Join-Path $env:QUBERSHIP_DEV_GIT_HOOKS_DIR '.git'), `
@@ -876,6 +900,29 @@ function Test-GitHooksUninstallPreservesDirectoryReparsePoint {
   } finally { Teardown-ComponentFixture }
 }
 
+function Test-GitHooksUninstallPreservesNestedDirectoryReparsePoint {
+  Setup-ComponentFixture
+  try {
+    Initialize-CleanGitHooksClone
+    $target = Join-Path $FixtureRoot 'external-nested-git-hooks-target'
+    $nestedPath = Join-Path $env:QUBERSHIP_DEV_GIT_HOOKS_DIR 'nested-link'
+    if (-not (New-DirectoryReparseFixture $nestedPath $target)) { return }
+    New-Item -ItemType File -Path (Join-Path $target 'sentinel') | Out-Null
+    $result = Invoke-Installer @('-Uninstall', '-Components', 'git-hooks')
+    if ($result.Code -ne 1) { Fail "expected nested Git reparse-point failure: $($result.Output)" }
+    Assert-Contains $result.Output "preserving $env:QUBERSHIP_DEV_GIT_HOOKS_DIR"
+    Assert-Contains $result.Output $nestedPath
+    Assert-Contains $result.Output 'directory reparse point'
+    if (-not (Test-NativeFixtureEntry $env:QUBERSHIP_DEV_GIT_HOOKS_DIR)) {
+      Fail 'removed managed Git hooks root containing a nested reparse point'
+    }
+    if (-not (Test-NativeFixtureEntry $nestedPath)) { Fail 'removed nested Git hooks reparse point' }
+    if (-not (Test-Path -LiteralPath (Join-Path $target 'sentinel'))) {
+      Fail 'recursed into nested Git hooks reparse target'
+    }
+  } finally { Teardown-ComponentFixture }
+}
+
 function Test-GitHooksUninstallReportsInspectionFailures {
   foreach ($case in @(
     @{ Variable = 'QDI_FAIL_GIT_ORIGIN'; Message = 'cannot read origin for' }
@@ -956,12 +1003,14 @@ $testCases = @(
   'Test-TelemetryHookInspectionFailureDoesNotWriteReceipt',
   'Test-TelemetryPurgeRemovesOnlyPackageDirectories',
   'Test-TelemetryPurgePreservesDirectoryReparsePoint',
+  'Test-TelemetryPurgePreservesNestedDirectoryReparsePoint',
   'Test-GitHooksUninstallDeactivatesOnlyExactManagedPath',
   'Test-GitHooksUninstallPreservesMixedConfigValues',
   'Test-GitHooksUninstallPreservesWhitespaceDistinctValue',
   'Test-GitHooksUninstallReportsConfigReadFailure',
   'Test-GitHooksUninstallOwnershipChecks',
   'Test-GitHooksUninstallPreservesDirectoryReparsePoint',
+  'Test-GitHooksUninstallPreservesNestedDirectoryReparsePoint',
   'Test-GitHooksUninstallReportsInspectionFailures',
   'Test-GitHooksUninstallDeactivatesBeforeValidationFailure',
   'Test-GitHooksUninstallWithoutGitContinues'

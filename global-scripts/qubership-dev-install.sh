@@ -331,25 +331,69 @@ telemetry_receipt_path() {
 telemetry_receipt_valid() {
   _path=$(telemetry_receipt_path)
   [ -f "$_path" ] || return 1
-  _value=$(cat "$_path") || return 1
-  [ "$_value" = "$(printf 'version=1\nstate=uninstalled')" ]
+  _value=$(cat "$_path" && printf x) || return 1
+  [ "$_value" = "$(printf 'version=1\nstate=uninstalled\nx')" ]
 }
 
 write_telemetry_receipt() {
   _path=$(telemetry_receipt_path)
   _dir=$(dirname "$_path")
   mkdir -p "$_dir" || return 1
-  _tmp="$_path.tmp.$$"
-  (umask 077 && printf 'version=1\nstate=uninstalled\n' > "$_tmp") || return 1
-  mv -f "$_tmp" "$_path"
+  _tmp=$(mktemp "$_dir/.hooks-uninstalled.tmp.XXXXXX") || return 1
+  (umask 077 && printf 'version=1\nstate=uninstalled\n' > "$_tmp") || {
+    rm -f "$_tmp"
+    return 1
+  }
+  mv -f "$_tmp" "$_path" || {
+    rm -f "$_tmp"
+    return 1
+  }
+}
+
+telemetry_hook_path_state() {
+  _probe_path=$1
+  if [ -e "$_probe_path" ] || [ -L "$_probe_path" ]; then
+    return 0
+  fi
+
+  _probe_ancestor=$(dirname "$_probe_path")
+  while :; do
+    if [ -e "$_probe_ancestor" ] || [ -L "$_probe_ancestor" ]; then
+      if [ ! -d "$_probe_ancestor" ]; then
+        printf '%s: telemetry: cannot inspect native hook path %s because parent path %s is not a directory.\n' \
+          "$PROGRAM" "$_probe_path" "$_probe_ancestor" >&2
+        return 2
+      fi
+      if [ ! -x "$_probe_ancestor" ]; then
+        printf '%s: telemetry: cannot inspect native hook path %s because parent path %s is not searchable.\n' \
+          "$PROGRAM" "$_probe_path" "$_probe_ancestor" >&2
+        return 2
+      fi
+      return 1
+    fi
+    _probe_parent=$(dirname "$_probe_ancestor")
+    if [ "$_probe_parent" = "$_probe_ancestor" ]; then
+      printf '%s: telemetry: cannot inspect native hook path %s.\n' "$PROGRAM" "$_probe_path" >&2
+      return 2
+    fi
+    _probe_ancestor=$_probe_parent
+  done
 }
 
 telemetry_hooks_may_exist() {
-  [ -e "$HOME/.claude/settings.json" ] || [ -L "$HOME/.claude/settings.json" ] ||
-    [ -e "$HOME/.codex/hooks.json" ] || [ -L "$HOME/.codex/hooks.json" ] ||
-    [ -e "$HOME/.cursor/hooks.json" ] || [ -L "$HOME/.cursor/hooks.json" ] ||
-    [ -e "$HOME/.codex/rules/ai-agent-telemetry.rules" ] ||
-    [ -L "$HOME/.codex/rules/ai-agent-telemetry.rules" ]
+  for _hook_path in \
+    "$HOME/.claude/settings.json" \
+    "$HOME/.codex/hooks.json" \
+    "$HOME/.cursor/hooks.json" \
+    "$HOME/.codex/rules/ai-agent-telemetry.rules"; do
+    if telemetry_hook_path_state "$_hook_path"; then
+      return 0
+    else
+      _hook_state=$?
+      [ "$_hook_state" -eq 1 ] || return 2
+    fi
+  done
+  return 1
 }
 
 telemetry_uninstall() {
@@ -365,12 +409,16 @@ telemetry_uninstall() {
     "$_telemetry_bin" hooks uninstall || return 1
   elif telemetry_receipt_valid; then
     :
-  elif telemetry_hooks_may_exist; then
-    printf '%s: telemetry: native hook files exist, but no telemetry CLI or valid removal receipt is available.\n' \
-      "$PROGRAM" >&2
-    return 1
   else
-    write_telemetry_receipt || return 1
+    if telemetry_hooks_may_exist; then
+      printf '%s: telemetry: native hook files exist, but no telemetry CLI or valid removal receipt is available.\n' \
+        "$PROGRAM" >&2
+      return 1
+    else
+      _hook_state=$?
+      [ "$_hook_state" -eq 1 ] || return 1
+      write_telemetry_receipt || return 1
+    fi
   fi
 
   rm -f "$_managed_bin" || return 1
@@ -477,16 +525,54 @@ git_hooks_uninstall() {
   }
   init_git_hooks
   _desired_hooks_path=$(git_hooks_desired_path) || return 1
-  _current_hooks_path=$(git config --global --get core.hooksPath 2>/dev/null || :)
-  case $_current_hooks_path in
-    /*)
-      if [ -d "$_current_hooks_path" ]; then
-        _current_hooks_path=$(CDPATH='' cd -- "$_current_hooks_path" && pwd -P) || return 1
-      fi
+  _hooks_values_file=$(mktemp) || return 1
+  if git config --global --get-all core.hooksPath > "$_hooks_values_file" 2>/dev/null; then
+    _hooks_config_status=0
+  else
+    _hooks_config_status=$?
+  fi
+  case $_hooks_config_status in
+    0) ;;
+    1)
+      rm -f "$_hooks_values_file"
+      ;;
+    *)
+      rm -f "$_hooks_values_file"
+      printf '%s: git-hooks: cannot read global core.hooksPath values; git config --get-all exited with code %s.\n' \
+        "$PROGRAM" "$_hooks_config_status" >&2
+      return 1
       ;;
   esac
-  if [ "$_current_hooks_path" = "$_desired_hooks_path" ]; then
-    git config --global --unset-all core.hooksPath || return 1
+  if [ "$_hooks_config_status" -eq 0 ]; then
+    _unset_values_file=$(mktemp) || {
+      rm -f "$_hooks_values_file"
+      return 1
+    }
+    _hooks_unset_status=0
+    while IFS= read -r _current_hooks_path || [ -n "$_current_hooks_path" ]; do
+      case $_current_hooks_path in
+        /*)
+          _resolved_hooks_path=$_current_hooks_path
+          if [ -d "$_current_hooks_path" ]; then
+            _resolved_hooks_path=$(CDPATH='' cd -- "$_current_hooks_path" && pwd -P) || {
+              _hooks_unset_status=1
+              break
+            }
+          fi
+          if [ "$_resolved_hooks_path" = "$_desired_hooks_path" ] &&
+            ! grep -F -x -- "$_current_hooks_path" "$_unset_values_file" >/dev/null 2>&1; then
+            _value_pattern=$(printf '%s' "$_current_hooks_path" | sed 's/[][\\.^$*+?(){}|]/\\&/g')
+            git config --global --unset-all core.hooksPath "^${_value_pattern}\$" || {
+              _hooks_unset_status=1
+              break
+            }
+            printf '%s\n' "$_current_hooks_path" >> "$_unset_values_file"
+          fi
+          ;;
+      esac
+    done < "$_hooks_values_file"
+    rm -f "$_hooks_values_file" "$_unset_values_file"
+    [ "$_hooks_unset_status" -eq 0 ] || return 1
   fi
 
   [ -e "$GIT_HOOKS_DIR" ] || return 0
