@@ -251,6 +251,11 @@ func TestHasLegacyTelemetryAPMDependency(t *testing.T) {
 		{name: "object form only", yaml: "dependencies:\n  apm:\n    - git: example.com/team/package\n"},
 		{name: "unrelated list", yaml: "examples:\n  - " + legacyTelemetryAPMPackage + "\n"},
 		{name: "absent", yaml: "dependencies:\n  apm:\n    - another/package\n"},
+		{
+			name: "mapping form",
+			yaml: "dependencies:\n  apm:\n    " + legacyTelemetryAPMPackage + ": sha\n",
+			want: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -274,5 +279,16 @@ func TestHasLegacyTelemetryAPMDependencyRejectsMalformedYAML(t *testing.T) {
 func TestHasLegacyTelemetryAPMDependencyRejectsInvalidAPMEntryType(t *testing.T) {
 	if _, err := hasLegacyTelemetryAPMDependency([]byte("dependencies:\n  apm:\n    - 42\n")); err == nil {
 		t.Fatal("expected invalid dependencies.apm entry error")
+	}
+}
+
+func TestGlobalAPMManifestMatchesMappingDependency(t *testing.T) {
+	data := []byte("dependencies:\n  apm:\n    " + testAPMPackage + ": main\n")
+	installed, err := hasGlobalAPMDependency(data, testAPMPackage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !installed {
+		t.Fatal("mapping dependency was not detected")
 	}
 }
