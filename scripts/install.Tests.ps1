@@ -1,8 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$Installer = Join-Path $RepoRoot 'scripts/install.ps1'
-$CompatibilityInstaller = Join-Path $RepoRoot 'global-scripts/qubership-dev-install.ps1'
+$Installer = Join-Path $PSScriptRoot 'install.ps1'
 $Pwsh = (Get-Process -Id $PID).Path
 $SystemTemp = [IO.Path]::GetTempPath()
 
@@ -115,19 +113,11 @@ function Assert-TempClean([hashtable]$Fixture) {
   Assert-True ($entries.Count -eq 0) "private temporary directory remains: $($entries.FullName -join ', ')"
 }
 
-function Test-SyntaxAndCompatibilityLoader {
-  foreach ($path in @($Installer, $CompatibilityInstaller)) {
-    $tokens = $null
-    $errors = $null
-    [void][Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
-    Assert-True ($errors.Count -eq 0) "PowerShell syntax errors in ${path}: $($errors -join '; ')"
-  }
-  $loaderLines = @(Get-Content -LiteralPath $CompatibilityInstaller)
-  Assert-True ($loaderLines.Count -eq 1) 'compatibility PowerShell loader must be one line'
-  $loader = $loaderLines[0]
-  Assert-Contains $loader '../scripts/install.ps1' 'compatibility loader must forward to canonical script'
-  Assert-NotContains $loader 'param(' 'compatibility loader must not parse parameters'
-  Assert-NotContains $loader 'function ' 'compatibility loader must not define lifecycle functions'
+function Test-Syntax {
+  $tokens = $null
+  $errors = $null
+  [void][Management.Automation.Language.Parser]::ParseFile($Installer, [ref]$tokens, [ref]$errors)
+  Assert-True ($errors.Count -eq 0) "PowerShell syntax errors in ${Installer}: $($errors -join '; ')"
 }
 
 function Test-DefaultingAndExactArguments {
@@ -144,10 +134,6 @@ function Test-DefaultingAndExactArguments {
     Assert-True ($result.Code -eq 0) "explicit update failed: $($result.Output)"
     $want = "update`n--components`ntelemetry,apm"
     Assert-True ((Get-Content -Raw $fixture.ExecLog).Trim() -eq $want) 'explicit update arguments changed'
-    $result = Invoke-Fixture $fixture $CompatibilityInstaller @('uninstall', '--purge')
-    Assert-True ($result.Code -eq 0) "compatibility uninstall failed: $($result.Output)"
-    $want = "uninstall`n--purge"
-    Assert-True ((Get-Content -Raw $fixture.ExecLog).Trim() -eq $want) 'compatibility loader changed arguments'
   } finally {
     Remove-Item -Recurse -Force $fixture.Root -ErrorAction SilentlyContinue
   }
@@ -198,6 +184,35 @@ function Test-UrlsChecksumExitAndCleanup {
   }
 }
 
+function Test-StagedVersionOverridePrecedence {
+  $fixture = New-Fixture
+  try {
+    $staged = Join-Path $fixture.Root 'install.ps1'
+    (Get-Content -LiteralPath $Installer -Raw) -replace '(?m)^\$DefaultBinaryVersion = .*',
+      '$DefaultBinaryVersion = ''v4.5.6''' | Set-Content -LiteralPath $staged -Encoding UTF8
+    $hasStagedDefault = (Get-Content -Raw -LiteralPath $staged).Contains("`$DefaultBinaryVersion = 'v4.5.6'")
+    Assert-True $hasStagedDefault 'staged installer did not contain the release default version'
+
+    Remove-Item Env:AI_AGENT_TELEMETRY_INSTALL_VERSION -ErrorAction SilentlyContinue
+    $result = Invoke-Fixture $fixture $staged @('install')
+    Assert-True ($result.Code -eq 0) "staged default run failed: $($result.Output)"
+    $urls = Get-Content -LiteralPath $fixture.DownloadLog
+    $hasDefaultURL = $urls -contains 'https://release.example.test/releases/download/v4.5.6/ai-agent-telemetry-windows-amd64.exe'
+    Assert-True $hasDefaultURL 'staged default asset URL missing'
+
+    Clear-Content -LiteralPath $fixture.DownloadLog
+    $env:AI_AGENT_TELEMETRY_INSTALL_VERSION = 'v7.8.9'
+    $result = Invoke-Fixture $fixture $staged @('install')
+    Assert-True ($result.Code -eq 0) "staged override run failed: $($result.Output)"
+    $urls = Get-Content -LiteralPath $fixture.DownloadLog
+    $hasOverrideURL = $urls -contains 'https://release.example.test/releases/download/v7.8.9/ai-agent-telemetry-windows-amd64.exe'
+    Assert-True $hasOverrideURL 'staged override asset URL missing'
+  } finally {
+    Remove-Item Env:AI_AGENT_TELEMETRY_INSTALL_VERSION -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $fixture.Root -ErrorAction SilentlyContinue
+  }
+}
+
 function Test-NoResponseOrSecretLeakage {
   $fixture = New-Fixture
   try {
@@ -214,8 +229,9 @@ function Test-NoResponseOrSecretLeakage {
   }
 }
 
-Test-SyntaxAndCompatibilityLoader
+Test-Syntax
 Test-DefaultingAndExactArguments
 Test-UrlsChecksumExitAndCleanup
+Test-StagedVersionOverridePrecedence
 Test-NoResponseOrSecretLeakage
 Write-Output 'PASS: thin PowerShell bootstrap transport tests'

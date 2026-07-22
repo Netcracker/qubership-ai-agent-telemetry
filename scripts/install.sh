@@ -1,8 +1,9 @@
 #!/bin/sh
 set -eu
 
-# Release workflows may stamp a version and mirror without changing this transport.
-BINARY_VERSION=${AI_AGENT_TELEMETRY_INSTALL_VERSION:-latest}
+# Release workflows may stamp the default without changing an environment override.
+DEFAULT_BINARY_VERSION=latest
+BINARY_VERSION=${AI_AGENT_TELEMETRY_INSTALL_VERSION:-$DEFAULT_BINARY_VERSION}
 BASE_URL=${AI_AGENT_TELEMETRY_INSTALL_BASE_URL:-https://github.com/Netcracker/qubership-ai-agent-telemetry/releases}
 TEMP_DIR=
 

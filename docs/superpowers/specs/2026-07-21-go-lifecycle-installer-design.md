@@ -374,20 +374,10 @@ Completed steps are not rolled back. Diagnostics name the component, failed oper
 failed subprocess diagnostic includes bounded combined output. Warnings and errors go to stderr; summaries and normal
 command output go to stdout. Secrets and full downloaded response bodies are never included.
 
-## Compatibility and release assets
+## Bootstrap and release assets
 
-The canonical documentation points only to `install.sh` and `install.ps1`. The first release containing this
-architecture also publishes the old no-argument global installer URLs:
-
-- `global-scripts/qubership-dev-install.sh` is a source symlink to `../scripts/install.sh`;
-- `global-scripts/qubership-dev-install.ps1` is a one-line forwarding stub because Git symlink checkout is unreliable
-  on Windows;
-- release assets named `qubership-dev-install.sh` and `qubership-dev-install.ps1` are byte-identical copies of the
-  canonical bootstrap assets.
-
-The forwarding stub contains no parsing or lifecycle behavior. Release checks compare the old and canonical asset
-bytes. Removing the compatibility names requires a later PR with a documentation update; this change does not assign
-an automatic expiration date.
+Source, documentation, tests, and releases expose only the canonical `install.sh` and `install.ps1` bootstrap names.
+The old `qubership-dev-install.sh` and `qubership-dev-install.ps1` names are not retained as aliases or release assets.
 
 The new documentation uses lowercase, double-dash, kebab-case options on every shell. Old telemetry-only options and
 PowerShell named-parameter spellings do not retain behavior. Known legacy tokens fail with an actionable replacement,

@@ -2,9 +2,7 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-REPO_ROOT=$(CDPATH='' cd -- "$SCRIPT_DIR/../.." && pwd)
-INSTALLER="$REPO_ROOT/scripts/install.sh"
-COMPAT_INSTALLER="$REPO_ROOT/global-scripts/qubership-dev-install.sh"
+INSTALLER="$SCRIPT_DIR/install.sh"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -132,6 +130,15 @@ run_installer() {
   set -e
 }
 
+run_installer_path() {
+  installer=$1
+  shift
+  set +e
+  RUN_OUTPUT=$(sh "$installer" "$@" 2>&1)
+  RUN_CODE=$?
+  set -e
+}
+
 run_without_terminal() {
   python3 - "$@" <<'PY'
 import subprocess
@@ -192,6 +199,28 @@ test_versioned_and_latest_urls() {
     fail "versioned asset URL missing"
   grep -Fx 'https://release.example.test/releases/download/v1.2.3/SHA256SUMS' "$QDI_TEST_LOG" >/dev/null ||
     fail "versioned checksum URL missing"
+  teardown_fixture
+}
+
+test_staged_version_override_precedence() {
+  setup_fixture
+  staged=$FIXTURE_ROOT/install.sh
+  sed 's|^DEFAULT_BINARY_VERSION=.*|DEFAULT_BINARY_VERSION="v4.5.6"|' "$INSTALLER" > "$staged"
+  grep -Fx 'DEFAULT_BINARY_VERSION="v4.5.6"' "$staged" >/dev/null ||
+    fail 'staged installer did not contain the release default version'
+
+  run_installer_path "$staged" install
+  [ "$RUN_CODE" -eq 0 ] || fail "staged default run failed: $RUN_OUTPUT"
+  grep -Fx 'https://release.example.test/releases/download/v4.5.6/ai-agent-telemetry-linux-amd64' "$QDI_TEST_LOG" >/dev/null ||
+    fail 'staged default asset URL missing'
+
+  : > "$QDI_TEST_LOG"
+  AI_AGENT_TELEMETRY_INSTALL_VERSION=v7.8.9
+  export AI_AGENT_TELEMETRY_INSTALL_VERSION
+  run_installer_path "$staged" install
+  [ "$RUN_CODE" -eq 0 ] || fail "staged override run failed: $RUN_OUTPUT"
+  grep -Fx 'https://release.example.test/releases/download/v7.8.9/ai-agent-telemetry-linux-amd64' "$QDI_TEST_LOG" >/dev/null ||
+    fail 'staged override asset URL missing'
   teardown_fixture
 }
 
@@ -374,13 +403,9 @@ test_no_terminal_and_noninteractive_behavior() {
   teardown_fixture
 }
 
-test_compatibility_path_is_source_symlink() {
-  [ -L "$COMPAT_INSTALLER" ] || fail "POSIX compatibility path is not a symlink"
-  [ "$(readlink "$COMPAT_INSTALLER")" = '../scripts/install.sh' ] || fail "POSIX compatibility symlink has the wrong target"
-}
-
 test_asset_selection
 test_versioned_and_latest_urls
+test_staged_version_override_precedence
 test_command_defaulting_and_exact_argv
 test_checksum_failures_do_not_execute
 test_exit_status_and_cleanup
@@ -388,5 +413,4 @@ test_no_secret_output
 test_signal_cleanup
 test_pty_prompt_reaches_controlling_terminal
 test_no_terminal_and_noninteractive_behavior
-test_compatibility_path_is_source_symlink
 printf 'PASS: thin POSIX bootstrap transport tests\n'

@@ -188,38 +188,26 @@ jobs:
           merge-multiple: true
 
       - name: Stage installer scripts
-        # Stamp the canonical transport scripts first. Release compatibility
-        # names must contain the same bytes, not the source symlink or loader.
         run: |
-          sed "s|^BINARY_VERSION=.*|BINARY_VERSION=\"${VERSION}\"|" scripts/install.sh > dist/install.sh
-          sed "s|^\$BinaryVersion = .*|\$BinaryVersion = '${VERSION}'|" scripts/install.ps1 > dist/install.ps1
-          if [ "$(grep -Fxc "BINARY_VERSION=\"${VERSION}\"" dist/install.sh)" -ne 1 ]; then
+          sed "s|^DEFAULT_BINARY_VERSION=.*|DEFAULT_BINARY_VERSION=\"${VERSION}\"|" scripts/install.sh > dist/install.sh
+          sed "s|^\$DefaultBinaryVersion = .*|\$DefaultBinaryVersion = '${VERSION}'|" scripts/install.ps1 > dist/install.ps1
+          if [ "$(grep -Fxc "DEFAULT_BINARY_VERSION=\"${VERSION}\"" dist/install.sh)" -ne 1 ]; then
             echo "Failed to stamp ${VERSION} into dist/install.sh" >&2
             exit 1
           fi
-          if [ "$(grep -Fxc "\$BinaryVersion = '${VERSION}'" dist/install.ps1)" -ne 1 ]; then
+          if [ "$(grep -Fxc "\$DefaultBinaryVersion = '${VERSION}'" dist/install.ps1)" -ne 1 ]; then
             echo "Failed to stamp ${VERSION} into dist/install.ps1" >&2
             exit 1
           fi
           pwsh -NoProfile -Command \
             "[scriptblock]::Create((Get-Content -Raw dist/install.ps1)) | Out-Null"
-          test -L global-scripts/qubership-dev-install.sh
-          test "$(readlink global-scripts/qubership-dev-install.sh)" = ../scripts/install.sh
-          test "$(wc -l < global-scripts/qubership-dev-install.ps1)" -eq 1
-          grep -F '../scripts/install.ps1' global-scripts/qubership-dev-install.ps1 >/dev/null
-          cp dist/install.sh dist/qubership-dev-install.sh
-          cp dist/install.ps1 dist/qubership-dev-install.ps1
-          cmp dist/install.sh dist/qubership-dev-install.sh
-          cmp dist/install.ps1 dist/qubership-dev-install.ps1
 
       - name: Checksums
         # The installer scripts fetch SHA256SUMS and hard-fail when it is missing.
         # sha256sum's default output (hash, two spaces, filename) is the exact format
         # the .sh ($2 == asset) and .ps1 (filename at end of line) parse.
         working-directory: dist
-        run: >-
-          sha256sum ai-agent-telemetry-* install.sh install.ps1
-          qubership-dev-install.sh qubership-dev-install.ps1 > SHA256SUMS
+        run: sha256sum ai-agent-telemetry-* install.sh install.ps1 > SHA256SUMS
 
       - name: Verify staged release payload
         working-directory: dist
@@ -234,8 +222,6 @@ jobs:
           ai-agent-telemetry-windows-arm64.exe
           install.ps1
           install.sh
-          qubership-dev-install.ps1
-          qubership-dev-install.sh
           EOF
           sed -i 's/^ *//' ../expected-assets.txt
           sort -o ../expected-assets.txt ../expected-assets.txt
@@ -257,4 +243,4 @@ jobs:
         uses: netcracker/qubership-workflow-hub/actions/assets-action@8c6dbeb901920bae9f40d7d7b646d8d9127e1ce7 # v2.4.0
         with:
           tag: ${{ env.VERSION }}
-          item-path: dist/ai-agent-telemetry-*,dist/install.sh,dist/install.ps1,dist/qubership-dev-install.sh,dist/qubership-dev-install.ps1,dist/SHA256SUMS
+          item-path: dist/ai-agent-telemetry-*,dist/install.sh,dist/install.ps1,dist/SHA256SUMS

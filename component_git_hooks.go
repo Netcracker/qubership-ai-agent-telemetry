@@ -513,7 +513,7 @@ func warnMissingCyberFerretPassword(warnings io.Writer) {
 	}
 	_, _ = fmt.Fprintln(warnings, "CYBER_FERRET_PASSWORD is not set; CyberFerret checks require it.")
 	_, _ = fmt.Fprintln(warnings, "Set it in the environment that runs Git.")
-	_, _ = fmt.Fprintln(warnings, "See global-scripts/README.md#cyberferret-password for persistent and GUI setup.")
+	_, _ = fmt.Fprintln(warnings, "See docs/lifecycle-installer.md#git-and-java-prerequisites for setup guidance.")
 }
 
 func gitCommandError(output string, err error) error {

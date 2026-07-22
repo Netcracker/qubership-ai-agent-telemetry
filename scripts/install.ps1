@@ -1,9 +1,10 @@
 $ErrorActionPreference = 'Stop'
 
-# Release workflows may stamp a version and mirror without changing this transport.
+# Release workflows may stamp the default without changing an environment override.
+$DefaultBinaryVersion = 'latest'
 $BinaryVersion = $env:AI_AGENT_TELEMETRY_INSTALL_VERSION
 if ([string]::IsNullOrWhiteSpace($BinaryVersion)) {
-  $BinaryVersion = 'latest'
+  $BinaryVersion = $DefaultBinaryVersion
 }
 $BaseUrl = $env:AI_AGENT_TELEMETRY_INSTALL_BASE_URL
 if ([string]::IsNullOrWhiteSpace($BaseUrl)) {

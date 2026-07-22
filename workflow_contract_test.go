@@ -13,7 +13,21 @@ func TestWindowsLifecycleBootstrapCallsUseCheckedChildProcesses(t *testing.T) {
 	}
 	lines := strings.Split(string(data), "\n")
 	invocations := 0
+	inRunBlock := false
+	runIndent := 0
 	for index, line := range lines {
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if strings.TrimSpace(line) == "run: |" {
+			inRunBlock = true
+			runIndent = indent
+			continue
+		}
+		if inRunBlock && strings.TrimSpace(line) != "" && indent <= runIndent {
+			inRunBlock = false
+		}
+		if !inRunBlock {
+			continue
+		}
 		if !strings.Contains(line, "scripts/install.ps1") {
 			continue
 		}
@@ -30,5 +44,15 @@ func TestWindowsLifecycleBootstrapCallsUseCheckedChildProcesses(t *testing.T) {
 	}
 	if invocations != 4 {
 		t.Fatalf("install.ps1 invocation count = %d, want 4", invocations)
+	}
+}
+
+func TestSuperLinterExcludesSuperpowersArtifacts(t *testing.T) {
+	data, err := os.ReadFile(".github/workflows/super-linter.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "FILTER_REGEX_EXCLUDE: '(^|/)docs/superpowers/'") {
+		t.Fatal("super-linter must exclude generated Superpowers artifacts")
 	}
 }

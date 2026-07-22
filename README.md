@@ -28,7 +28,7 @@ powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 
 See [Installation](#installation) for configuration options, hook repair, and verification details.
 
 The default lifecycle installs the complete Qubership developer baseline: APM, telemetry, and global Git hooks. See
-the [lifecycle installer guide](global-scripts/README.md) for component and harness selection.
+the [lifecycle installer guide](docs/lifecycle-installer.md) for component and harness selection.
 
 ## Architecture
 

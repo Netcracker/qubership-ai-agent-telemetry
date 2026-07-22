@@ -1,4 +1,4 @@
-# Qubership developer lifecycle installer
+# Lifecycle installer
 
 Install and manage the baseline developer tools with one Go lifecycle CLI. The canonical bootstraps are `install.sh`
 and `install.ps1`; both verify a release binary and run the same `install`, `update`, or `uninstall` command.
@@ -19,9 +19,6 @@ powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 
 
 The default selection installs the managed CLI, APM and `qubership-global-essentials`, AI agent telemetry, and global
 Git hooks. It targets Claude Code, Codex, and Cursor.
-
-The release may temporarily include `qubership-dev-install.sh` and `qubership-dev-install.ps1` compatibility assets.
-Do not use those names in new instructions or automation.
 
 ## Select components and harnesses
 

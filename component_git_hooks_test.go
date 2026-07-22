@@ -168,7 +168,7 @@ func TestGitHooksComponentInstallClonesValidatesConfiguresAndWarns(t *testing.T)
 	}
 	assertCommandContains(t, fixture.calls, "/tools/git clone https://github.com/exadmin/pre-commit-global.git "+fixture.repoDir)
 	assertCommandContains(t, fixture.calls, "/tools/git -C "+fixture.repoDir+" status --porcelain --untracked-files=all")
-	if !strings.Contains(warnings.String(), "CYBER_FERRET_PASSWORD") || !strings.Contains(warnings.String(), "global-scripts/README.md#cyberferret-password") {
+	if !strings.Contains(warnings.String(), "CYBER_FERRET_PASSWORD") || !strings.Contains(warnings.String(), "docs/lifecycle-installer.md#git-and-java-prerequisites") {
 		t.Fatalf("warning = %q, want password setup guidance", warnings.String())
 	}
 }

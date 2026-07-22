@@ -65,13 +65,9 @@ ai-agent-telemetry-windows-amd64.exe
 ai-agent-telemetry-windows-arm64.exe
 install.ps1
 install.sh
-qubership-dev-install.ps1
-qubership-dev-install.sh
 ```
 
 `SHA256SUMS` must include one entry for every asset above except itself. The workflow verifies this before upload.
-The `qubership-dev-install` names are temporary compatibility copies. Primary release instructions and smoke tests use
-only `install.sh` and `install.ps1`.
 
 ## Smoke checks
 

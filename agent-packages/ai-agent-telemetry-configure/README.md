@@ -104,5 +104,4 @@ gh workflow run release.yaml --ref main -f version=vX.Y.Z
 
 The workflow cross-compiles six targets (Darwin, Linux, and Windows, each for amd64 and arm64), writes `SHA256SUMS`,
 and attaches every artifact to a GitHub Release. `install.sh` and `install.ps1` are the canonical bootstrap names and
-download `ai-agent-telemetry-<os>-<arch>` from that release. Temporary `qubership-dev-install` compatibility assets
-may also be present, but new documentation and automation must use the canonical names.
+download `ai-agent-telemetry-<os>-<arch>` from that release.

@@ -58,14 +58,14 @@ Actions, and ShellCheck.
 - Create `hooks_remove.go` and `hooks_remove_test.go`: ownership-aware native hook and Codex-rule removal.
 - Modify `hooks_*.go`, `hooks.go`, `codex_rule.go`, and their tests: expose target-specific removal merges.
 - Replace `scripts/install.sh` and `scripts/install.ps1`: canonical thin bootstraps.
-- Replace `global-scripts/qubership-dev-install.sh` with a symlink and
-  `global-scripts/qubership-dev-install.ps1` with a forwarding stub.
-- Replace both `global-scripts/tests/qubership-dev-install*` suites with bootstrap transport tests or remove duplicated
-  component cases covered by Go.
-- Modify `.github/workflows/installer-tests.yaml`, `.github/workflows/qubership-dev-installer-tests.yaml`,
-  `.github/workflows/release.yaml`, `Makefile`, and `scripts/has-relevant-changes*`: test and publish the new assets.
-- Modify `README.md`, `docs/cli.md`, `docs/release.md`, `docs/agent-integration.md`, `global-scripts/README.md`, and the
-  affected ADRs and agent-package READMEs: document the new lifecycle and breaking CLI changes.
+- Create `scripts/install_test.sh` and `scripts/install.Tests.ps1`: canonical bootstrap transport tests without
+  compatibility aliases or duplicated component cases covered by Go.
+- Modify `.github/workflows/go-build.yaml`, `.github/workflows/installer-tests.yaml`,
+  `.github/workflows/bootstrap-tests.yaml`, `.github/workflows/release.yaml`, and `Makefile`: test and publish the new
+  assets.
+- Modify `README.md`, `docs/cli.md`, `docs/release.md`, `docs/agent-integration.md`,
+  `docs/lifecycle-installer.md`, and the affected ADRs and agent-package READMEs: document the new lifecycle and
+  breaking CLI changes.
 
 ### Task 1: Migrate the complete existing CLI to Cobra
 
@@ -654,10 +654,8 @@ Expected: PASS. Commit with `feat(cli): expose lifecycle commands and completion
 
 - Replace: `scripts/install.sh`
 - Replace: `scripts/install.ps1`
-- Replace: `global-scripts/qubership-dev-install.sh`
-- Replace: `global-scripts/qubership-dev-install.ps1`
-- Replace or reduce: `global-scripts/tests/qubership-dev-install_test.sh`
-- Replace or reduce: `global-scripts/tests/qubership-dev-install.Tests.ps1`
+- Create: `scripts/install_test.sh`
+- Create: `scripts/install.Tests.ps1`
 
 **Interfaces:**
 
@@ -674,8 +672,7 @@ tests.
 
 - [ ] **Step 2: Run bootstrap tests and confirm the red state**
 
-Run `sh global-scripts/tests/qubership-dev-install_test.sh` and, where available,
-`pwsh -NoProfile -File global-scripts/tests/qubership-dev-install.Tests.ps1`.
+Run `sh scripts/install_test.sh` and, where available, `pwsh -NoProfile -File scripts/install.Tests.ps1`.
 
 Expected: FAIL because existing scripts still implement lifecycle behavior.
 
@@ -685,18 +682,13 @@ Use private temporary directories, exact release asset names, mandatory SHA-256 
 and cleanup traps/finally blocks. Do not parse component flags. Keep only first-token routing for the three lifecycle
 commands and option-prefix defaulting.
 
-- [ ] **Step 4: Add compatibility source paths without duplicate logic**
-
-Make `global-scripts/qubership-dev-install.sh` a source symlink to `../scripts/install.sh`. Make the PowerShell file a
-one-line forwarding loader for `scripts/install.ps1`, with no option declarations or lifecycle functions.
-
-- [ ] **Step 5: Verify and commit**
+- [ ] **Step 4: Verify and commit**
 
 Run:
 
 ```bash
-sh global-scripts/tests/qubership-dev-install_test.sh
-shellcheck scripts/install.sh global-scripts/qubership-dev-install.sh global-scripts/tests/qubership-dev-install_test.sh
+sh scripts/install_test.sh
+shellcheck scripts/install.sh scripts/install_test.sh
 pwsh -NoProfile -Command '[scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null'
 ```
 
@@ -706,16 +698,15 @@ Expected: PASS. Commit with `refactor(installer): delegate lifecycle to go`.
 
 **Files:**
 
+- Modify: `.github/workflows/go-build.yaml`
 - Modify: `.github/workflows/installer-tests.yaml`
-- Modify: `.github/workflows/qubership-dev-installer-tests.yaml`
+- Create: `.github/workflows/bootstrap-tests.yaml`
 - Modify: `.github/workflows/release.yaml`
 - Modify: `Makefile`
-- Modify: `scripts/has-relevant-changes.sh`
-- Modify: `scripts/has-relevant-changes_test.sh`
 
 **Interfaces:**
 
-- Publish canonical `install.sh` and `install.ps1` plus temporary compatibility names.
+- Publish only the canonical `install.sh` and `install.ps1` bootstrap names.
 - Include every binary and bootstrap asset exactly once in `SHA256SUMS`.
 
 - [ ] **Step 1: Replace obsolete workflow assertions**
@@ -726,19 +717,18 @@ pseudoterminal, and Windows direct-update console inheritance.
 
 - [ ] **Step 2: Update release staging and checksum assertions**
 
-Stamp the canonical scripts, copy canonical bytes to release compatibility names, assert the source symlink and
-PowerShell stub, and compare staged compatibility assets byte-for-byte with canonical assets. Keep all six platform
-binaries and all documented script names in the expected-payload check.
+Stamp the canonical scripts and keep all six platform binaries plus `install.sh` and `install.ps1` in the
+expected-payload check.
 
-- [ ] **Step 3: Update change filters and local packaging**
+- [ ] **Step 3: Update change filtering and local packaging**
 
-Make lifecycle Go files, both bootstrap directories, installer workflows, release workflow, and lifecycle docs trigger
-the relevant suites. Update `Makefile` staging to match release workflow behavior.
+Use pinned `dorny/paths-filter` jobs for Go and local lifecycle tests, then remove the custom change-filter scripts.
+Keep general Markdown out of build filters; retain only reference files that Go tests compare with generated content.
+Update `Makefile` staging to match release workflow behavior.
 
 - [ ] **Step 4: Verify and commit**
 
-Run `sh scripts/has-relevant-changes_test.sh`, `make build`, `make checksums`, PowerShell syntax checks, ShellCheck, and
-`git diff --check`.
+Run `make build`, `make checksums`, PowerShell syntax checks, ShellCheck, actionlint, and `git diff --check`.
 
 Expected: PASS with the expected asset set. Commit with `ci(installer): test go lifecycle delivery`.
 
@@ -750,7 +740,7 @@ Expected: PASS with the expected asset set. Commit with `ci(installer): test go 
 - Modify: `docs/cli.md`
 - Modify: `docs/release.md`
 - Modify: `docs/agent-integration.md`
-- Modify: `global-scripts/README.md`
+- Create: `docs/lifecycle-installer.md`
 - Modify: `docs/adr/0002-bare-binary-on-path.md`
 - Modify: `docs/adr/0005-cli-managed-global-hooks.md`
 - Modify: `docs/superpowers/decisions/2026-06-23-on-path-binary-lifecycle.md`
@@ -822,9 +812,8 @@ Run:
 ```bash
 make build
 make checksums
-sh global-scripts/tests/qubership-dev-install_test.sh
-sh scripts/has-relevant-changes_test.sh
-shellcheck scripts/install.sh global-scripts/qubership-dev-install.sh global-scripts/tests/qubership-dev-install_test.sh
+sh scripts/install_test.sh
+shellcheck scripts/install.sh scripts/install_test.sh
 pwsh -NoProfile -Command '[scriptblock]::Create((Get-Content -Raw scripts/install.ps1)) | Out-Null'
 ```
 
