@@ -13,8 +13,9 @@ The CLI registers one global harness-specific hook in each native user configura
 | Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` |
 | Cursor | `~/.cursor/hooks.json` |
 
-One platform-installer run puts the binary on `PATH` and registers all three hooks, even when a
-harness is not installed yet. Each hook calls the CLI by its bare name,
+The default lifecycle install puts the binary on `PATH` and registers all three hooks, even when a harness is not
+installed yet. Use `--harnesses` to select a subset, or `--skip telemetry` to leave telemetry configuration and hooks
+unchanged. Each hook calls the CLI by its bare name,
 `ai-agent-telemetry ingest --agent=<name>`, which works across Git Bash, PowerShell, `cmd.exe`,
 and POSIX `sh`. The Codex policy file allows only the hook and two diagnostic commands to access
 the machine configuration and collector outside its sandbox.
@@ -24,6 +25,10 @@ on-disk outbox, and flushes opportunistically over OTLP/HTTPS. It always exits 0
 fails an agent turn. For its internals, see [the ai-agent-telemetry CLI](cli.md).
 
 After installation, follow the README's [verification, restart, and trust steps](../README.md#installation).
+
+For unattended installation, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optional
+`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. The lifecycle resolves required telemetry input before any
+hook, managed CLI, or component change.
 
 ## Capability matrix
 

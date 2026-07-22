@@ -1,5 +1,9 @@
 # CLI invocation via bare binary name on PATH
 
+> **Superseded lifecycle details:** The bare-name hook decision remains active. The unified Go lifecycle now owns
+> installation, verified update handoff, uninstall, and receipt-scoped `PATH` cleanup. The text below is preserved as
+> historical context and does not describe the current public update or bootstrap contract.
+
 ## Status
 Accepted
 ### Date

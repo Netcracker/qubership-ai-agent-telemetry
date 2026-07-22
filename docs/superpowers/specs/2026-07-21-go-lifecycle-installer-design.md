@@ -163,10 +163,10 @@ curl -fsSL <release>/install.sh | sh -s -- uninstall --purge
 ```
 
 ```powershell
-& { $(irm '<release>/install.ps1') }
-& { $(irm '<release>/install.ps1') } --components telemetry
-& { $(irm '<release>/install.ps1') } update
-& { $(irm '<release>/install.ps1') } uninstall --purge
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod '<release>/install.ps1')))"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod '<release>/install.ps1'))) --components telemetry"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod '<release>/install.ps1'))) update"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod '<release>/install.ps1'))) uninstall --purge"
 ```
 
 The bootstrap contains no component registry, prerequisite policy, install or uninstall handler, configuration logic,

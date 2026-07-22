@@ -1,5 +1,9 @@
 # On-`PATH` binary lifecycle — installer hardening, update-check, and two robustness fixes
 
+> **Superseded update and installer details:** The checksum and robustness rationale remains historical context. The
+> unified Go lifecycle replaced the advisory and self-update flow with `update`, verified new-image handoff, and
+> receipt-owned uninstall. The original decision text below remains unchanged.
+
 **Date:** 2026-06-23
 **Status:** accepted — builds on the direction set in
 [2026-06-22-windows-hook-shell-and-paths.md](2026-06-22-windows-hook-shell-and-paths.md)

@@ -7,28 +7,28 @@ under the Netcracker GitHub organization unless you set a different repository s
 
 ## TL;DR
 
-Run the installer once. It installs the CLI and configures hooks for Claude Code, Codex,
-and Cursor. If prompted, enter the collector endpoint and optional token.
+Run the installer once. It installs the CLI and configures hooks for Claude Code, Codex, and Cursor. Preflight may
+prompt for missing collector settings or ask you to install or update required Git and Java tools.
 
 ```sh
 # macOS / Linux
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --force
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
 ```
 
 ```powershell
 # Windows PowerShell
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
 
-1. If prompted, enter the collector endpoint and optional token.
+1. Follow any preflight prompts for collector settings or selected Git and Java prerequisites.
 2. Run `ai-agent-telemetry status` and `ai-agent-telemetry selftest`.
 3. If installation changed the Codex hook definition and hash, fully restart Codex. If prompted, inspect and approve
    `ai-agent-telemetry ingest --agent=codex`.
 
 See [Installation](#installation) for configuration options, hook repair, and verification details.
 
-To install the broader Qubership developer baseline, see the
-[Qubership developer installer](global-scripts/README.md). It is separate from the telemetry-only installer above.
+The default lifecycle installs the complete Qubership developer baseline: APM, telemetry, and global Git hooks. See
+the [lifecycle installer guide](global-scripts/README.md) for component and harness selection.
 
 ## Architecture
 
@@ -43,8 +43,8 @@ flowchart LR
 On each supported hook event, the harness calls `ai-agent-telemetry ingest --agent=<name>`. The CLI normalizes the
 signal into a typed event, buffers it in an on-disk outbox, and flushes it over OTLP/HTTPS. Skill detection uses a
 native event where available and a session transcript otherwise. See
-[Agent integration](docs/agent-integration.md). The CLI always exits 0, so a detection or delivery failure never
-blocks the agent.
+[Agent integration](docs/agent-integration.md). Hook ingestion always exits 0, so a detection or delivery failure
+never blocks the agent.
 
 The installer puts the CLI on `PATH`, saves the machine settings, and registers hooks for all
 three harnesses. Each hook calls the same bare command (`ai-agent-telemetry`) on every supported
@@ -147,22 +147,54 @@ Any collector that meets these requirements works. A ready-to-deploy reference s
 
 Have the collector endpoint, an optional CA certificate, and an optional access token on hand.
 
-### 1. Install or update the CLI
+### 1. Install the baseline
 
-The installer downloads and verifies the right release, puts it in `~/.local/bin`, and adds that
-directory to the user `PATH`. On a new machine, it prompts only for missing collector settings and
-registers all three hooks. On upgrade, it refreshes the hooks without prompting for those settings
-again. The `--force` and `-Force` options replace an existing binary with the latest release.
+The bootstrap downloads and verifies the correct release, then runs `ai-agent-telemetry install`. The lifecycle
+installs the managed CLI in `~/.local/bin`, adds the directory to the user `PATH` when needed, and installs all
+components and harnesses by default. It prompts for missing collector settings and, when global Git hooks are
+selected, for missing Git or Java 21 prerequisites.
 
 ```sh
 # macOS / Linux
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --force
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
 ```
 
 ```powershell
 # Windows PowerShell
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
+
+Select components with `--components`, subtract components with `--skip`, and select harnesses with `--harnesses`:
+
+```sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh \
+  | sh -s -- --components apm,telemetry --harnesses claude,codex
+```
+
+For unattended telemetry installation, set `AI_AGENT_TELEMETRY_ENDPOINT` and the optional
+`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. A missing endpoint fails before the managed CLI or any
+component changes.
+
+### Update or remove the installation
+
+Update the CLI and all selected components with `ai-agent-telemetry update`. Use `update --cli-only` when you want to
+update only the managed CLI. CLI-only mode cannot be combined with component, skip, harness, Git-hook, or
+noninteractive options.
+
+`ai-agent-telemetry uninstall` removes all components and the managed CLI. A partial selection preserves the CLI
+unless you pass `--remove-cli`; that flag requires telemetry in the final selection. Normal uninstall preserves
+telemetry configuration, credentials, buffered events, offsets, diagnostics, and machine identity. Add `--purge` to
+remove the telemetry-specific configuration and cache after hook cleanup.
+
+On Windows, run full uninstall or partial uninstall with `--remove-cli` through the temporary bootstrap:
+
+```powershell
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --purge"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --components telemetry --remove-cli"
+```
+
+The installer reverses only the `PATH` change recorded by its ownership receipt. It never removes `~/.local/bin`, even
+when that directory is empty.
 
 ### 2. Verify registration and delivery
 
@@ -214,17 +246,17 @@ closes missing setup gaps, and verifies delivery with `selftest`.
 
 ### Advanced manual setup
 
-Use this path when binary installation and machine configuration must happen as separate steps,
-for example in automation.
+Use this path when machine configuration must be applied separately, for example in automation.
 
-**Install the binary:**
+**Install the CLI without telemetry:**
 
 ```sh
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --skip-config
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh \
+  | sh -s -- --skip telemetry
 ```
 
-This puts the binary at `~/.local/bin/ai-agent-telemetry`, verifies the checksum, and adds
-`~/.local/bin` to `PATH`. On Windows, use `install.ps1` with `-SkipConfig`.
+This installs the managed CLI and the remaining selected components without changing telemetry configuration or
+native telemetry hooks. Use the same lowercase, double-dash options with `install.ps1` on Windows.
 
 **Configure the endpoint and token:**
 

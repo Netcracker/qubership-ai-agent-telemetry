@@ -3,25 +3,44 @@
 These values depend on where the collector runs, so the skill stays generic and asks for them
 rather than hardcoding any one deployment.
 
-## Install the binary
+## Install the baseline
 
-Run once per machine to install the binary onto `PATH`. The installer downloads the release
-binary to `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows), verifies its checksum against the
-published `SHA256SUMS`, and adds `~/.local/bin` to `PATH`. If no endpoint is configured yet,
-it runs `ai-agent-telemetry configure`; the binary asks for the collector endpoint and optional
-token and writes the config.
+Use the canonical release bootstrap to install the managed CLI and all components. The bootstrap
+downloads and verifies the current lifecycle CLI, which installs APM and
+`qubership-global-essentials`, telemetry, Git hooks, and the Claude Code, Codex, and Cursor
+integrations by default. The managed binary is installed at `~/.local/bin/ai-agent-telemetry`
+(`.exe` on Windows), and the lifecycle adds `~/.local/bin` to `PATH`.
 
 ```sh
 # macOS / Linux
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
 # Windows (PowerShell)
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) }"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
 
-Use `--skip-config` / `-SkipConfig` only when you need to install the binary without prompting.
-Then configure with the binary itself. Prefer the bare name (`ai-agent-telemetry configure`);
-right after install `~/.local/bin` may not be on this process's `PATH` yet, so until a restart
-refreshes it the bare name may not resolve and you fall back to the full path:
+Interactive installation asks for missing prerequisites and telemetry configuration. For an
+unattended install, set the collector endpoint and optional token before passing
+`--non-interactive`. Existing saved telemetry configuration also satisfies the endpoint
+requirement. Noninteractive mode disables prerequisite and telemetry prompts; a missing endpoint or
+prerequisite fails preflight before the managed CLI or any component changes.
+
+```sh
+# macOS / Linux
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh \
+  | AI_AGENT_TELEMETRY_ENDPOINT=https://collector.example/v1/logs \
+    AI_AGENT_TELEMETRY_TOKEN=<token> sh -s -- --non-interactive
+```
+
+```powershell
+# Windows PowerShell
+$env:AI_AGENT_TELEMETRY_ENDPOINT = 'https://collector.example/v1/logs'
+$env:AI_AGENT_TELEMETRY_TOKEN = '<token>'
+$release = 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download'
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod '$release/install.ps1'))) --non-interactive"
+```
+
+After installation, prefer the bare name (`ai-agent-telemetry configure`). The current process may
+not yet have `~/.local/bin` on `PATH`, so use the full path only until a restart refreshes it:
 
 ```sh
 ~/.local/bin/ai-agent-telemetry configure

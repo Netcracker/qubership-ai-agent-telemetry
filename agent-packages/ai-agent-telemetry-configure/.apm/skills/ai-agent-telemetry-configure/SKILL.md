@@ -144,8 +144,8 @@ Read state first, close only the gaps it shows, then prove delivery.
    CLI-managed execution-policy rule. Require a full harness restart.
 5. Verify one real harness event by following `Verify delivery`.
 6. Report the outcome without exposing configuration secrets.
-7. Run `update-check` and offer an available update without applying it unless
-   the user consents.
+7. Stop after reporting configuration and delivery results. Do not run `update` as part of this
+   workflow; updating is a separate, explicit, mutating operation.
 
 ## Importing a ready config file
 
@@ -187,42 +187,32 @@ enough.
 
 ## Updating
 
-Run `ai-agent-telemetry update-check` at the end of every run — provisioning, repair, or a plain
-status check — not only when the user asks. It prints `installed:`, `latest:`, and
-`update_available: yes|no|unknown` (network, advisory, always exits 0).
-
-- `update_available: no` — say nothing beyond the normal outcome; the machine is current.
-- `update_available: unknown` — the check could not reach GitHub. Don't nag; mention it only if
-  the user is already asking about versions.
-- `update_available: yes` — tell the user the installed and latest versions and **ask whether to
-  update**. Don't update without consent.
-
-On a yes, apply it with the CLI's updater:
+Updating is separate from configuration and verification. Never run an update automatically at
+the end of this skill. When the user explicitly asks to update the installation, use the unified
+lifecycle command:
 
 ```sh
-ai-agent-telemetry self-update
+ai-agent-telemetry update
 ```
 
-Then re-run `update-check` to confirm `installed:` matches `latest:`. No agent restart is
-needed on macOS or Linux because the binary is replaced in place at
-`~/.local/bin/ai-agent-telemetry`, and the bare name already resolves from a previous install.
-On Windows, `self-update` schedules the replacement after the command exits because a running
-`.exe` cannot be overwritten.
+This updates the managed CLI and every selected component. To update only the managed CLI, use:
 
-In a sandboxed environment (Codex) the command reports `latest: unknown` because the execpolicy
-allowlist excludes `update-check` by design. Don't treat that as "no update" — ask the user to
-escalate out of the sandbox or run the command in a regular terminal.
+```sh
+ai-agent-telemetry update --cli-only
+```
 
-This is the skill-driven check: it surfaces updates whenever the skill happens to run. Triggering
-the skill *automatically* on a cadence (for example a periodic "new version available?" nudge
-every few sessions) is separate and not wired yet.
+`update` performs verified release downloads and mutates the installation, so run it only for an
+explicit update request. In Codex, the execution-policy rule deliberately leaves `update`
+sandboxed. Run it in a regular terminal or request permission to leave the sandbox. On Windows,
+the lifecycle hands control to the verified new image before replacing the managed executable.
 
 ## Failure → fix
 
 | `status` / `selftest` shows | Cause | Fix |
 | --- | --- | --- |
 | binary not found | not installed yet | run the installer one-liner (also puts `~/.local/bin` on `PATH`) |
-| binary present but stale or broken (`version` wrong, won't run) | the installer only downloads when the file is missing | re-run the installer with `--force` to fetch a fresh copy (see "Updating") |
+| binary present but stale (`version` wrong) | the managed CLI needs replacement | run `ai-agent-telemetry update --cli-only` after an explicit update request (see "Updating") |
+| binary present but won't run | the installed CLI cannot replace itself | run the release bootstrap with `update --cli-only` (see [references/deployment.md](references/deployment.md)) |
 | bare name not found on a real skill run | `PATH` not refreshed yet | restart the agent so the hook resolves the binary — a *full* restart (quit the app / close the terminal tab), not a new chat (see "Calling the binary") |
 | endpoint empty | not configured | `configure --endpoint` |
 | TLS verification failed | CA missing or wrong | `configure --ca` |
@@ -232,7 +222,7 @@ every few sessions) is separate and not wired yet.
 | `selftest` passes but real skill runs send nothing | the global hook is missing, invalid, or not reloaded | run `hooks install`, inspect `status --verbose`, and fully restart the harness |
 | **Cursor only:** hook is missing or invalid | `.cursor/hooks.json` is absent, malformed, or structurally incompatible | run `hooks install --target=cursor`; repair malformed JSON manually only after reviewing the reported path |
 | **Codex UI shows an old hook command** | the global file is stale or Codex has not reviewed the changed command | run `hooks install --target=codex`, inspect the displayed command, approve it if prompted, and fully restart Codex |
-| **Codex only:** `status` / `selftest` report `endpoint: (unset)` / `not configured`, and `update-check` says `latest: unknown` | Codex sandbox hides `~/.config` and blocks egress — not a missing configuration | run `hooks install --target=codex`, then restart Codex (see [references/codex-sandbox.md](references/codex-sandbox.md)) |
+| **Codex only:** `status` / `selftest` report `endpoint: (unset)` / `not configured` | Codex sandbox hides `~/.config` and blocks egress — not a missing configuration | run `hooks install --target=codex`, then restart Codex (see [references/codex-sandbox.md](references/codex-sandbox.md)) |
 | **Codex false negative:** same `not configured` symptom, but you called the binary by full path or wrapper | that invocation does not match the execpolicy rule, so it ran sandboxed | re-test with `ai-agent-telemetry status` / `ai-agent-telemetry selftest`; don't diagnose from the unmatched call |
 
 `selftest` prints the raw send error (for example an `x509` / `tls` message or an HTTP status);
