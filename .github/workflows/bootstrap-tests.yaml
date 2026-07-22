@@ -1,24 +1,26 @@
-name: Qubership Developer Installer Tests
+name: Bootstrap Transport Tests
 
 on:
   push:
     branches: [ "main" ]
     paths:
-      - "global-scripts/**"
-      - "Makefile"
-      - ".github/workflows/release.yaml"
-      - ".github/workflows/qubership-dev-installer-tests.yaml"
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
+      - "scripts/install_test.sh"
+      - "scripts/install.Tests.ps1"
+      - ".github/workflows/bootstrap-tests.yaml"
   pull_request:
     types: [ opened, synchronize, reopened ]
     paths:
-      - "global-scripts/**"
-      - "Makefile"
-      - ".github/workflows/release.yaml"
-      - ".github/workflows/qubership-dev-installer-tests.yaml"
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
+      - "scripts/install_test.sh"
+      - "scripts/install.Tests.ps1"
+      - ".github/workflows/bootstrap-tests.yaml"
   workflow_dispatch: null
 
 concurrency:
-  group: qubership-dev-installer-${{ github.workflow }}-${{ github.ref }}
+  group: bootstrap-tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions: {}
@@ -40,11 +42,11 @@ jobs:
           persist-credentials: false
 
       - name: Run black-box tests
-        run: sh global-scripts/tests/qubership-dev-install_test.sh
+        run: sh scripts/install_test.sh
 
       - name: Run ShellCheck
         if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: shellcheck global-scripts/qubership-dev-install.sh global-scripts/tests/qubership-dev-install_test.sh
+        run: shellcheck scripts/install.sh scripts/install_test.sh
 
   powershell:
     name: PowerShell (windows-latest)
@@ -57,10 +59,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: Run black-box tests with Windows PowerShell 5.1
         shell: powershell
-        run: powershell.exe -NoProfile -File global-scripts/tests/qubership-dev-install.Tests.ps1
+        run: powershell.exe -NoProfile -File scripts/install.Tests.ps1
 
       - name: Run black-box tests with PowerShell 7
         shell: pwsh
-        run: pwsh -NoProfile -File global-scripts/tests/qubership-dev-install.Tests.ps1
+        run: pwsh -NoProfile -File scripts/install.Tests.ps1

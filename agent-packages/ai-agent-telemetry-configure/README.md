@@ -1,10 +1,8 @@
 # ai-agent-telemetry-configure
 
-This package delivers the optional setup, testing, troubleshooting, repair,
-and verification skill for the `ai-agent-telemetry` CLI. The standalone
-installers handle binary installation, configuration, and native global hook
-registration. This package teaches an agent how to verify and diagnose that
-installation.
+This package delivers the optional setup, testing, troubleshooting, repair, and verification skill for the
+`ai-agent-telemetry` CLI. The unified lifecycle handles the managed CLI, components, configuration, and native global
+hooks. This package teaches an agent how to verify and diagnose that installation.
 
 Install this package when you want the agent to check telemetry on request. It
 does not install telemetry hooks itself.
@@ -55,10 +53,11 @@ skill executions on Claude Code, Codex, and Cursor; command invocations on
 Claude Code; and MCP tool executions on all three. The diagnostic skill checks
 the installation and uses its own invocation as a real skill event.
 
-The standalone installer puts the binary on `PATH`, saves the machine configuration, and registers
-all supported hooks. The skill diagnoses and repairs any gaps reported by the CLI. `ingest` writes
+The default `install` lifecycle puts the binary on `PATH`, installs every component, saves machine configuration, and
+registers all supported hooks. The skill diagnoses and repairs any gaps reported by the CLI. `ingest` writes
 normalized events to a machine-global outbox and opportunistically flushes them over OTLP/HTTPS.
-There is no daemon.
+There is no daemon. The configure workflow never updates the installation automatically; use
+`ai-agent-telemetry update` or `ai-agent-telemetry update --cli-only` only for an explicit update request.
 
 ## Configuration
 
@@ -67,8 +66,8 @@ The CLI reads its collector settings from the environment or the provisioned
 (never git):
 
 - `AI_AGENT_TELEMETRY_ENDPOINT` — the OTLP/HTTP collector URL, for example
-  `https://collector.example/v1/logs`. Without it the flush is a no-op, so events
-  stay buffered in the outbox.
+  `https://collector.example/v1/logs`. Hook ingestion remains fail-open when delivery is unavailable, but explicit
+  `flush` returns failure while queued events remain. An empty outbox is a successful no-op.
 - `AI_AGENT_TELEMETRY_TOKEN` — the optional bearer token, sent as
   `Authorization: Bearer`. Without it the request carries no auth header.
 - `AI_AGENT_TELEMETRY_BUFFER_CAP` — positive local outbox capacity. The default is `100`.
@@ -103,8 +102,6 @@ version; the corporate chain creates the tag, so do not push the tag by hand:
 gh workflow run release.yaml --ref main -f version=vX.Y.Z
 ```
 
-The workflow cross-compiles six targets (darwin, linux, and windows, each for
-amd64 and arm64), writes `SHA256SUMS`, and attaches every artifact to a GitHub
-Release. `install.sh` and `install.ps1` download `ai-agent-telemetry-<os>-<arch>`
-from that release. Compatibility copies named `bootstrap.sh` and `bootstrap.ps1`
-are also published for older docs and automation.
+The workflow cross-compiles six targets (Darwin, Linux, and Windows, each for amd64 and arm64), writes `SHA256SUMS`,
+and attaches every artifact to a GitHub Release. `install.sh` and `install.ps1` are the canonical bootstrap names and
+download `ai-agent-telemetry-<os>-<arch>` from that release.

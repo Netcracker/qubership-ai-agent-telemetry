@@ -1,5 +1,9 @@
 # CLI-managed global hooks
 
+> **Superseded installer details:** CLI-managed global hooks remain active. The unified Go lifecycle now runs hook
+> installation and removal through component selection, preflight, and ownership-aware uninstall. The original text
+> below remains unchanged as historical context.
+
 ## Status
 
 Accepted

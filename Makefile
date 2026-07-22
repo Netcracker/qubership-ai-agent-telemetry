@@ -3,6 +3,10 @@ VERSION ?= v0.0.0-local$(if $(GIT_SHA),+$(GIT_SHA))
 LDFLAGS := -s -w -X main.version=$(VERSION)
 DIST := dist
 TARGETS := darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64 windows/arm64
+SCRIPT_ASSETS := install.sh install.ps1
+BINARY_ASSETS := ai-agent-telemetry-darwin-amd64 ai-agent-telemetry-darwin-arm64 \
+	ai-agent-telemetry-linux-amd64 ai-agent-telemetry-linux-arm64 \
+	ai-agent-telemetry-windows-amd64.exe ai-agent-telemetry-windows-arm64.exe
 
 .PHONY: build
 build:
@@ -14,17 +18,21 @@ build:
 		echo "building $$out"; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $$out . ; \
 	done
-	@cp scripts/install.sh $(DIST)/install.sh
-	@cp scripts/install.ps1 $(DIST)/install.ps1
-	@cp scripts/install.sh $(DIST)/bootstrap.sh
-	@cp scripts/install.ps1 $(DIST)/bootstrap.ps1
-	@cp global-scripts/qubership-dev-install.sh $(DIST)/qubership-dev-install.sh
-	@cp global-scripts/qubership-dev-install.ps1 $(DIST)/qubership-dev-install.ps1
+	@sed 's|^DEFAULT_BINARY_VERSION=.*|DEFAULT_BINARY_VERSION="$(VERSION)"|' scripts/install.sh > $(DIST)/install.sh
+	@sed "s|^\$$DefaultBinaryVersion = .*|\$$DefaultBinaryVersion = '$(VERSION)'|" scripts/install.ps1 > $(DIST)/install.ps1
+	@test "$$(grep -c '^DEFAULT_BINARY_VERSION="$(VERSION)"$$' $(DIST)/install.sh)" -eq 1
+	@test "$$(grep -Fxc "\$$DefaultBinaryVersion = '$(VERSION)'" $(DIST)/install.ps1)" -eq 1
+	@rm -f $(DIST)/bootstrap.sh $(DIST)/bootstrap.ps1 \
+		$(DIST)/qubership-dev-install.sh $(DIST)/qubership-dev-install.ps1
 
 .PHONY: checksums
 checksums: build
-	@cd $(DIST) && shasum -a 256 ai-agent-telemetry-* install.sh install.ps1 bootstrap.sh bootstrap.ps1 \
-		qubership-dev-install.sh qubership-dev-install.ps1 > SHA256SUMS && cat SHA256SUMS
+	@cd $(DIST) && shasum -a 256 $(BINARY_ASSETS) $(SCRIPT_ASSETS) > SHA256SUMS
+	@test "$$(wc -l < $(DIST)/SHA256SUMS)" -eq 8
+	@for asset in $(BINARY_ASSETS) $(SCRIPT_ASSETS); do \
+		test "$$(awk -v name="$$asset" '$$2 == name { count++ } END { print count + 0 }' $(DIST)/SHA256SUMS)" -eq 1; \
+	done
+	@cat $(DIST)/SHA256SUMS
 
 .PHONY: test
 test:

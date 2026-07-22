@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -18,6 +19,42 @@ import (
 )
 
 var errLockBusy = errors.New("flush lock busy")
+
+const maxFlushErrors = 8
+
+type logExporterFactory func(context.Context, string, string, *tls.Config) (sdklog.Exporter, error)
+
+type deliveryResolver struct {
+	Endpoint func() (string, error)
+	TLS      func() (*tls.Config, error)
+	Token    func() string
+	Timeout  func() time.Duration
+	Exporter logExporterFactory
+	Remove   func(string) error
+}
+
+type boundedErrors struct {
+	errs    []error
+	omitted int
+}
+
+func (e *boundedErrors) add(err error) {
+	if err == nil {
+		return
+	}
+	if len(e.errs) < maxFlushErrors {
+		e.errs = append(e.errs, err)
+		return
+	}
+	e.omitted++
+}
+
+func (e *boundedErrors) err() error {
+	if e.omitted > 0 {
+		return errors.Join(append(e.errs, fmt.Errorf("%d additional flush errors omitted", e.omitted))...)
+	}
+	return errors.Join(e.errs...)
+}
 
 // resourceAttrs builds the OTLP resource attributes that describe this install:
 // service identity, build version, and the host OS, plus the anonymous machine
@@ -82,26 +119,83 @@ func Flush(s *Outbox, endpoint, token string, tlsConfig *tls.Config, timeout tim
 	if err != nil || len(names) == 0 {
 		return 0, err
 	}
+	return deliverEvents(s, names, endpoint, token, tlsConfig, timeout, nil, nil, false)
+}
 
+// flushExplicit performs a human-requested flush. It validates the outbox
+// under its lock before resolving delivery configuration and reports every
+// retained event as an error.
+func flushExplicit(s *Outbox, resolve deliveryResolver) (int, error) {
+	release, err := lockOutbox(s)
+	if err != nil {
+		return 0, fmt.Errorf("lock outbox: %w", err)
+	}
+	defer release()
+
+	names, err := s.List()
+	if err != nil {
+		return 0, fmt.Errorf("list outbox: %w", err)
+	}
+	if len(names) == 0 {
+		return 0, nil
+	}
+
+	if resolve.Endpoint == nil {
+		return 0, errors.New("collector endpoint resolver is unavailable")
+	}
+	endpoint, err := resolve.Endpoint()
+	if err != nil {
+		return 0, fmt.Errorf("resolve collector endpoint: %w", err)
+	}
+	if endpoint == "" {
+		return 0, errors.New("collector endpoint is not configured")
+	}
+
+	var tlsConfig *tls.Config
+	if resolve.TLS != nil {
+		tlsConfig, err = resolve.TLS()
+		if err != nil {
+			return 0, fmt.Errorf("load collector CA: %w", err)
+		}
+	}
+	var token string
+	if resolve.Token != nil {
+		token = resolve.Token()
+	}
+	timeout := defaultFlushTimeout
+	if resolve.Timeout != nil {
+		timeout = resolve.Timeout()
+	}
+	return deliverEvents(s, names, endpoint, token, tlsConfig, timeout, resolve.Exporter, resolve.Remove, true)
+}
+
+func deliverEvents(
+	s *Outbox,
+	names []string,
+	endpoint, token string,
+	tlsConfig *tls.Config,
+	timeout time.Duration,
+	exporterFactory logExporterFactory,
+	remove func(string) error,
+	strict bool,
+) (int, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// Capture export errors: SimpleProcessor routes them to the global handler.
-	var exportErr error
+	var exportIssues boundedErrors
 	// NOTE: this mutates the process-global OTel error handler. It is safe here
 	// because the per-machine flush lock serializes flushes and this binary is a
 	// short-lived single-flush CLI. A long-running process linking this code could
 	// see the OTel sync.Once delegate behavior interfere with this handler.
-	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(e error) { exportErr = e }))
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		exportIssues.add(fmt.Errorf("export events: %w", err))
+	}))
 
-	opts := []otlploghttp.Option{otlploghttp.WithEndpointURL(endpoint)}
-	if token != "" {
-		opts = append(opts, otlploghttp.WithHeaders(map[string]string{"Authorization": "Bearer " + token}))
+	if exporterFactory == nil {
+		exporterFactory = newOTLPLogExporter
 	}
-	if tlsConfig != nil {
-		opts = append(opts, otlploghttp.WithTLSClientConfig(tlsConfig))
-	}
-	exp, err := otlploghttp.New(ctx, opts...)
+	exp, err := exporterFactory(ctx, endpoint, token, tlsConfig)
 	if err != nil {
 		recordLastDeliveryError(s, err)
 		return 0, err
@@ -119,31 +213,73 @@ func Flush(s *Outbox, endpoint, token string, tlsConfig *tls.Config, timeout tim
 	)
 
 	sentNames := make([]string, 0, len(names))
+	var retainedIssues boundedErrors
 	for _, n := range names {
 		ev, rerr := s.Read(n)
 		if rerr != nil {
-			continue // skip unreadable file; do not fail the whole batch
+			if strict {
+				retainedIssues.add(fmt.Errorf("read event %q: %w", n, rerr))
+			}
+			continue
 		}
 		rec, rerr := eventRecord(ev, time.Now().UTC(), eventIDForDelivery(ev, n))
 		if rerr != nil {
+			if strict {
+				retainedIssues.add(fmt.Errorf("validate event %q: %w", n, rerr))
+			}
 			continue
 		}
 		logger.Emit(ctx, rec)
 		sentNames = append(sentNames, n)
 	}
 
-	// Shutdown flushes the exporter; export errors surface via exportErr.
-	_ = provider.Shutdown(ctx)
-	if exportErr != nil {
-		recordLastDeliveryError(s, exportErr)
-		return 0, exportErr
+	// Shutdown flushes the exporter; export errors surface through the handler.
+	shutdownErr := provider.Shutdown(ctx)
+	if strict {
+		retainedIssues.add(exportIssues.err())
+		if shutdownErr != nil {
+			retainedIssues.add(fmt.Errorf("shut down exporter: %w", shutdownErr))
+		}
+		if exportIssues.err() != nil || shutdownErr != nil {
+			err := retainedIssues.err()
+			recordLastDeliveryError(s, err)
+			return 0, err
+		}
+	} else if exportIssues.err() != nil {
+		err := exportIssues.err()
+		recordLastDeliveryError(s, err)
+		return 0, err
 	}
 
+	if remove == nil {
+		remove = s.Remove
+	}
 	for _, n := range sentNames {
-		_ = s.Remove(n)
+		if err := remove(n); strict && err != nil {
+			retainedIssues.add(fmt.Errorf("remove delivered event %q: %w", n, err))
+		}
+	}
+	if err := retainedIssues.err(); err != nil {
+		recordLastDeliveryError(s, err)
+		return len(sentNames), err
 	}
 	clearLastDeliveryError(s)
 	return len(sentNames), nil
+}
+
+func newOTLPLogExporter(
+	ctx context.Context,
+	endpoint, token string,
+	tlsConfig *tls.Config,
+) (sdklog.Exporter, error) {
+	opts := []otlploghttp.Option{otlploghttp.WithEndpointURL(endpoint)}
+	if token != "" {
+		opts = append(opts, otlploghttp.WithHeaders(map[string]string{"Authorization": "Bearer " + token}))
+	}
+	if tlsConfig != nil {
+		opts = append(opts, otlploghttp.WithTLSClientConfig(tlsConfig))
+	}
+	return otlploghttp.New(ctx, opts...)
 }
 
 func eventRecord(ev TelemetryEvent, observed time.Time, eventID string) (otellog.Record, error) {

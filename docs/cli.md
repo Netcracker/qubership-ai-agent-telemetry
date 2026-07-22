@@ -1,8 +1,7 @@
 # The ai-agent-telemetry CLI
 
-The `ai-agent-telemetry` CLI is the local component that detects telemetry events, buffers
-events to a local outbox, and forwards them to the collector over OTLP/HTTPS. It runs
-from the agent hook on each turn — there is no daemon and no background process.
+The `ai-agent-telemetry` CLI detects telemetry events, buffers them in a local outbox, and forwards them to the
+collector over OTLP/HTTPS. It runs from the agent hook on each turn. There is no daemon or background process.
 
 To install it, see [Installation in the README](../README.md#installation). This document
 covers the command reference, how it works inside, and where it keeps its files.
@@ -30,15 +29,18 @@ upgrades, so these commands rarely need to be run by hand.
 
 | Command | Purpose |
 | --- | --- |
+| `install` | Install the managed CLI and selected components. The default component and harness selection is `all`. |
+| `update` | Update the managed CLI and selected components, or use `--cli-only` to update only the CLI. |
+| `uninstall` | Remove selected components and remove the CLI after a full uninstall or an explicit valid `--remove-cli`. |
 | `configure` | Write the per-machine endpoint, repository policy, optional CA, and optional token. Install all global hooks by default; use `--hooks=all`, `--hooks=none`, or `--hooks=<list>`. |
 | `hooks install` | Install or repair global hooks and required harness policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
+| `hooks uninstall` | Remove telemetry-owned hooks and canonical policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
 | `status` | Read-only check of configuration, delivery backlog, and each global hook. Sends nothing. Use `--verbose` for native paths and parse errors. |
 | `selftest` | Send one marked probe event and report whether the collector accepted it and it left the outbox. |
 | `ingest` | Read a harness hook payload, route it by `hook_event_name`, validate and queue supported events, then flush opportunistically. Always exits 0 so it never fails an agent turn. |
-| `flush` | Send queued events to the collector and delete each on success. |
-| `update-check` | Compare the installed version against the latest GitHub release and print `installed:` / `latest:` / `update_available: yes\|no\|unknown`. Network, short timeout, always exits 0 — advisory only. |
-| `self-update` | Download the latest release asset for this OS and architecture, verify it against `SHA256SUMS`, and replace the running binary. |
+| `flush` | Strictly send queued events to the collector and delete each only after successful delivery. |
 | `version` | Print the build version. |
+| `completion` | Generate completion for Bash, Zsh, Fish, or PowerShell without editing shell profiles. |
 
 Use the built-in help to see a command's current syntax and options:
 
@@ -46,9 +48,53 @@ Use the built-in help to see a command's current syntax and options:
 ai-agent-telemetry --help
 ai-agent-telemetry help configure
 ai-agent-telemetry hooks --help
+ai-agent-telemetry completion --help
 ```
 
-Explicit help prints the requested information and exits without running the command.
+Running the root command, `hooks`, or `completion` without a child prints that command's discovery help and returns
+success. Explicit help prints the requested information without running an operation.
+
+## Lifecycle commands
+
+`install`, `update`, and `uninstall` accept `--components <list>` and `--skip <list>`. Components are `apm`,
+`telemetry`, and `git-hooks`; `all` is the default. Install and update also accept `--harnesses <list>`,
+`--force-git-hooks`, and `--non-interactive`. Harnesses are `claude`, `codex`, and `cursor`.
+
+```sh
+ai-agent-telemetry install
+ai-agent-telemetry install --components apm,telemetry --harnesses claude,codex
+ai-agent-telemetry install --skip git-hooks
+ai-agent-telemetry update
+ai-agent-telemetry update --cli-only
+```
+
+The managed CLI is infrastructure, not a selectable component. Every install or ordinary update installs or confirms
+the CLI before running selected components. Update refreshes selected existing components and installs selected
+missing components. `--cli-only` skips all component and prerequisite preflight and cannot be combined with selection,
+harness, Git-hook, or noninteractive options.
+
+Telemetry preflight resolves the collector endpoint and optional token before any changes. Interactive mode prompts
+when no endpoint is configured. With `--non-interactive`, set `AI_AGENT_TELEMETRY_ENDPOINT` and optionally
+`AI_AGENT_TELEMETRY_TOKEN`, or configure them beforehand. A missing endpoint fails the complete lifecycle preflight.
+
+Full uninstall means the final component set contains all three components. It removes components first and then the
+managed CLI and its receipt-owned `PATH` entry. A partial uninstall preserves the CLI unless you pass `--remove-cli`;
+that flag is valid only when telemetry remains selected. A telemetry hook-cleanup failure always preserves the CLI.
+
+```sh
+ai-agent-telemetry uninstall
+ai-agent-telemetry uninstall --components telemetry
+ai-agent-telemetry uninstall --components telemetry --remove-cli
+ai-agent-telemetry uninstall --purge
+```
+
+Normal uninstall preserves telemetry configuration, credentials, repository policy, delivery settings, diagnostics,
+offsets, buffered events, and machine identity. `--purge` removes only the telemetry-specific config and cache
+directories after successful hook cleanup; shared parent directories remain.
+
+The installer records only its own `PATH` mutation in a receipt beside the managed executable. CLI removal reverses
+that exact mutation and preserves unrelated profile or Windows user-PATH content. It never removes `~/.local/bin`,
+even when the directory becomes empty.
 
 When buffered events remain after a failed delivery attempt, `status` points to
 `status --verbose`. The verbose output includes the effective buffer capacity, flush
@@ -71,11 +117,16 @@ repair command uses `--target` instead:
 ```sh
 ai-agent-telemetry configure --hooks=claude,codex
 ai-agent-telemetry hooks install --target=claude,codex
+ai-agent-telemetry hooks uninstall --target=claude,codex
 ```
 
-Before either command installs a nonempty set of CLI-managed hooks, the CLI reads `~/.apm/apm.yml`. If the manifest
-contains the exact legacy telemetry hook package dependency, the CLI asks APM to remove that global dependency. It
-does not edit repository-local APM manifests or remove the retained compatibility package from a project.
+Both hook commands accept `--target=claude`, `--target=codex`, `--target=cursor`, or a comma-separated subset; omitting
+the option selects all three harnesses. Uninstall removes only telemetry-owned entries and canonical policy files.
+
+Before `configure` or `hooks install` installs a nonempty set of CLI-managed hooks, the CLI reads `~/.apm/apm.yml`.
+If the manifest contains the exact legacy telemetry hook package dependency, the CLI asks APM to remove that global
+dependency. It does not edit repository-local APM manifests or remove the retained compatibility package from a
+project.
 
 Cleanup is best effort. If the global manifest cannot be read or parsed, APM is unavailable, or the uninstall command
 fails, the CLI writes a warning to `stderr` and continues canonicalizing every requested native hook. A cleanup warning
@@ -114,28 +165,45 @@ The external identifier profiles and excluded content fields are listed in [Data
 only the typed allowlist for each event and omit unavailable optional values. They do not trim, truncate, rewrite, or
 infer identifiers.
 
-## Updating
+## Updating on Windows
 
-`update-check` reports whether a newer release exists; it does not apply anything. To update,
-run:
+Direct `update` downloads and verifies the new Windows image, transfers control to it, completes read-only preflight,
+and replaces the managed executable before component changes. The old process waits and returns the new process's exit
+code. A helper then removes the one renamed old image after the old process exits.
 
-```sh
-ai-agent-telemetry self-update
+If helper cleanup exhausts its bounded retries, stderr names the exact stale image that you may remove manually after
+the update processes exit. Later updates do not scan for or delete stale-looking sibling files.
+
+The installed Windows executable cannot remove itself. Run full uninstall or partial uninstall with `--remove-cli`
+through the temporary bootstrap instead:
+
+```powershell
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --components telemetry --remove-cli"
 ```
 
-`self-update` fetches the release asset that matches the current `GOOS/GOARCH`, verifies the
-download, and replaces the executable returned by `os.Executable()`. On Windows the replacement
-finishes after the command exits because Windows does not allow overwriting a running `.exe`.
+Partial uninstall without CLI removal can run directly on every platform.
 
-You can also force a reinstall through the installer:
+## Shell completion
+
+Generate completion scripts on stdout. These commands do not edit shell profiles:
 
 ```sh
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh -s -- --force
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) } -Force"
+ai-agent-telemetry completion bash
+ai-agent-telemetry completion zsh
+ai-agent-telemetry completion fish
+ai-agent-telemetry completion powershell
 ```
 
-Re-running the installer updates the binary and refreshes the global hooks without asking for
-collector settings again. The skip-config options leave both machine settings and hooks unchanged.
+Cobra also completes component, skip, harness, and hook-target values. Comma-separated completion retains the typed
+prefix, omits duplicates, and disables file completion.
+
+## Removed lifecycle interfaces
+
+The unified lifecycle is a breaking change. `update-check`, `self-update`, `--force-update`, `--force`,
+`--skip-config`, `bootstrap.sh`, `bootstrap.ps1`, and PowerShell named parameters are not supported aliases. Use
+`update`, `update --cli-only`, `--skip telemetry`, and the canonical `install.sh` or `install.ps1` bootstrap as
+appropriate.
 
 ## Buffering and delivery
 
@@ -147,9 +215,8 @@ and returns; delivery happens opportunistically.
   beside the outbox and appears in `status --verbose`.
 - **Delivery identity.** Each new outbox entry stores a time-sortable UUID v7. Every retry exports
   the same value as `event.id`.
-- **Flush lock.** `flush` takes a non-blocking advisory lock (`.flush.lock`) on the
-  outbox, so two concurrent runs never send the same event twice. A run that finds the
-  lock held skips quietly.
+- **Flush lock.** `flush` takes a non-blocking advisory lock (`.flush.lock`) on the outbox, so concurrent runs do not
+  send the same event. Explicit flush returns failure when queued work exists but another process owns the lock.
 - **Offset dedup.** On harnesses detected from the transcript (Codex, Cursor), the CLI
   stores a per-session byte offset into the transcript and reads only the lines written
   since the previous run. The key is namespaced per harness (`codex:<session>`), so
@@ -215,6 +282,11 @@ AI_AGENT_TELEMETRY_FLUSH_TIMEOUT=30s \
 ai-agent-telemetry flush
 ```
 
+Explicit `flush` is strict. It returns `0` only when every queued event is delivered and removed. Configuration,
+validation, delivery, shutdown, lock, read, and removal failures return `1`; retained events remain available for a
+later retry. An empty locked outbox prints `nothing to flush` and returns `0` without resolving an endpoint or CA.
+Hook-driven `ingest` remains fail-open and always returns `0`.
+
 Run `ai-agent-telemetry status --verbose` to inspect the effective values. Compact status
 output omits them.
 
@@ -270,6 +342,7 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 | Location | Path | Holds |
 | --- | --- | --- |
 | **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the installer so the hook resolves it by bare name |
+| **PATH receipt** | Beside the managed binary as `.ai-agent-telemetry-install.json` | ownership evidence for the exact installer-created `PATH` mutation; no credentials or telemetry state |
 | **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token, and delivery settings), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush`, `.last_delivery_error`, and `.flush.lock`), `offsets/` (per-session transcript offsets) |
 | **Claude Code hook** | `~/.claude/settings.json` | Global `PreToolUse`/`Skill`, `UserPromptExpansion`, `PostToolUse`/`mcp__.*`, and `PostToolUseFailure`/`mcp__.*` registrations merged with unrelated settings |

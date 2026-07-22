@@ -16,7 +16,7 @@ prefix_rule(
     justification = "Allow the trusted telemetry hook to read its machine config and send Codex skill usage events.",
     match = ["ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry.exe ingest --agent=codex"],
     not_match = ["ai-agent-telemetry status", "ai-agent-telemetry selftest", "ai-agent-telemetry configure",
-                 "ai-agent-telemetry update-check", "ai-agent-telemetry ingest --agent=claude",
+                 "ai-agent-telemetry update", "ai-agent-telemetry ingest --agent=claude",
                  "ai-agent-telemetry ingest --agent=cursor"],
 )
 prefix_rule(
@@ -25,7 +25,7 @@ prefix_rule(
     justification = "Allow telemetry diagnostics to read configured state outside the sandbox.",
     match = ["ai-agent-telemetry status", "ai-agent-telemetry.exe status"],
     not_match = ["ai-agent-telemetry configure", "ai-agent-telemetry selftest",
-                 "ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry update-check"],
+                 "ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry update"],
 )
 prefix_rule(
     pattern = [["ai-agent-telemetry", "ai-agent-telemetry.exe"], "selftest"],
@@ -33,7 +33,7 @@ prefix_rule(
     justification = "Allow telemetry diagnostics to send a marked probe event outside the sandbox.",
     match = ["ai-agent-telemetry selftest", "ai-agent-telemetry.exe selftest"],
     not_match = ["ai-agent-telemetry configure", "ai-agent-telemetry status",
-                 "ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry update-check"],
+                 "ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry update"],
 )
 `
 

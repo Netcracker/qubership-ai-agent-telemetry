@@ -63,20 +63,15 @@ ai-agent-telemetry-linux-amd64
 ai-agent-telemetry-linux-arm64
 ai-agent-telemetry-windows-amd64.exe
 ai-agent-telemetry-windows-arm64.exe
-bootstrap.ps1
-bootstrap.sh
 install.ps1
 install.sh
-qubership-dev-install.ps1
-qubership-dev-install.sh
 ```
 
-`SHA256SUMS` must include one entry for every asset above except itself. The
-workflow verifies this before upload.
+`SHA256SUMS` must include one entry for every asset above except itself. The workflow verifies this before upload.
 
 ## Smoke checks
 
-### Telemetry installer
+### Canonical lifecycle installer
 
 After the workflow succeeds, install the published version on one Unix-like machine:
 
@@ -84,7 +79,7 @@ After the workflow succeeds, install the published version on one Unix-like mach
 INSTALLER_URL=https://github.com/Netcracker/qubership-ai-agent-telemetry
 INSTALLER_URL=$INSTALLER_URL/releases/latest/download/install.sh
 export AI_AGENT_TELEMETRY_INSTALL_VERSION=vX.Y.Z
-curl -fsSL "$INSTALLER_URL" | sh -s -- --skip-config --force
+curl -fsSL "$INSTALLER_URL" | sh -s -- --components telemetry --non-interactive
 ai-agent-telemetry version
 ```
 
@@ -95,14 +90,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "$r='https://github.com/Netcracker';" ^
   "$r+='/qubership-ai-agent-telemetry/releases/latest/download';" ^
   "$env:AI_AGENT_TELEMETRY_INSTALL_VERSION='vX.Y.Z';" ^
-  "$s=irm ($r+'/install.ps1');" ^
-  "iex ('& {'+$s+'} -SkipConfig -Force');" ^
+  "& ([scriptblock]::Create((Invoke-RestMethod ($r+'/install.ps1')))) --components telemetry --non-interactive"
+powershell.exe -NoProfile -Command ^
   "& ($env:USERPROFILE+'\.local\bin\ai-agent-telemetry.exe') version"
 ```
 
-Both commands should print `vX.Y.Z`.
+Set `AI_AGENT_TELEMETRY_ENDPOINT` or seed valid machine configuration before these noninteractive commands. Both
+commands should print `vX.Y.Z`.
 
-### Qubership developer installer
+### Full lifecycle
 
 Run the overall installer on a disposable machine. Complete telemetry
 configuration when prompted, and confirm that the summary reports `OK` for
@@ -113,8 +109,8 @@ On macOS or Linux:
 ```bash
 REPOSITORY=https://github.com/Netcracker/qubership-ai-agent-telemetry
 RELEASE=$REPOSITORY/releases/latest/download
-curl -fsSL "$RELEASE/qubership-dev-install.sh" \
-  | sh -s -- --force-update
+curl -fsSL "$RELEASE/install.sh" \
+  | sh -s -- update
 ```
 
 From Windows Command Prompt:
@@ -123,6 +119,28 @@ From Windows Command Prompt:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "$r='https://github.com/Netcracker';" ^
   "$r+='/qubership-ai-agent-telemetry/releases/latest/download';" ^
-  "$s=irm ($r+'/qubership-dev-install.ps1');" ^
-  "iex ('& {'+$s+'} -ForceUpdate')"
+  "& ([scriptblock]::Create((Invoke-RestMethod ($r+'/install.ps1')))) update"
 ```
+
+Confirm that update refreshes all selected components and that `update --cli-only` refreshes only the managed CLI. On
+Windows, also verify direct update handoff and full uninstall through the temporary `install.ps1` bootstrap.
+
+## Breaking-change checks
+
+Release validation must reject removed update-check, self-update, force-update, force, skip-config, `bootstrap.sh`,
+`bootstrap.ps1`, and PowerShell named-parameter behavior. Do not retain old tests to preserve those contracts. Replace
+deleted coverage with unified lifecycle routing, update handoff, selection, ownership, strict flush, and concrete
+completion tests.
+
+When removing obsolete installer tests, keep or add these replacements:
+
+- Cobra command, help, validation, and exit-code tests for `install`, `update`, and `uninstall`;
+- component and harness normalization, partial and full uninstall, purge, and CLI-removal ownership tests;
+- verified update handoff, Windows swap and rollback, exact stale-image cleanup, and child exit-code tests;
+- strict explicit-flush failure and retention tests alongside fail-open ingest tests;
+- receipt-owned `PATH` removal and unconditional `~/.local/bin` preservation tests;
+- concrete completion candidate and directive tests for every value flag, plus generation smoke tests for four shells;
+- bootstrap transport, quoting, stdin, checksum, platform selection, forwarding, and temporary-cleanup tests.
+
+Deleting a test is valid only when the old behavior is intentionally removed or equivalent Go lifecycle coverage is
+present and named in the change description.

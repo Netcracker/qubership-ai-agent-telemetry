@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,11 +17,172 @@ import (
 	"testing"
 	"time"
 
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	collectlogsv1 "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	logsv1 "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/proto"
 )
+
+type testLogExporter struct {
+	exportErr   error
+	shutdownErr error
+}
+
+func (e testLogExporter) Export(context.Context, []sdklog.Record) error { return e.exportErr }
+func (e testLogExporter) Shutdown(context.Context) error                { return e.shutdownErr }
+func (e testLogExporter) ForceFlush(context.Context) error              { return nil }
+
+func explicitResolver(endpoint string) deliveryResolver {
+	return deliveryResolver{
+		Endpoint: func() (string, error) { return endpoint, nil },
+		TLS:      func() (*tls.Config, error) { return nil, nil },
+		Token:    func() string { return "" },
+		Timeout:  func() time.Duration { return 2 * time.Second },
+	}
+}
+
+func TestFlushExplicitEmptyOutboxSkipsDeliveryResolution(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	sent, err := flushExplicit(outbox, deliveryResolver{
+		Endpoint: func() (string, error) { t.Fatal("endpoint resolved for empty outbox"); return "", nil },
+		TLS:      func() (*tls.Config, error) { t.Fatal("CA loaded for empty outbox"); return nil, nil },
+		Token:    func() string { t.Fatal("token resolved for empty outbox"); return "" },
+		Timeout:  func() time.Duration { t.Fatal("timeout resolved for empty outbox"); return 0 },
+	})
+	if err != nil || sent != 0 {
+		t.Fatalf("sent=%d err=%v", sent, err)
+	}
+}
+
+func TestFlushExplicitRejectsMissingEndpoint(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	seed(t, outbox, 1)
+	resolve := explicitResolver("")
+	resolve.TLS = func() (*tls.Config, error) { t.Fatal("CA loaded without an endpoint"); return nil, nil }
+
+	if sent, err := flushExplicit(outbox, resolve); err == nil || !strings.Contains(err.Error(), "endpoint") || sent != 0 {
+		t.Fatalf("sent=%d err=%v, want endpoint error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func TestFlushExplicitReportsInvalidCA(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	seed(t, outbox, 1)
+	resolve := explicitResolver("https://collector.invalid")
+	resolve.TLS = func() (*tls.Config, error) { return nil, errors.New("invalid CA") }
+
+	if sent, err := flushExplicit(outbox, resolve); err == nil || !strings.Contains(err.Error(), "invalid CA") || sent != 0 {
+		t.Fatalf("sent=%d err=%v, want CA error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func TestFlushExplicitReportsBusyLockBeforeDeliveryResolution(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	seed(t, outbox, 1)
+	release, err := lockOutbox(outbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	sent, err := flushExplicit(outbox, deliveryResolver{
+		Endpoint: func() (string, error) { t.Fatal("endpoint resolved while lock busy"); return "", nil },
+		TLS:      func() (*tls.Config, error) { t.Fatal("CA loaded while lock busy"); return nil, nil },
+	})
+	if err == nil || !errors.Is(err, errLockBusy) || sent != 0 {
+		t.Fatalf("sent=%d err=%v, want lock-busy error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func TestFlushExplicitReportsUnreadableEventAndDeliversValidEvent(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	if err := os.Symlink(filepath.Join(outbox.Dir, "missing"), filepath.Join(outbox.Dir, "0001.json")); err != nil {
+		t.Fatal(err)
+	}
+	seed(t, outbox, 1)
+	capture := newOTLPCapture(t)
+	defer capture.server.Close()
+
+	sent, err := flushExplicit(outbox, explicitResolver(capture.server.URL))
+	if err == nil || !strings.Contains(err.Error(), "0001.json") || sent != 1 {
+		t.Fatalf("sent=%d err=%v, want retained unreadable event error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func TestFlushExplicitReportsInvalidEventAndDeliversValidEvent(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	if err := os.WriteFile(filepath.Join(outbox.Dir, "0001.json"), []byte(`{"event_name":"unknown"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	seed(t, outbox, 1)
+	capture := newOTLPCapture(t)
+	defer capture.server.Close()
+
+	sent, err := flushExplicit(outbox, explicitResolver(capture.server.URL))
+	if err == nil || !strings.Contains(err.Error(), "0001.json") || sent != 1 {
+		t.Fatalf("sent=%d err=%v, want retained invalid event error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func TestFlushExplicitReportsExporterFailure(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	seed(t, outbox, 1)
+	resolve := explicitResolver("https://collector.invalid")
+	resolve.Exporter = func(context.Context, string, string, *tls.Config) (sdklog.Exporter, error) {
+		return testLogExporter{exportErr: errors.New("export failed")}, nil
+	}
+
+	if sent, err := flushExplicit(outbox, resolve); err == nil || !strings.Contains(err.Error(), "export failed") || sent != 0 {
+		t.Fatalf("sent=%d err=%v, want exporter error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func TestFlushExplicitReportsShutdownFailure(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	seed(t, outbox, 1)
+	resolve := explicitResolver("https://collector.invalid")
+	resolve.Exporter = func(context.Context, string, string, *tls.Config) (sdklog.Exporter, error) {
+		return testLogExporter{shutdownErr: errors.New("shutdown failed")}, nil
+	}
+
+	if sent, err := flushExplicit(outbox, resolve); err == nil || !strings.Contains(err.Error(), "shutdown failed") || sent != 0 {
+		t.Fatalf("sent=%d err=%v, want shutdown error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func TestFlushExplicitReportsRemovalFailure(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	seed(t, outbox, 1)
+	resolve := explicitResolver("https://collector.invalid")
+	resolve.Exporter = func(context.Context, string, string, *tls.Config) (sdklog.Exporter, error) {
+		return testLogExporter{}, nil
+	}
+	resolve.Remove = func(string) error { return errors.New("remove failed") }
+
+	if sent, err := flushExplicit(outbox, resolve); err == nil || !strings.Contains(err.Error(), "remove failed") || sent != 1 {
+		t.Fatalf("sent=%d err=%v, want removal error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func assertOutboxCount(t *testing.T, outbox *Outbox, want int) {
+	t.Helper()
+	names, err := outbox.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != want {
+		t.Fatalf("outbox contains %d events, want %d: %v", len(names), want, names)
+	}
+}
 
 func TestFlushPreservesSkillOTLPSchema(t *testing.T) {
 	records := flushRecords(t, []TelemetryEvent{mustSkillEvent(t, "codex", "s1", "brainstorming")})

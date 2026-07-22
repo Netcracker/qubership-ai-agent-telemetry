@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,9 +14,23 @@ import (
 	"time"
 )
 
+func runCLI(args []string, stdout func(string)) int {
+	var out, errOut bytes.Buffer
+	code := execute(args, appDeps{In: os.Stdin, Out: &out, ErrOut: &errOut, Home: userHomeDir})
+	stdout(out.String() + errOut.String())
+	return code
+}
+
+func runCLIWithStderr(args []string, stdout func(string), stderr io.Writer) int {
+	var out bytes.Buffer
+	code := execute(args, appDeps{In: os.Stdin, Out: &out, ErrOut: stderr, Home: userHomeDir})
+	stdout(out.String())
+	return code
+}
+
 func TestRunVersion(t *testing.T) {
 	var out string
-	code := run([]string{"version"}, func(s string) { out = s })
+	code := runCLI([]string{"version"}, func(s string) { out = s })
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
@@ -29,19 +45,19 @@ func TestRunHelp(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "help", args: []string{"help"}, want: "Commands:"},
-		{name: "short flag", args: []string{"-h"}, want: "Commands:"},
-		{name: "long flag", args: []string{"--help"}, want: "Commands:"},
-		{name: "help topic", args: []string{"help", "hooks"}, want: "ai-agent-telemetry hooks install"},
-		{name: "command help", args: []string{"hooks", "help"}, want: "--target=<list>"},
-		{name: "command short flag", args: []string{"configure", "-h"}, want: "--hooks=<targets>"},
+		{name: "help", args: []string{"help"}, want: "Available Commands:"},
+		{name: "short flag", args: []string{"-h"}, want: "Available Commands:"},
+		{name: "long flag", args: []string{"--help"}, want: "Available Commands:"},
+		{name: "help topic", args: []string{"help", "hooks"}, want: "Manage global harness hooks"},
+		{name: "nested help topic", args: []string{"help", "hooks", "install"}, want: "--target string"},
+		{name: "command short flag", args: []string{"configure", "-h"}, want: "--hooks string"},
 		{name: "command long flag", args: []string{"status", "--help"}, want: "--verbose"},
-		{name: "nested action help", args: []string{"hooks", "install", "--help"}, want: "--target=<list>"},
+		{name: "nested action help", args: []string{"hooks", "install", "--help"}, want: "--target string"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out string
-			if code := run(tt.args, func(s string) { out += s }); code != 0 {
+			if code := runCLI(tt.args, func(s string) { out += s }); code != 0 {
 				t.Fatalf("exit code = %d, want 0; output = %q", code, out)
 			}
 			if !strings.Contains(out, tt.want) {
@@ -53,14 +69,14 @@ func TestRunHelp(t *testing.T) {
 
 func TestRunConfigureHelpShowsAcceptedValueForms(t *testing.T) {
 	var out string
-	if code := run([]string{"configure", "--help"}, func(s string) { out += s }); code != 0 {
+	if code := runCLI([]string{"configure", "--help"}, func(s string) { out += s }); code != 0 {
 		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
 	}
 	for _, want := range []string{
-		"--repo-allow <pattern>",
-		"--hooks <targets>",
-		"--buffer-cap <events>",
-		"--flush-timeout <duration>",
+		"--repo-allow string",
+		"--hooks string",
+		"--buffer-cap string",
+		"--flush-timeout string",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output = %q, want %q", out, want)
@@ -77,7 +93,7 @@ func TestRunConfigureRejectsInvalidDeliverySettingsWithoutWritingFiles(t *testin
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			home, configHome := isolateRunConfigure(t)
 			var out string
-			if code := run(args, func(s string) { out += s }); code != 2 {
+			if code := runCLI(args, func(s string) { out += s }); code != 2 {
 				t.Fatalf("exit code = %d, want 2; output = %q", code, out)
 			}
 			if !strings.Contains(out, "positive") {
@@ -109,7 +125,7 @@ func TestRunConfigureRejectsExplicitEmptyHooksWithoutWritingFiles(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			home, configHome := isolateRunConfigure(t)
 			var out string
-			if code := run(tt.args, func(s string) { out += s }); code != 2 {
+			if code := runCLI(tt.args, func(s string) { out += s }); code != 2 {
 				t.Fatalf("exit code = %d, want 2; output = %q", code, out)
 			}
 			if !strings.Contains(out, "must not be empty") {
@@ -138,18 +154,19 @@ func TestRunHelpTopicCoversEveryPublicCommandWithoutSideEffects(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv("XDG_CACHE_HOME", cacheHome)
 
-	for _, entry := range commandHelpEntries {
-		command := entry.Name
+	for _, command := range []string{
+		"configure", "hooks", "status", "selftest", "ingest", "flush",
+		"version", "completion",
+	} {
 		forms := [][]string{
 			{"help", command},
-			{command, "help"},
 			{command, "-h"},
 			{command, "--help"},
 		}
 		for _, args := range forms {
 			t.Run(strings.Join(args, "_"), func(t *testing.T) {
 				var out string
-				if code := run(args, func(s string) { out += s }); code != 0 {
+				if code := runCLI(args, func(s string) { out += s }); code != 0 {
 					t.Fatalf("exit code = %d, want 0; output = %q", code, out)
 				}
 				if !strings.Contains(out, "Usage:") || !strings.Contains(out, "ai-agent-telemetry "+command) {
@@ -177,16 +194,16 @@ func TestRunHelpRejectsInvalidTopics(t *testing.T) {
 		want string
 	}{
 		{name: "unknown topic", args: []string{"help", "unknown"}, want: "unknown help topic"},
-		{name: "extra topic argument", args: []string{"help", "hooks", "extra"}, want: "help accepts at most one command"},
+		{name: "extra topic argument", args: []string{"help", "hooks", "extra"}, want: "unknown help topic"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out string
-			if code := run(tt.args, func(s string) { out += s }); code != 2 {
+			if code := runCLI(tt.args, func(s string) { out += s }); code != 2 {
 				t.Fatalf("exit code = %d, want 2; output = %q", code, out)
 			}
-			if !strings.Contains(out, tt.want) || !strings.Contains(out, "Commands:") {
-				t.Fatalf("output = %q, want error %q and root help", out, tt.want)
+			if !strings.Contains(out, tt.want) {
+				t.Fatalf("output = %q, want error %q", out, tt.want)
 			}
 		})
 	}
@@ -194,22 +211,22 @@ func TestRunHelpRejectsInvalidTopics(t *testing.T) {
 
 func TestRunUnknownCommand(t *testing.T) {
 	var out string
-	code := run([]string{"bogus"}, func(s string) { out += s })
+	code := runCLI([]string{"bogus"}, func(s string) { out += s })
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(out, "unknown command") || !strings.Contains(out, "Commands:") {
-		t.Fatalf("output = %q, want error and root help", out)
+	if !strings.Contains(out, "unknown command") {
+		t.Fatalf("output = %q, want unknown-command error", out)
 	}
 }
 
 func TestRunWithoutCommandPrintsRootHelp(t *testing.T) {
 	var out string
-	code := run(nil, func(s string) { out += s })
-	if code != 2 {
-		t.Fatalf("exit code = %d, want 2", code)
+	code := runCLI(nil, func(s string) { out += s })
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if !strings.Contains(out, "Usage:") || !strings.Contains(out, "Commands:") {
+	if !strings.Contains(out, "Usage:") || !strings.Contains(out, "Available Commands:") {
 		t.Fatalf("output = %q, want root help", out)
 	}
 }
@@ -239,7 +256,7 @@ func TestParseIngestFlagsRestrictsCodexPolicyPrefix(t *testing.T) {
 func TestRunIngestRejectsCodexTrailingArgsBeforeOpeningOutbox(t *testing.T) {
 	cacheHome := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cacheHome)
-	code := run(
+	code := runCLI(
 		[]string{"ingest", "--agent=codex", "--endpoint=https://example.invalid"},
 		func(string) {},
 	)
@@ -256,7 +273,7 @@ func TestRunHooksInstallAcceptsTargets(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	var out string
-	code := run([]string{"hooks", "install", "--target=codex,claude"}, func(s string) { out += s })
+	code := runCLI([]string{"hooks", "install", "--target=codex,claude"}, func(s string) { out += s })
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
 	}
@@ -273,7 +290,7 @@ func TestRunHooksInstallContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	var out, stderr strings.Builder
-	code := runWithStderr(
+	code := runCLIWithStderr(
 		[]string{"hooks", "install", "--target=claude"},
 		func(value string) { out.WriteString(value) },
 		&stderr,
@@ -300,7 +317,7 @@ func TestRunConfigureContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
 	t.Setenv("AI_AGENT_TELEMETRY_TOKEN", "")
 	t.Setenv(envRepoAllow, "")
 	var out, stderr strings.Builder
-	code := runWithStderr(
+	code := runCLIWithStderr(
 		[]string{"configure", "--endpoint=https://otel.example/v1/logs"},
 		func(value string) { out.WriteString(value) },
 		&stderr,
@@ -332,7 +349,7 @@ func TestRunConfigureHooksNoneSkipsLegacyAPMCleanup(t *testing.T) {
 	t.Setenv("AI_AGENT_TELEMETRY_TOKEN", "")
 	t.Setenv(envRepoAllow, "")
 	var out, stderr strings.Builder
-	code := runWithStderr(
+	code := runCLIWithStderr(
 		[]string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks=none"},
 		func(value string) { out.WriteString(value) },
 		&stderr,
@@ -361,7 +378,7 @@ func TestRunHooksInstallRejectsEmptyTargetWithoutWritingFiles(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	var out string
-	code := run([]string{"hooks", "install", "--target="}, func(s string) { out += s })
+	code := runCLI([]string{"hooks", "install", "--target="}, func(s string) { out += s })
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2; output = %q", code, out)
 	}
@@ -375,7 +392,7 @@ func TestRunHooksInstallRejectsEmptyTargetWithoutWritingFiles(t *testing.T) {
 func TestRunConfigureInstallsHooks(t *testing.T) {
 	home, configHome := isolateRunConfigure(t)
 	var out string
-	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
+	code := runCLI([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
 	}
@@ -395,7 +412,7 @@ func TestRunConfigureInstallsHooks(t *testing.T) {
 func TestRunConfigureInstallsHooksNone(t *testing.T) {
 	home, _ := isolateRunConfigure(t)
 	var out string
-	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks=none"}, func(s string) { out += s })
+	code := runCLI([]string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks=none"}, func(s string) { out += s })
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
 	}
@@ -409,7 +426,7 @@ func TestRunConfigureInstallsHooksNone(t *testing.T) {
 func TestRunConfigureInstallsHooksSubset(t *testing.T) {
 	home, _ := isolateRunConfigure(t)
 	var out string
-	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks=claude,cursor"}, func(s string) { out += s })
+	code := runCLI([]string{"configure", "--endpoint=https://otel.example/v1/logs", "--hooks=claude,cursor"}, func(s string) { out += s })
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; output = %q", code, out)
 	}
@@ -434,7 +451,7 @@ func TestRunConfigureInstallsHooksContinuesAfterMalformedClaudeFile(t *testing.T
 	}
 
 	var out string
-	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
+	code := runCLI([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; output = %q", code, out)
 	}
@@ -464,7 +481,7 @@ func TestRunConfigureRejectsUnavailableHomeWithoutRelativeHooks(t *testing.T) {
 	t.Setenv(envRepoAllow, "")
 
 	var out string
-	code := run([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
+	code := runCLI([]string{"configure", "--endpoint=https://otel.example/v1/logs"}, func(s string) { out += s })
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; output = %q", code, out)
 	}
@@ -499,7 +516,7 @@ func TestRunHooksReportsUnavailableHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	t.Setenv("USERPROFILE", "")
 	var out string
-	code := run([]string{"hooks", "install"}, func(s string) { out += s })
+	code := runCLI([]string{"hooks", "install"}, func(s string) { out += s })
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1", code)
 	}
@@ -510,18 +527,18 @@ func TestRunHooksReportsUnavailableHome(t *testing.T) {
 
 func TestRunHooksRejectsMissingAction(t *testing.T) {
 	var out string
-	code := run([]string{"hooks"}, func(s string) { out += s })
-	if code != 2 {
-		t.Fatalf("exit code = %d, want 2", code)
+	code := runCLI([]string{"hooks"}, func(s string) { out += s })
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if !strings.Contains(out, "action") || !strings.Contains(out, "ai-agent-telemetry hooks install") {
-		t.Fatalf("output = %q, want missing action error and hooks help", out)
+	if !strings.Contains(out, "install") {
+		t.Fatalf("output = %q, want hooks discovery help", out)
 	}
 }
 
 func TestRunHooksRejectsUnknownAction(t *testing.T) {
 	var out string
-	code := run([]string{"hooks", "remove"}, func(s string) { out += s })
+	code := runCLI([]string{"hooks", "remove"}, func(s string) { out += s })
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
@@ -532,7 +549,7 @@ func TestRunHooksRejectsUnknownAction(t *testing.T) {
 
 func TestRunHooksRejectsUnknownTarget(t *testing.T) {
 	var out string
-	code := run([]string{"hooks", "install", "--target=windsurf"}, func(s string) { out += s })
+	code := runCLI([]string{"hooks", "install", "--target=windsurf"}, func(s string) { out += s })
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
@@ -623,7 +640,7 @@ func TestIngestUsesConfiguredBufferCap(t *testing.T) {
 	}
 }
 
-func TestRunFlushUsesConfiguredTimeout(t *testing.T) {
+func TestRunFlushReportsConfiguredTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -642,8 +659,8 @@ func TestRunFlushUsesConfiguredTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if code := run([]string{"flush", "--endpoint=" + srv.URL}, func(string) {}); code != 0 {
-		t.Fatalf("flush exit = %d, want 0", code)
+	if code := runCLI([]string{"flush", "--endpoint=" + srv.URL}, func(string) {}); code != 1 {
+		t.Fatalf("flush exit = %d, want 1", code)
 	}
 	files, err := s.List()
 	if err != nil {

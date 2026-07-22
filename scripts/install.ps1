@@ -1,109 +1,76 @@
-param(
-  [switch]$Force,
-  [switch]$SkipConfig
-)
-
 $ErrorActionPreference = 'Stop'
 
+# Release workflows may stamp the default without changing an environment override.
+$DefaultBinaryVersion = 'latest'
 $BinaryVersion = $env:AI_AGENT_TELEMETRY_INSTALL_VERSION
 if ([string]::IsNullOrWhiteSpace($BinaryVersion)) {
-  $BinaryVersion = 'latest'
+  $BinaryVersion = $DefaultBinaryVersion
 }
-$BaseUrl = if ($env:AI_AGENT_TELEMETRY_INSTALL_BASE_URL) {
-  $env:AI_AGENT_TELEMETRY_INSTALL_BASE_URL
-} else {
-  'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases'
+$BaseUrl = $env:AI_AGENT_TELEMETRY_INSTALL_BASE_URL
+if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
+  $BaseUrl = 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases'
 }
 
-function Download-Url([string]$Asset) {
+$ForwardArgs = @($args)
+if ($ForwardArgs.Count -eq 0) {
+  $ForwardArgs = @('install')
+} elseif ([string]$ForwardArgs[0] -like '-*') {
+  $ForwardArgs = @('install') + $ForwardArgs
+}
+
+function Get-DownloadUrl([string]$Asset) {
   if ($BinaryVersion -eq 'latest') {
     return "$BaseUrl/latest/download/$Asset"
   }
   return "$BaseUrl/download/$BinaryVersion/$Asset"
 }
 
-function Config-Dir {
-  if ($env:XDG_CONFIG_HOME) {
-    return (Join-Path $env:XDG_CONFIG_HOME 'ai-agent-telemetry')
-  }
-  return (Join-Path $env:USERPROFILE '.config\ai-agent-telemetry')
-}
-
-function Read-EnvFile([string]$Path) {
-  $out = @{}
-  if (-not (Test-Path $Path)) { return $out }
-  foreach ($line in Get-Content -LiteralPath $Path) {
-    if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('#')) { continue }
-    $idx = $line.IndexOf('=')
-    if ($idx -lt 1) { continue }
-    $out[$line.Substring(0, $idx).Trim()] = $line.Substring($idx + 1).Trim()
-  }
-  return $out
-}
-
-function Ensure-Path([string]$BinDir) {
-  $userPath = [Environment]::GetEnvironmentVariable('PATH', 'User')
-  $onPath = ($userPath -split ';') -contains $BinDir
-  if ($onPath) { return }
+function Save-ReleaseFile([string]$Asset, [string]$Destination) {
   try {
-    $newPath = if ([string]::IsNullOrEmpty($userPath)) { $BinDir } else { "$userPath;$BinDir" }
-    [Environment]::SetEnvironmentVariable('PATH', $newPath, 'User')
-    [Console]::Error.WriteLine("ai-agent-telemetry: added $BinDir to your user PATH -- restart your agent")
+    $null = Invoke-WebRequest -UseBasicParsing -Uri (Get-DownloadUrl $Asset) -OutFile $Destination
   } catch {
-    [Console]::Error.WriteLine("ai-agent-telemetry: could not update user PATH automatically.")
-    [Console]::Error.WriteLine("  Add '$BinDir' to your PATH, then restart your agent.")
+    throw "could not download $Asset"
   }
 }
 
-function Configure-OrRefreshHooks([string]$Bin) {
-  $values = Read-EnvFile (Join-Path (Config-Dir) 'env')
-  $endpoint = if ($env:AI_AGENT_TELEMETRY_ENDPOINT) {
-    $env:AI_AGENT_TELEMETRY_ENDPOINT
-  } else {
-    $values['AI_AGENT_TELEMETRY_ENDPOINT']
-  }
-  if ([string]::IsNullOrWhiteSpace($endpoint)) {
-    & $Bin configure
-  } else {
-    & $Bin hooks install
-  }
-  if ($LASTEXITCODE -ne 0) { throw "hook configuration failed with exit code $LASTEXITCODE" }
-}
-
-$binDir = Join-Path $env:USERPROFILE '.local\bin'
-$bin = Join-Path $binDir 'ai-agent-telemetry.exe'
-$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
-$asset = "ai-agent-telemetry-windows-$arch.exe"
-
+$ExitCode = 1
+$TempRoot = $null
 try {
-  if ($Force -or -not (Test-Path $bin)) {
-    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-    $tmp = "$bin.tmp"
-    Invoke-WebRequest -UseBasicParsing -Uri (Download-Url $asset) -OutFile $tmp
-    $resp = Invoke-WebRequest -UseBasicParsing -Uri (Download-Url 'SHA256SUMS')
-    $sums = if ($resp.Content -is [byte[]]) {
-      [System.Text.Encoding]::ASCII.GetString($resp.Content)
-    } else {
-      [string]$resp.Content
-    }
-    $line = ($sums -split "`n") |
-      Where-Object { $_.Trim() -match "\s$([regex]::Escape($asset))$" } |
-      Select-Object -First 1
-    if (-not $line) { Remove-Item -Force $tmp; throw "no checksum entry for $asset" }
-    $want = (($line.Trim() -split '\s+')[0]).ToLower()
-    $got = (Get-FileHash -Algorithm SHA256 -Path $tmp).Hash.ToLower()
-    if ($got -ne $want) { Remove-Item -Force $tmp; throw "checksum mismatch for $asset (expected $want, got $got)" }
-    Move-Item -Force $tmp $bin
-    [Console]::Error.WriteLine("ai-agent-telemetry: installed $bin ($BinaryVersion) -- checksum verified")
-  } else {
-    [Console]::Error.WriteLine("ai-agent-telemetry: already installed at $bin (use -Force to reinstall)")
+  $architecture = switch ($env:PROCESSOR_ARCHITECTURE) {
+    'AMD64' { 'amd64'; break }
+    'ARM64' { 'arm64'; break }
+    default { throw "unsupported architecture $($env:PROCESSOR_ARCHITECTURE)" }
   }
-} catch {
-  Write-Error "ai-agent-telemetry: install failed: $_"
-  exit 1
-}
+  $asset = "ai-agent-telemetry-windows-$architecture.exe"
+  $TempRoot = Join-Path ([IO.Path]::GetTempPath()) ("ai-agent-telemetry-bootstrap-" + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $TempRoot | Out-Null
+  $binary = Join-Path $TempRoot $asset
+  $sumsPath = Join-Path $TempRoot 'SHA256SUMS'
 
-Ensure-Path $binDir
-if (-not $SkipConfig) {
-  Configure-OrRefreshHooks $bin
+  Save-ReleaseFile $asset $binary
+  Save-ReleaseFile 'SHA256SUMS' $sumsPath
+
+  $escapedAsset = [regex]::Escape($asset)
+  $checksumLine = Get-Content -LiteralPath $sumsPath |
+    Where-Object { $_ -match "^\s*([A-Fa-f0-9]{64})\s+\*?$escapedAsset\s*$" } |
+    Select-Object -First 1
+  if (-not $checksumLine) {
+    throw "no checksum entry for $asset"
+  }
+  $expected = (($checksumLine.Trim() -split '\s+')[0]).ToLowerInvariant()
+  $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToLowerInvariant()
+  if ($actual -ne $expected) {
+    throw "checksum mismatch for $asset (expected $expected, got $actual)"
+  }
+
+  & $binary @ForwardArgs
+  $ExitCode = $LASTEXITCODE
+} catch {
+  [Console]::Error.WriteLine("ai-agent-telemetry: $($_.Exception.Message)")
+  $ExitCode = 1
+} finally {
+  if ($TempRoot -and (Test-Path -LiteralPath $TempRoot)) {
+    Remove-Item -Recurse -Force -LiteralPath $TempRoot -ErrorAction SilentlyContinue
+  }
 }
+exit $ExitCode

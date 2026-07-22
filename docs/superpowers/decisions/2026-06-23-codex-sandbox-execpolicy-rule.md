@@ -1,5 +1,9 @@
 # Codex sandboxes the telemetry hook — allow it with a machine-level execpolicy rule
 
+> **Superseded command details:** The machine-level execution-policy mechanism remains active, but command names,
+> installer behavior, and update references below describe the historical implementation. Current hooks use
+> `ai-agent-telemetry`; the unified lifecycle owns installation and update. The original text remains unchanged.
+
 **Date:** 2026-06-23
 **Status:** accepted (mechanism and location) — end-to-end confirmation from inside Codex
 still pending (`codex execpolicy check` + a trusted `.codex/` layer; see **Verify**).

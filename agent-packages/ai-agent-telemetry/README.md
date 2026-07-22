@@ -26,8 +26,8 @@ events to the collector over OTLP/HTTPS. There is no daemon.
 
 ## Existing consumers
 
-The binary must be on `PATH` at `~/.local/bin/ai-agent-telemetry` and configured with a
-collector endpoint and token. Install it once per machine:
+The binary must be on `PATH` at `~/.local/bin/ai-agent-telemetry` and configured with a collector endpoint. The token
+is optional. Install the managed CLI and telemetry once per machine:
 
 ```sh
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
@@ -36,8 +36,12 @@ curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/l
 On Windows PowerShell:
 
 ```powershell
-iex "& { $(irm https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1) }"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
+
+Use `--components telemetry` when you do not want the default APM and global Git-hook components. For unattended
+setup, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optional `AI_AGENT_TELEMETRY_TOKEN`, then pass
+`--non-interactive`.
 
 Existing repositories may keep the package while they migrate. Its manifest and three native hook
 sources remain supported as a compatibility surface. To reinstall an existing dependency, use the
@@ -53,3 +57,6 @@ unrelated hooks.
 
 After refreshing the Codex hook, fully restart Codex. If prompted, inspect and approve exactly
 `ai-agent-telemetry ingest --agent=codex`.
+
+Machine-wide lifecycle management uses `ai-agent-telemetry update` and `ai-agent-telemetry uninstall`. Removing this
+APM compatibility dependency does not uninstall the managed CLI or machine-wide hooks.

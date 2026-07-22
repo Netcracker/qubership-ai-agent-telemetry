@@ -16,7 +16,7 @@ const legacyTelemetryAPMPackage = "Netcracker/qubership-ai-agent-telemetry/agent
 
 type globalAPMManifest struct {
 	Dependencies struct {
-		APM []yaml.Node `yaml:"apm"`
+		APM yaml.Node `yaml:"apm"`
 	} `yaml:"dependencies"`
 }
 
@@ -29,18 +29,41 @@ func normalizeAPMDependency(value string) string {
 }
 
 func hasLegacyTelemetryAPMDependency(data []byte) (bool, error) {
+	return hasGlobalAPMDependency(data, legacyTelemetryAPMPackage)
+}
+
+func hasGlobalAPMDependency(data []byte, packageName string) (bool, error) {
 	var manifest globalAPMManifest
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
 		return false, err
 	}
-	for index, dependency := range manifest.Dependencies.APM {
+	apm := manifest.Dependencies.APM
+	if apm.Kind == 0 {
+		return false, nil
+	}
+	if apm.Kind == yaml.MappingNode {
+		for index := 0; index < len(apm.Content); index += 2 {
+			dependency := apm.Content[index]
+			if dependency.Kind != yaml.ScalarNode || dependency.Tag != "!!str" {
+				return false, fmt.Errorf("dependencies.apm key %d must be a string", index/2)
+			}
+			if strings.EqualFold(normalizeAPMDependency(dependency.Value), packageName) {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	if apm.Kind != yaml.SequenceNode {
+		return false, errors.New("dependencies.apm must be a sequence or mapping")
+	}
+	for index, dependency := range apm.Content {
 		if dependency.Kind == yaml.MappingNode {
 			continue
 		}
 		if dependency.Kind != yaml.ScalarNode || dependency.Tag != "!!str" {
 			return false, fmt.Errorf("dependencies.apm entry %d must be a string or mapping", index)
 		}
-		if strings.EqualFold(normalizeAPMDependency(dependency.Value), legacyTelemetryAPMPackage) {
+		if strings.EqualFold(normalizeAPMDependency(dependency.Value), packageName) {
 			return true, nil
 		}
 	}
