@@ -101,13 +101,23 @@ case $url in
 esac
 EOF
   chmod +x "$FIXTURE_ROOT/bin/uname" "$FIXTURE_ROOT/bin/curl"
-  export PATH="$FIXTURE_ROOT/bin:/usr/bin:/bin"
+  export PATH="$FIXTURE_ROOT/bin:${QDI_SYSTEM_PATH:-/usr/bin:/bin}"
   write_sums ai-agent-telemetry-linux-amd64
+}
+
+fixture_sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1 && output=$(sha256sum "$1" 2>/dev/null); then
+    printf '%s\n' "$output" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1 && output=$(shasum -a 256 "$1" 2>/dev/null); then
+    printf '%s\n' "$output" | awk '{print $1}'
+  else
+    fail 'fixture SHA-256 generation requires sha256sum or shasum'
+  fi
 }
 
 write_sums() (
   asset=$1
-  digest=$(sha256sum "$FIXTURE_ROOT/asset" | awk '{print $1}')
+  digest=$(fixture_sha256_of "$FIXTURE_ROOT/asset")
   printf '%s  %s\n' "$digest" "$asset" > "$FIXTURE_ROOT/SHA256SUMS"
 )
 
@@ -120,6 +130,24 @@ run_installer() {
   RUN_OUTPUT=$(sh "$INSTALLER" "$@" 2>&1)
   RUN_CODE=$?
   set -e
+}
+
+run_without_terminal() {
+  python3 - "$@" <<'PY'
+import subprocess
+import sys
+
+result = subprocess.run(
+    ["sh", *sys.argv[1:]],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    start_new_session=True,
+    check=False,
+)
+sys.stdout.buffer.write(result.stdout)
+sys.exit(result.returncode)
+PY
 }
 
 assert_temp_clean() {
@@ -264,11 +292,63 @@ test_pty_prompt_reaches_controlling_terminal() {
   export QDI_READ_INPUT QDI_BOOTSTRAP_SOURCE
   command="env PATH='$PATH' HOME='$HOME' TMPDIR='$TMPDIR' FIXTURE_ROOT='$FIXTURE_ROOT' QDI_TEST_LOG='$QDI_TEST_LOG' QDI_EXEC_LOG='$QDI_EXEC_LOG' QDI_INPUT_LOG='$QDI_INPUT_LOG' QDI_READ_INPUT=1 QDI_BOOTSTRAP_SOURCE='$INSTALLER' AI_AGENT_TELEMETRY_INSTALL_BASE_URL='$AI_AGENT_TELEMETRY_INSTALL_BASE_URL' sh -c 'curl https://bootstrap.example.test/install.sh | sh -s -- install'"
   set +e
-  pty_output=$(printf 'https://collector.example.test/v1/logs\n' | script -qfec "$command" /dev/null 2>&1)
+  pty_output=$(python3 - "$command" <<'PY'
+import errno
+import os
+import pty
+import select
+import sys
+import time
+
+command = sys.argv[1]
+prompt = b"Collector endpoint: "
+answer = b"https://collector.example.test/v1/logs\n"
+deadline = time.monotonic() + 15
+child, terminal = pty.fork()
+if child == 0:
+    os.execvp("sh", ["sh", "-c", command])
+
+output = bytearray()
+answered = False
+timed_out = False
+while True:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        timed_out = True
+        os.kill(child, 9)
+        break
+    readable, _, _ = select.select([terminal], [], [], remaining)
+    if not readable:
+        timed_out = True
+        os.kill(child, 9)
+        break
+    try:
+        chunk = os.read(terminal, 4096)
+    except OSError as error:
+        if error.errno == errno.EIO:
+            break
+        raise
+    if not chunk:
+        break
+    output.extend(chunk)
+    if not answered and prompt in output:
+        os.write(terminal, answer)
+        answered = True
+
+sys.stdout.buffer.write(output)
+_, status = os.waitpid(child, 0)
+if timed_out or not answered:
+    sys.exit(65)
+if os.WIFEXITED(status):
+    sys.exit(os.WEXITSTATUS(status))
+sys.exit(128 + os.WTERMSIG(status))
+PY
+  )
   code=$?
   set -e
   [ "$code" -eq 0 ] || fail "PTY curl | sh failed ($code): $pty_output"
   [ "$(cat "$QDI_INPUT_LOG")" = 'https://collector.example.test/v1/logs' ] || fail "prompt did not read from /dev/tty"
+  [ "$(cat "$QDI_EXEC_LOG")" = install ] || fail "PTY bootstrap did not execute the requested install"
   assert_temp_clean
   teardown_fixture
 }
@@ -278,7 +358,7 @@ test_no_terminal_and_noninteractive_behavior() {
   QDI_READ_INPUT=1
   export QDI_READ_INPUT
   set +e
-  output=$(setsid sh "$INSTALLER" install </dev/null 2>&1)
+  output=$(run_without_terminal "$INSTALLER" install)
   code=$?
   set -e
   [ "$code" -eq 64 ] || fail "no-terminal required input returned $code: $output"
@@ -286,7 +366,7 @@ test_no_terminal_and_noninteractive_behavior() {
   QDI_READ_INPUT=0
   export QDI_READ_INPUT
   set +e
-  output=$(setsid sh "$INSTALLER" --non-interactive </dev/null 2>&1)
+  output=$(run_without_terminal "$INSTALLER" --non-interactive)
   code=$?
   set -e
   [ "$code" -eq 0 ] || fail "no-terminal noninteractive run returned $code: $output"

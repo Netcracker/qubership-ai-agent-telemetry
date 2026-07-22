@@ -4,6 +4,7 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $Installer = Join-Path $RepoRoot 'scripts/install.ps1'
 $CompatibilityInstaller = Join-Path $RepoRoot 'global-scripts/qubership-dev-install.ps1'
 $Pwsh = (Get-Process -Id $PID).Path
+$SystemTemp = [IO.Path]::GetTempPath()
 
 function Assert-True([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw "FAIL: $Message" }
@@ -18,21 +19,42 @@ function Assert-NotContains([string]$Value, [string]$Unexpected, [string]$Messag
 }
 
 function New-Fixture {
+  $env:TEMP = $SystemTemp
+  $env:TMP = $SystemTemp
+  $env:TMPDIR = $SystemTemp
   $env:QDI_DOWNLOAD_FAIL = '0'
   $env:QDI_RESPONSE_BODY = 'private-response-body'
   $env:QDI_BINARY_EXIT = '0'
   $env:PROCESSOR_ARCHITECTURE = 'AMD64'
-  $root = Join-Path ([IO.Path]::GetTempPath()) ("telemetry-bootstrap-test-" + [guid]::NewGuid().ToString('N'))
+  $root = Join-Path $SystemTemp ("telemetry-bootstrap-test-" + [guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $root | Out-Null
   $temp = Join-Path $root 'tmp'
   New-Item -ItemType Directory -Path $temp | Out-Null
   $asset = Join-Path $root 'asset.exe'
+  $assetSource = Join-Path $root 'asset.go'
   @'
-#!/bin/sh
-printf '%s\n' "$@" > "$QDI_EXEC_LOG"
-exit "${QDI_BINARY_EXIT:-0}"
-'@ | Set-Content -LiteralPath $asset -NoNewline
-  & chmod +x $asset
+package main
+
+import (
+  "os"
+  "strconv"
+  "strings"
+)
+
+func main() {
+  arguments := strings.Join(os.Args[1:], "\n") + "\n"
+  if err := os.WriteFile(os.Getenv("QDI_EXEC_LOG"), []byte(arguments), 0o600); err != nil {
+    os.Exit(70)
+  }
+  code, err := strconv.Atoi(os.Getenv("QDI_BINARY_EXIT"))
+  if err != nil {
+    os.Exit(71)
+  }
+  os.Exit(code)
+}
+'@ | Set-Content -LiteralPath $assetSource -Encoding ASCII
+  & go build -trimpath -o $asset $assetSource
+  if ($LASTEXITCODE -ne 0) { throw "failed to build native bootstrap fixture: exit $LASTEXITCODE" }
   $assetName = 'ai-agent-telemetry-windows-amd64.exe'
   $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
   $sums = Join-Path $root 'SHA256SUMS'
@@ -77,8 +99,15 @@ function Invoke-Fixture([hashtable]$Fixture, [string]$Target, [string[]]$Forward
   $env:QDI_DOWNLOAD_LOG = $Fixture.DownloadLog
   $env:QDI_EXEC_LOG = $Fixture.ExecLog
   $env:QDI_TARGET_SCRIPT = $Target
-  $output = & $Pwsh -NoProfile -File $Fixture.Wrapper @ForwardArgs 2>&1 | Out-String
-  return @{ Code = $LASTEXITCODE; Output = $output }
+  $previousErrorAction = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = & $Pwsh -NoProfile -File $Fixture.Wrapper @ForwardArgs 2>&1 | Out-String
+    $code = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorAction
+  }
+  return @{ Code = $code; Output = $output }
 }
 
 function Assert-TempClean([hashtable]$Fixture) {
