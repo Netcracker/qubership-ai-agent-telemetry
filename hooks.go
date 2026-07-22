@@ -377,6 +377,15 @@ const (
 
 var allHookTargets = []hookTarget{hookClaude, hookCodex, hookCursor}
 
+func knownHookTarget(target hookTarget) bool {
+	for _, known := range allHookTargets {
+		if target == known {
+			return true
+		}
+	}
+	return false
+}
+
 type configureOptions struct {
 	Endpoint  string
 	CAPath    string
@@ -401,12 +410,10 @@ func parseHookTargets(raw string) ([]hookTarget, error) {
 	requested := map[hookTarget]bool{}
 	for _, value := range strings.Split(raw, ",") {
 		target := hookTarget(strings.TrimSpace(value))
-		switch target {
-		case hookClaude, hookCodex, hookCursor:
-			requested[target] = true
-		default:
+		if !knownHookTarget(target) {
 			return nil, fmt.Errorf("unknown hook target %q", value)
 		}
+		requested[target] = true
 	}
 
 	var targets []hookTarget

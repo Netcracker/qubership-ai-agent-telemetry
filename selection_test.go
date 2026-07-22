@@ -78,6 +78,26 @@ func TestNormalizeLifecycleHarnesses(t *testing.T) {
 	}
 }
 
+func TestKnownEnumValuesUseOrderedMembership(t *testing.T) {
+	for _, component := range lifecycleComponentOrder {
+		if !knownComponent(component) {
+			t.Fatalf("knownComponent(%q) = false", component)
+		}
+	}
+	if knownComponent("unknown") {
+		t.Fatal("knownComponent accepted an unknown value")
+	}
+
+	for _, target := range allHookTargets {
+		if !knownHookTarget(target) {
+			t.Fatalf("knownHookTarget(%q) = false", target)
+		}
+	}
+	if knownHookTarget("unknown") {
+		t.Fatal("knownHookTarget accepted an unknown value")
+	}
+}
+
 func TestNormalizeLifecycleOptions(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -175,5 +195,24 @@ func TestCompleteSelectionCSV(t *testing.T) {
 				t.Fatalf("completeCSV(%q) directive = %d, want %d", tt.input, directive, tt.wantDirective)
 			}
 		})
+	}
+}
+
+func TestCompleteHookSelectionTreatsNoneAsExclusive(t *testing.T) {
+	wantDirective := cobra.ShellCompDirectiveNoFileComp
+	for _, tt := range []struct {
+		input string
+		want  []string
+	}{
+		{input: "none", want: []string{"none"}},
+		{input: "none,", want: []string{}},
+	} {
+		got, directive := completeCSV(hookFlagValues(true), tt.input)
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("completeCSV(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+		if directive != wantDirective {
+			t.Fatalf("completeCSV(%q) directive = %d, want %d", tt.input, directive, wantDirective)
+		}
 	}
 }

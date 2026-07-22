@@ -103,6 +103,9 @@ func routeInternalUpdateMode(ctx context.Context, args []string, deps appDeps) (
 	switch args[0] {
 	case "__update-runner":
 		options, err := parseUpdateRunnerOptions(args[1:])
+		if err == nil {
+			err = validateUpdateRunnerTarget(options, deps.Home(), runtime.GOOS)
+		}
 		if err != nil {
 			_, _ = fmt.Fprintln(deps.ErrOut, "internal update runner:", err)
 			return true, 2
@@ -110,6 +113,9 @@ func routeInternalUpdateMode(ctx context.Context, args []string, deps appDeps) (
 		return true, deps.UpdateRunner(ctx, options)
 	case "__cleanup-update-image":
 		options, err := parseCleanupImageOptions(args[1:])
+		if err == nil {
+			err = validateCleanupImageTarget(options, deps.Home(), runtime.GOOS)
+		}
 		if err != nil {
 			_, _ = fmt.Fprintln(deps.ErrOut, "update image cleanup:", err)
 			return true, 2
@@ -147,7 +153,7 @@ func parseUpdateRunnerOptions(args []string) (updateRunnerOptions, error) {
 		values[flag] = internal[index+1]
 	}
 	parentPID, err := strconv.Atoi(values["--parent-pid"])
-	if err != nil || parentPID < 0 {
+	if err != nil || parentPID <= 0 {
 		return updateRunnerOptions{}, fmt.Errorf("invalid parent process ID %q", values["--parent-pid"])
 	}
 	if values["--managed-path"] == "" || values["--release"] == "" {
@@ -164,10 +170,47 @@ func parseCleanupImageOptions(args []string) (cleanupImageOptions, error) {
 		return cleanupImageOptions{}, errors.New("expected --path <exact-path> --wait-pid <pid>")
 	}
 	pid, err := strconv.Atoi(args[3])
-	if err != nil || pid < 0 {
+	if err != nil || pid <= 0 {
 		return cleanupImageOptions{}, fmt.Errorf("invalid wait process ID %q", args[3])
 	}
 	return cleanupImageOptions{Path: args[1], WaitPID: pid}, nil
+}
+
+func validateUpdateRunnerTarget(options updateRunnerOptions, home, goos string) error {
+	if err := validateManagedCLIHome(home); err != nil {
+		return err
+	}
+	expected := managedCLIPath(home, goos)
+	if !filepath.IsAbs(options.ManagedPath) || filepath.Clean(options.ManagedPath) != options.ManagedPath ||
+		!sameExecutablePath(options.ManagedPath, expected, goos) {
+		return fmt.Errorf("managed path must be the canonical managed CLI path %s", expected)
+	}
+	return nil
+}
+
+func validateCleanupImageTarget(options cleanupImageOptions, home, goos string) error {
+	if options.WaitPID <= 0 {
+		return fmt.Errorf("wait process ID must be positive")
+	}
+	if err := validateManagedCLIHome(home); err != nil {
+		return err
+	}
+	managed := managedCLIPath(home, goos)
+	if !filepath.IsAbs(options.Path) || filepath.Clean(options.Path) != options.Path ||
+		!sameExecutablePath(filepath.Dir(options.Path), filepath.Dir(managed), goos) {
+		return fmt.Errorf("cleanup path must be a canonical managed CLI sibling")
+	}
+	prefix := "." + filepath.Base(managed) + ".update-old-" + strconv.Itoa(options.WaitPID) + "-"
+	name := filepath.Base(options.Path)
+	if !strings.HasPrefix(name, prefix) {
+		return fmt.Errorf("cleanup path must name the exact stale image for parent %d", options.WaitPID)
+	}
+	nonce := strings.TrimPrefix(name, prefix)
+	decoded, err := hex.DecodeString(nonce)
+	if err != nil || len(decoded) != 4 || nonce != strings.ToLower(nonce) {
+		return fmt.Errorf("cleanup path has an invalid update nonce")
+	}
+	return nil
 }
 
 func runPreparedUpdateRunner(ctx context.Context, options updateRunnerOptions, callbacks updateRunnerCallbacks) int {

@@ -10,10 +10,9 @@ two things telemetry needs: read access to the machine-level config outside the 
 (`~/.config/ai-agent-telemetry/`) and network egress to the collector. The tell is a
 **Codex-only** failure: inside Codex, `status` reports `endpoint: (unset)` / `not configured` and
 `selftest` fails with `no endpoint`, while the *same* binary run from Claude Code or a plain shell
-reports `configured` and delivers; `update-check` reporting `latest: unknown` is the same sandbox
-blocking egress to GitHub. This is **not** a missing configuration — the config is on disk; the sandbox
-just hides it. (It is also not the MSIX `%AppData%` issue, which the `~/.config` move already
-fixed.)
+reports `configured` and delivers. This is **not** a missing configuration — the config is on disk;
+the sandbox just hides it. (It is also not the MSIX `%AppData%` issue, which the `~/.config` move
+already fixed.)
 
 The fix is a Codex **execution-policy rule** that lets those telemetry commands run outside the
 sandbox. Keep it machine-level, like the rest of telemetry (`~/.local/bin`, `~/.config`): write it
@@ -41,7 +40,7 @@ prefix_rule(
     justification = "Allow the trusted telemetry hook to read its machine config and send Codex skill usage events.",
     match = ["ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry.exe ingest --agent=codex"],
     not_match = ["ai-agent-telemetry status", "ai-agent-telemetry selftest", "ai-agent-telemetry configure",
-                 "ai-agent-telemetry update-check", "ai-agent-telemetry ingest --agent=claude",
+                 "ai-agent-telemetry update", "ai-agent-telemetry ingest --agent=claude",
                  "ai-agent-telemetry ingest --agent=cursor"],
 )
 prefix_rule(
@@ -50,7 +49,7 @@ prefix_rule(
     justification = "Allow telemetry diagnostics to read configured state outside the sandbox.",
     match = ["ai-agent-telemetry status", "ai-agent-telemetry.exe status"],
     not_match = ["ai-agent-telemetry configure", "ai-agent-telemetry selftest",
-                 "ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry update-check"],
+                 "ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry update"],
 )
 prefix_rule(
     pattern = [["ai-agent-telemetry", "ai-agent-telemetry.exe"], "selftest"],
@@ -58,7 +57,7 @@ prefix_rule(
     justification = "Allow telemetry diagnostics to send a marked probe event outside the sandbox.",
     match = ["ai-agent-telemetry selftest", "ai-agent-telemetry.exe selftest"],
     not_match = ["ai-agent-telemetry configure", "ai-agent-telemetry status",
-                 "ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry update-check"],
+                 "ai-agent-telemetry ingest --agent=codex", "ai-agent-telemetry update"],
 )
 ```
 
@@ -99,9 +98,9 @@ is the trap that makes a working install look broken. The misleading forms are:
 
 - **Full path or a `&` wrapper** — `& "…\.local\bin\ai-agent-telemetry.exe" status`. `argv[0]` is the
   path, not the bare name, so no rule matches. Use `ai-agent-telemetry status`.
-- **A non-allowlisted subcommand** — `version`, `update-check`. The rule deliberately leaves these
-  sandboxed, so in Codex `update-check` **always** reports `latest: unknown` — expected, not a
-  network fault.
+- **A non-allowlisted subcommand** — `version`, `update`. The rule deliberately leaves `update`
+  sandboxed because it mutates the CLI and selected components. Run an explicit update in a regular
+  terminal or with the user's approval to leave the sandbox.
 So inside Codex, verify only with the bare-name `status` / `selftest`, and never conclude telemetry
 is broken from a full-path or non-allowlisted call. Only if the bare-name forms still report
 `not configured` after a restart is the rule genuinely not taking effect — diagnose that below.

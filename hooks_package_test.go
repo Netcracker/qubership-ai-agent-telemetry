@@ -79,3 +79,12 @@ func TestCodexPolicyReferenceParity(t *testing.T) {
 		t.Fatalf("%s rule differs from the CLI-managed policy", path)
 	}
 }
+
+func TestCodexPolicyUsesLifecycleUpdateCommand(t *testing.T) {
+	if count := strings.Count(codexExecutionPolicy, `"ai-agent-telemetry update"`); count != 3 {
+		t.Fatalf("Codex execution policy update negative matches = %d, want 3", count)
+	}
+	if strings.Contains(codexExecutionPolicy, "update-check") {
+		t.Fatal("Codex execution policy still references removed update-check command")
+	}
+}

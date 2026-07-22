@@ -55,8 +55,7 @@ func TestRunLifecycleUsesFixedInstallAndUpdateOrder(t *testing.T) {
 func TestRunLifecycleContinuesIndependentComponentsAfterFailures(t *testing.T) {
 	var calls []string
 	failures := map[string]error{
-		"managed:cli":       errors.New("CLI copy failed"),
-		"install:telemetry": errors.New("hook install failed"),
+		"managed:cli": errors.New("CLI copy failed"),
 	}
 	deps := fakeLifecycleDeps(&calls, nil, failures)
 
@@ -64,21 +63,22 @@ func TestRunLifecycleContinuesIndependentComponentsAfterFailures(t *testing.T) {
 	if summary.Err == nil {
 		t.Fatal("runLifecycle() error = nil, want joined operational errors")
 	}
-	for _, message := range []string{"CLI copy failed", "hook install failed"} {
-		if !strings.Contains(summary.Err.Error(), message) {
-			t.Fatalf("joined error %q does not contain %q", summary.Err, message)
-		}
+	if !strings.Contains(summary.Err.Error(), "CLI copy failed") {
+		t.Fatalf("joined error %q does not contain managed CLI failure", summary.Err)
 	}
 	wantCalls := []string{
 		"preflight:apm", "preflight:telemetry", "preflight:git-hooks",
-		"managed:cli", "install:apm", "install:telemetry", "install:git-hooks",
+		"managed:cli", "install:apm", "install:git-hooks",
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
-		t.Fatalf("calls = %v, want continued execution %v", calls, wantCalls)
+		t.Fatalf("calls = %v, want only independent components to continue %v", calls, wantCalls)
 	}
-	wantStates := []operationState{operationFailed, operationOK, operationFailed, operationOK}
+	wantStates := []operationState{operationFailed, operationOK, operationSkipped, operationOK}
 	if got := resultStates(summary.Results); !reflect.DeepEqual(got, wantStates) {
 		t.Fatalf("states = %v, want %v", got, wantStates)
+	}
+	if detail := summary.Results[2].Detail; !strings.Contains(detail, "managed CLI") {
+		t.Fatalf("telemetry skip detail = %q, want managed CLI prerequisite", detail)
 	}
 }
 
@@ -238,6 +238,29 @@ func TestRunLifecycleFormatsDeterministicFixedWidthSummary(t *testing.T) {
 		"telemetry    FAILED   collector unavailable\n"
 	if got := formatLifecycleSummary(summary); got != want {
 		t.Fatalf("formatLifecycleSummary() = %q, want %q", got, want)
+	}
+}
+
+func TestPreparedLifecycleDoesNotRepeatPreflightAfterUpdateSwap(t *testing.T) {
+	var calls []string
+	deps := fakeLifecycleDeps(&calls, nil, nil)
+	opts, err := normalizeLifecycleOptions(lifecycleOptions{Action: actionUpdate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := preflightLifecycle(context.Background(), opts, deps); err != nil {
+		t.Fatal(err)
+	}
+	summary := executePreparedLifecycle(context.Background(), opts, deps)
+	if summary.Err != nil {
+		t.Fatal(summary.Err)
+	}
+	want := []string{
+		"preflight:apm", "preflight:telemetry", "preflight:git-hooks",
+		"managed:cli", "update:apm", "update:telemetry", "update:git-hooks",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want exactly-once preflight and execution %v", calls, want)
 	}
 }
 

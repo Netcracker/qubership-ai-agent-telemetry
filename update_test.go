@@ -79,7 +79,7 @@ func TestUpdateHandoffVerifiedReleaseRunsChildAndSkipsOldLifecycle(t *testing.T)
 	stderr := &bytes.Buffer{}
 	handoff := newUpdateHandoff(updateHandoffDeps{
 		Installed: "0.7.0", GOOS: "linux", GOARCH: "amd64", ManagedPath: "/home/test/.local/bin/ai-agent-telemetry",
-		TempBase: temp, ParentPID: func() int { return 0 }, Stdin: stdin, Stdout: stdout, Stderr: stderr,
+		TempBase: temp, ParentPID: func() int { return 42 }, Stdin: stdin, Stdout: stdout, Stderr: stderr,
 		Release: releaseClient{
 			Latest: func(context.Context) (string, error) { return "v0.8.0", nil },
 			Download: func(_ context.Context, _, _, path string) error {
@@ -107,7 +107,7 @@ func TestUpdateHandoffVerifiedReleaseRunsChildAndSkipsOldLifecycle(t *testing.T)
 	}
 	wantArgs := []string{
 		"__update-runner", "--managed-path", "/home/test/.local/bin/ai-agent-telemetry",
-		"--parent-pid", "0", "--release", "v0.8.0", "--",
+		"--parent-pid", "42", "--release", "v0.8.0", "--",
 		"--components", "telemetry,apm", "--non-interactive",
 	}
 	if !reflect.DeepEqual(childArgs, wantArgs) {
@@ -347,6 +347,55 @@ func TestWindowsUpdateSwapHelperFailureWarnsExactLeftoverPath(t *testing.T) {
 	wantPath := filepath.Join(dir, ".ai-agent-telemetry.exe.update-old-42-leftover")
 	if err != nil || code != 37 || !strings.Contains(warnings.String(), wantPath) {
 		t.Fatalf("swap = %d, %v; warnings = %q, want exact path %q", code, err, warnings.String(), wantPath)
+	}
+}
+
+func TestWindowsUpdateRunnerDoesNotReinstallCanonicalImageDuringPreparedLifecycle(t *testing.T) {
+	home := t.TempDir()
+	managed := managedCLIPath(home, "windows")
+	paths := &fakeManagedPathManager{}
+	preflights, lifecycleCalls, canonicalInstalls := 0, 0, 0
+	opts, err := normalizeLifecycleOptions(lifecycleOptions{Action: actionUpdate, Components: []componentName{componentAPM}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := lifecycleDeps{
+		ManagedCLI:           newManagedCLIService(managedCLIConfig{Home: home, GOOS: "windows", Paths: paths}),
+		ManagedInstallSource: func() (string, error) { return managed, nil },
+		Components: map[componentName]componentOps{componentAPM: {
+			Preflight: func(context.Context, lifecycleOptions) error { preflights++; return nil },
+			Update: func(context.Context, lifecycleOptions) operationResult {
+				lifecycleCalls++
+				return operationResult{Name: string(componentAPM), State: operationOK, Detail: "done"}
+			},
+		}},
+	}
+	if err := preflightLifecycle(context.Background(), opts, deps); err != nil {
+		t.Fatal(err)
+	}
+	cleanupStarted := false
+	ops := windowsUpdateSwapOps{
+		Exists:  func(path string) (bool, error) { return path == managed, nil },
+		Stage:   func(string, string) error { return nil },
+		Move:    func(string, string) error { return nil },
+		Install: func(string, string) error { canonicalInstalls++; return nil },
+		Remove:  func(string) error { return nil },
+	}
+	code, err := runWindowsUpdateSwapWith("C:/temp/verified.exe", managed, 42, "nonce", func(string, []string) error {
+		cleanupStarted = true
+		return nil
+	}, func() int {
+		summary := executePreparedLifecycle(context.Background(), opts, deps)
+		if summary.Err != nil {
+			return 1
+		}
+		return 0
+	}, io.Discard, ops)
+	if err != nil || code != 0 {
+		t.Fatalf("runner = %d, %v", code, err)
+	}
+	if canonicalInstalls != 1 || !cleanupStarted || paths.ensureCalls != 1 || preflights != 1 || lifecycleCalls != 1 {
+		t.Fatalf("installs=%d cleanup=%t PATH=%d preflights=%d lifecycle=%d", canonicalInstalls, cleanupStarted, paths.ensureCalls, preflights, lifecycleCalls)
 	}
 }
 

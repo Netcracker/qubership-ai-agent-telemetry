@@ -176,6 +176,9 @@ func newManagedCLIService(config managedCLIConfig) managedCLIService {
 			}
 			return operationResult{Name: "managed-cli", State: operationOK, Detail: "removed"}
 		},
+		Preflight: func(lifecycleOptions) error {
+			return validateManagedCLIHome(config.Home)
+		},
 		PreflightRemove: func(opts lifecycleOptions) error {
 			if config.GOOS != "windows" || opts.Action != actionUninstall || (!opts.RemoveCLI && !isCompleteSelection(opts.Components)) {
 				return nil

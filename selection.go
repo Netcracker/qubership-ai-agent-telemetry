@@ -9,6 +9,40 @@ import (
 
 var lifecycleComponentOrder = []componentName{componentAPM, componentTelemetry, componentGitHooks}
 
+func componentFlagValues(includeAll bool) []string {
+	values := make([]string, 0, len(lifecycleComponentOrder)+1)
+	for _, component := range lifecycleComponentOrder {
+		values = append(values, string(component))
+	}
+	if includeAll {
+		values = append([]string{"all"}, values...)
+	}
+	return values
+}
+
+func harnessFlagValues(includeAll bool) []string {
+	values := make([]string, 0, len(allHookTargets)+1)
+	for _, target := range allHookTargets {
+		values = append(values, string(target))
+	}
+	if includeAll {
+		values = append([]string{"all"}, values...)
+	}
+	return values
+}
+
+func hookFlagValues(includeSelectors bool) []string {
+	values := harnessFlagValues(false)
+	if includeSelectors {
+		values = append([]string{"all", "none"}, values...)
+	}
+	return values
+}
+
+func enumValuesDescription(values []string) string {
+	return strings.Join(values, ", ")
+}
+
 func allComponents() []componentName {
 	return append([]componentName(nil), lifecycleComponentOrder...)
 }
@@ -51,7 +85,7 @@ func parseComponentSet(values []string) (map[componentName]bool, error) {
 		}
 		component := componentName(value)
 		if !knownComponent(component) {
-			return nil, fmt.Errorf("unknown component %q", raw)
+			return nil, fmt.Errorf("unknown component %q; valid components: %s", raw, enumValuesDescription(componentFlagValues(true)))
 		}
 		set[component] = true
 	}
@@ -83,12 +117,12 @@ func orderedComponents(set map[componentName]bool) []componentName {
 }
 
 func knownComponent(component componentName) bool {
-	switch component {
-	case componentAPM, componentTelemetry, componentGitHooks:
-		return true
-	default:
-		return false
+	for _, known := range lifecycleComponentOrder {
+		if component == known {
+			return true
+		}
 	}
+	return false
 }
 
 func normalizeHarnesses(values []string) ([]hookTarget, error) {
@@ -107,12 +141,10 @@ func normalizeHarnesses(values []string) ([]hookTarget, error) {
 			continue
 		}
 		target := hookTarget(value)
-		switch target {
-		case hookClaude, hookCodex, hookCursor:
-			selected[target] = true
-		default:
-			return nil, fmt.Errorf("unknown harness %q", raw)
+		if !knownHookTarget(target) {
+			return nil, fmt.Errorf("unknown harness %q; valid harnesses: %s", raw, enumValuesDescription(harnessFlagValues(true)))
 		}
+		selected[target] = true
 	}
 	if all && len(selected) != 0 {
 		return nil, fmt.Errorf("harness %q must be used alone", "all")
@@ -251,14 +283,14 @@ func completeCSV(allowed []string, toComplete string) ([]string, cobra.ShellComp
 	regularAllowed := make(map[string]bool, len(allowed))
 	for _, value := range allowed {
 		allowedSet[value] = true
-		if value != "all" {
+		if !exclusiveCSVSelector(value) {
 			regularAllowed[value] = true
 		}
 	}
 	selected := make(map[string]bool, len(committed))
 	for _, raw := range committed {
 		value := strings.TrimSpace(raw)
-		if value == "" || !allowedSet[value] || value == "all" || selected[value] {
+		if value == "" || !allowedSet[value] || exclusiveCSVSelector(value) || selected[value] {
 			return []string{}, baseDirective
 		}
 		selected[value] = true
@@ -268,14 +300,14 @@ func completeCSV(allowed []string, toComplete string) ([]string, cobra.ShellComp
 	candidates := make([]string, 0, len(allowed))
 	canContinue := false
 	for _, value := range allowed {
-		if value == "all" && len(committed) != 0 {
+		if exclusiveCSVSelector(value) && len(committed) != 0 {
 			continue
 		}
 		if selected[value] || !strings.HasPrefix(value, trimmedPartial) {
 			continue
 		}
 		candidates = append(candidates, prefix+value)
-		if value != "all" {
+		if !exclusiveCSVSelector(value) {
 			remaining := 0
 			for candidate := range regularAllowed {
 				if candidate != value && !selected[candidate] {
@@ -289,4 +321,8 @@ func completeCSV(allowed []string, toComplete string) ([]string, cobra.ShellComp
 		return candidates, baseDirective | cobra.ShellCompDirectiveNoSpace
 	}
 	return candidates, baseDirective
+}
+
+func exclusiveCSVSelector(value string) bool {
+	return value == "all" || value == "none"
 }
