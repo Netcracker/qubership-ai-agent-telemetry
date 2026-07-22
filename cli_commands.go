@@ -282,36 +282,6 @@ func newFlushCommand(_ appDeps) *cobra.Command {
 	return cmd
 }
 
-func newUpdateCheckCommand(_ appDeps) *cobra.Command {
-	return &cobra.Command{
-		Use:   "update-check",
-		Short: "Check whether a newer GitHub release is available",
-		Args:  usageArgs(cobra.NoArgs),
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, _ = io.WriteString(cmd.OutOrStdout(), formatUpdateCheck(gatherUpdateCheck(version, func() (string, error) {
-				return latestReleaseTag(updateCheckTimeout)
-			})))
-			return nil
-		},
-	}
-}
-
-func newSelfUpdateCommand(_ appDeps) *cobra.Command {
-	return &cobra.Command{
-		Use:   "self-update",
-		Short: "Download, verify, and install the latest GitHub release",
-		Args:  usageArgs(cobra.NoArgs),
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := runSelfUpdate(version, func(value string) {
-				_, _ = io.WriteString(cmd.OutOrStdout(), value)
-			}); err != nil {
-				return fmt.Errorf("self-update: %w", err)
-			}
-			return nil
-		},
-	}
-}
-
 func newVersionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",

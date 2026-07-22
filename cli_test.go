@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -46,6 +47,61 @@ func TestRootDiscoveryAndCommandRouting(t *testing.T) {
 				t.Fatalf("output = %q, want %q", combined, tt.contains)
 			}
 		})
+	}
+}
+
+func TestLegacyUpdateCommandsAreNotPublic(t *testing.T) {
+	root := newRootCommand(appDeps{})
+	for _, name := range []string{"update-check", "self-update"} {
+		command, _, err := root.Find([]string{name})
+		if err == nil && command != root {
+			t.Fatalf("legacy command %q remains public", name)
+		}
+	}
+}
+
+func TestUpdateHandoffHiddenModesRouteOutsideCobra(t *testing.T) {
+	var runner updateRunnerOptions
+	var cleanup cleanupImageOptions
+	deps := appDeps{
+		In: strings.NewReader("input"), Out: io.Discard, ErrOut: io.Discard, Home: t.TempDir,
+		UpdateRunner: func(_ context.Context, options updateRunnerOptions) int {
+			runner = options
+			return 17
+		},
+		CleanupImage: func(_ context.Context, options cleanupImageOptions) int {
+			cleanup = options
+			return 19
+		},
+	}
+	runnerArgs := []string{
+		"__update-runner", "--managed-path", "/managed/ai-agent-telemetry", "--parent-pid", "42",
+		"--release", "v0.8.0", "--", "--components", "telemetry,apm", "--non-interactive",
+	}
+	if code := execute(runnerArgs, deps); code != 17 {
+		t.Fatalf("runner exit code = %d, want 17", code)
+	}
+	wantRunner := updateRunnerOptions{
+		ManagedPath: "/managed/ai-agent-telemetry", ParentPID: 42, Release: "v0.8.0",
+		LifecycleArgs: []string{"--components", "telemetry,apm", "--non-interactive"},
+	}
+	if !reflect.DeepEqual(runner, wantRunner) {
+		t.Fatalf("runner options = %#v, want %#v", runner, wantRunner)
+	}
+	if code := execute([]string{"__cleanup-update-image", "--path", "/managed/stale.exe", "--wait-pid", "42"}, deps); code != 19 {
+		t.Fatalf("cleanup exit code = %d, want 19", code)
+	}
+	if cleanup != (cleanupImageOptions{Path: "/managed/stale.exe", WaitPID: 42}) {
+		t.Fatalf("cleanup options = %#v", cleanup)
+	}
+
+	var help bytes.Buffer
+	root := newRootCommand(appDeps{Out: &help})
+	if err := root.Help(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(help.String(), "__update-runner") || strings.Contains(help.String(), "__cleanup-update-image") {
+		t.Fatalf("hidden modes appear in public help: %q", help.String())
 	}
 }
 

@@ -156,7 +156,7 @@ func TestRunHelpTopicCoversEveryPublicCommandWithoutSideEffects(t *testing.T) {
 
 	for _, command := range []string{
 		"configure", "hooks", "status", "selftest", "ingest", "flush",
-		"update-check", "self-update", "version", "completion",
+		"version", "completion",
 	} {
 		forms := [][]string{
 			{"help", command},

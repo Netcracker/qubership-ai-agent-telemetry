@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,8 +22,324 @@ import (
 // BASE_URL the installer scripts download from.
 const repoSlug = "Netcracker/qubership-ai-agent-telemetry"
 
+const (
+	installVersionEnv = "AI_AGENT_TELEMETRY_INSTALL_VERSION"
+	installBaseURLEnv = "AI_AGENT_TELEMETRY_INSTALL_BASE_URL"
+)
+
 const updateCheckTimeout = 5 * time.Second
-const selfUpdateTimeout = 30 * time.Second
+const updateDownloadTimeout = 30 * time.Second
+
+type releaseClient struct {
+	Latest    func(context.Context) (string, error)
+	Download  func(context.Context, string, string, string) error
+	Checksums func(context.Context, string) (string, error)
+}
+
+type handoffResult struct {
+	HandedOff bool
+	ExitCode  int
+	Release   string
+}
+
+type updateHandoff struct {
+	Prepare func(context.Context, []string) (handoffResult, error)
+}
+
+type updateHandoffDeps struct {
+	Installed   string
+	GOOS        string
+	GOARCH      string
+	ManagedPath string
+	Bootstrap   bool
+	TempBase    string
+	ParentPID   func() int
+	Release     releaseClient
+	Stdin       io.Reader
+	Stdout      io.Writer
+	Stderr      io.Writer
+	Run         func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) (int, error)
+}
+
+type updateRunnerOptions struct {
+	ManagedPath   string
+	ParentPID     int
+	Release       string
+	LifecycleArgs []string
+}
+
+type updateRunnerCallbacks struct {
+	Executable func() (string, error)
+	Preflight  func(context.Context, []string) error
+	Lifecycle  func(context.Context, []string) int
+	Stdout     io.Writer
+	Stderr     io.Writer
+}
+
+type cleanupImageOptions struct {
+	Path    string
+	WaitPID int
+}
+
+type windowsUpdateSwapOps struct {
+	Exists  func(string) (bool, error)
+	Stage   func(string, string) error
+	Move    func(string, string) error
+	Install func(string, string) error
+	Remove  func(string) error
+}
+
+type cleanupImageDeps struct {
+	Wait     func(context.Context, int) error
+	Remove   func(string) error
+	Retry    func(context.Context) error
+	Attempts int
+}
+
+func routeInternalUpdateMode(ctx context.Context, args []string, deps appDeps) (bool, int) {
+	if len(args) == 0 {
+		return false, 0
+	}
+	switch args[0] {
+	case "__update-runner":
+		options, err := parseUpdateRunnerOptions(args[1:])
+		if err != nil {
+			_, _ = fmt.Fprintln(deps.ErrOut, "internal update runner:", err)
+			return true, 2
+		}
+		return true, deps.UpdateRunner(ctx, options)
+	case "__cleanup-update-image":
+		options, err := parseCleanupImageOptions(args[1:])
+		if err != nil {
+			_, _ = fmt.Fprintln(deps.ErrOut, "update image cleanup:", err)
+			return true, 2
+		}
+		return true, deps.CleanupImage(ctx, options)
+	default:
+		return false, 0
+	}
+}
+
+func parseUpdateRunnerOptions(args []string) (updateRunnerOptions, error) {
+	separator := -1
+	for index, arg := range args {
+		if arg == "--" {
+			separator = index
+			break
+		}
+	}
+	if separator < 0 {
+		return updateRunnerOptions{}, errors.New("missing lifecycle argument separator")
+	}
+	internal := args[:separator]
+	if len(internal) != 6 {
+		return updateRunnerOptions{}, errors.New("expected --managed-path, --parent-pid, and --release")
+	}
+	values := make(map[string]string, 3)
+	for index := 0; index < len(internal); index += 2 {
+		flag := internal[index]
+		if flag != "--managed-path" && flag != "--parent-pid" && flag != "--release" {
+			return updateRunnerOptions{}, fmt.Errorf("unknown internal option %q", flag)
+		}
+		if values[flag] != "" || internal[index+1] == "" {
+			return updateRunnerOptions{}, fmt.Errorf("invalid internal option %q", flag)
+		}
+		values[flag] = internal[index+1]
+	}
+	parentPID, err := strconv.Atoi(values["--parent-pid"])
+	if err != nil || parentPID < 0 {
+		return updateRunnerOptions{}, fmt.Errorf("invalid parent process ID %q", values["--parent-pid"])
+	}
+	if values["--managed-path"] == "" || values["--release"] == "" {
+		return updateRunnerOptions{}, errors.New("managed path and release are required")
+	}
+	return updateRunnerOptions{
+		ManagedPath: values["--managed-path"], ParentPID: parentPID, Release: values["--release"],
+		LifecycleArgs: append([]string(nil), args[separator+1:]...),
+	}, nil
+}
+
+func parseCleanupImageOptions(args []string) (cleanupImageOptions, error) {
+	if len(args) != 4 || args[0] != "--path" || args[2] != "--wait-pid" || args[1] == "" {
+		return cleanupImageOptions{}, errors.New("expected --path <exact-path> --wait-pid <pid>")
+	}
+	pid, err := strconv.Atoi(args[3])
+	if err != nil || pid < 0 {
+		return cleanupImageOptions{}, fmt.Errorf("invalid wait process ID %q", args[3])
+	}
+	return cleanupImageOptions{Path: args[1], WaitPID: pid}, nil
+}
+
+func runPreparedUpdateRunner(ctx context.Context, options updateRunnerOptions, callbacks updateRunnerCallbacks) int {
+	if callbacks.Stderr == nil {
+		callbacks.Stderr = io.Discard
+	}
+	if callbacks.Stdout == nil {
+		callbacks.Stdout = io.Discard
+	}
+	if callbacks.Executable == nil {
+		callbacks.Executable = os.Executable
+	}
+	if callbacks.Preflight == nil || callbacks.Lifecycle == nil {
+		_, _ = fmt.Fprintln(callbacks.Stderr, "internal update runner callbacks are not wired")
+		return 1
+	}
+	if err := callbacks.Preflight(ctx, options.LifecycleArgs); err != nil {
+		_, _ = fmt.Fprintln(callbacks.Stderr, "update preflight:", err)
+		return 1
+	}
+	source, err := callbacks.Executable()
+	if err != nil {
+		_, _ = fmt.Fprintln(callbacks.Stderr, "resolve verified update runner:", err)
+		return 1
+	}
+	code, err := runPlatformUpdateRunner(source, options, func() int {
+		return callbacks.Lifecycle(ctx, options.LifecycleArgs)
+	}, callbacks.Stdout, callbacks.Stderr)
+	if err != nil {
+		_, _ = fmt.Fprintln(callbacks.Stderr, "install verified update runner:", err)
+		return 1
+	}
+	return code
+}
+
+func runWindowsUpdateSwap(
+	source, managedPath string,
+	parentPID int,
+	nonce string,
+	startCleanup func(string, []string) error,
+	lifecycle func() int,
+	stderr io.Writer,
+) (int, error) {
+	ops := windowsUpdateSwapOps{
+		Exists: func(path string) (bool, error) {
+			_, err := os.Lstat(path)
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return err == nil, err
+		},
+		Stage:   copyExecutableAtomically,
+		Move:    os.Rename,
+		Install: os.Rename,
+		Remove:  removeIfExists,
+	}
+	return runWindowsUpdateSwapWith(source, managedPath, parentPID, nonce, startCleanup, lifecycle, stderr, ops)
+}
+
+func runWindowsUpdateSwapWith(
+	source, managedPath string,
+	parentPID int,
+	nonce string,
+	startCleanup func(string, []string) error,
+	lifecycle func() int,
+	stderr io.Writer,
+	ops windowsUpdateSwapOps,
+) (int, error) {
+	dir := filepath.Dir(managedPath)
+	base := filepath.Base(managedPath)
+	suffix := strconv.Itoa(parentPID) + "-" + nonce
+	stagedPath := filepath.Join(dir, "."+base+".update-new-"+suffix)
+	stalePath := filepath.Join(dir, "."+base+".update-old-"+suffix)
+	staleExists, err := ops.Exists(stalePath)
+	if err != nil {
+		return 1, fmt.Errorf("inspect stale update path %s: %w", stalePath, err)
+	}
+	if staleExists {
+		return 1, fmt.Errorf("refusing to overwrite stale update path %s: already exists", stalePath)
+	}
+	if err := ops.Stage(source, stagedPath); err != nil {
+		return 1, fmt.Errorf("stage verified release on managed volume: %w", err)
+	}
+	stagedPresent := true
+	defer func() {
+		if stagedPresent {
+			_ = ops.Remove(stagedPath)
+		}
+	}()
+
+	managedExists, err := ops.Exists(managedPath)
+	if err != nil {
+		return 1, fmt.Errorf("inspect managed executable %s: %w", managedPath, err)
+	}
+	if !managedExists {
+		if err := ops.Install(stagedPath, managedPath); err != nil {
+			return 1, fmt.Errorf("install verified release at %s: %w", managedPath, err)
+		}
+		stagedPresent = false
+		return lifecycle(), nil
+	}
+
+	if err := ops.Move(managedPath, stalePath); err != nil {
+		return 1, fmt.Errorf("rename running managed executable to %s: %w", stalePath, err)
+	}
+	if err := ops.Install(stagedPath, managedPath); err != nil {
+		rollbackErr := ops.Move(stalePath, managedPath)
+		if rollbackErr != nil {
+			return 1, errors.Join(
+				fmt.Errorf("install verified release at %s: %w", managedPath, err),
+				fmt.Errorf("restore original managed executable: %w", rollbackErr),
+			)
+		}
+		return 1, fmt.Errorf("install verified release at %s: %w", managedPath, err)
+	}
+	stagedPresent = false
+	cleanupArgs := []string{
+		"__cleanup-update-image", "--path", stalePath, "--wait-pid", strconv.Itoa(parentPID),
+	}
+	if startCleanup != nil {
+		if err := startCleanup(managedPath, cleanupArgs); err != nil && stderr != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: cannot start cleanup helper; remove leftover update image %s manually: %v\n", stalePath, err)
+		}
+	}
+	return lifecycle(), nil
+}
+
+func cleanupUpdateImage(ctx context.Context, options cleanupImageOptions, stderr io.Writer) int {
+	return cleanupUpdateImageWith(ctx, options, stderr, cleanupImageDeps{
+		Wait:     waitForUpdateParent,
+		Remove:   removeIfExists,
+		Attempts: 20,
+		Retry: func(ctx context.Context) error {
+			timer := time.NewTimer(250 * time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+				return nil
+			}
+		},
+	})
+}
+
+func cleanupUpdateImageWith(
+	ctx context.Context,
+	options cleanupImageOptions,
+	stderr io.Writer,
+	deps cleanupImageDeps,
+) int {
+	if err := deps.Wait(ctx, options.WaitPID); err != nil {
+		_, _ = fmt.Fprintf(stderr, "cannot wait for update parent %d before removing %s: %v\n", options.WaitPID, options.Path, err)
+		return 1
+	}
+	var lastErr error
+	for attempt := 0; attempt < deps.Attempts; attempt++ {
+		if err := deps.Remove(options.Path); err == nil || errors.Is(err, os.ErrNotExist) {
+			return 0
+		} else {
+			lastErr = err
+		}
+		if attempt+1 < deps.Attempts {
+			if err := deps.Retry(ctx); err != nil {
+				lastErr = err
+				break
+			}
+		}
+	}
+	_, _ = fmt.Fprintf(stderr, "cannot remove stale update image %s after %d attempts: %v\n", options.Path, deps.Attempts, lastErr)
+	return 1
+}
 
 // latestReleaseTag returns the tag_name of the latest GitHub release. The GitHub
 // API requires a User-Agent header, so one is always set. A short timeout keeps
@@ -58,7 +375,11 @@ func latestReleaseTag(timeout time.Duration) (string, error) {
 }
 
 func releaseDownloadURL(tag, asset string) string {
-	return "https://github.com/" + repoSlug + "/releases/download/" + tag + "/" + asset
+	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv(installBaseURLEnv)), "/")
+	if baseURL == "" {
+		baseURL = "https://github.com/" + repoSlug + "/releases"
+	}
+	return baseURL + "/download/" + tag + "/" + asset
 }
 
 func releaseAssetName(goos, goarch string) (string, error) {
@@ -152,104 +473,140 @@ func verifyFileSHA256(path, want string) error {
 	return nil
 }
 
-func currentExecutablePath() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		return resolved, nil
-	}
-	return exe, nil
-}
-
-func replaceExecutable(target, tmp string) error {
-	if runtime.GOOS == "windows" {
-		return replaceExecutableWindows(target, tmp)
-	}
-	if fi, err := os.Stat(target); err == nil {
-		_ = os.Chmod(tmp, fi.Mode().Perm())
-	} else {
-		_ = os.Chmod(tmp, 0o755)
-	}
-	return os.Rename(tmp, target)
-}
-
-func replaceExecutableWindows(target, tmp string) error {
-	pid := os.Getpid()
-	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$target = %q
-$tmp = %q
-$pidToWait = %d
-Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue
-Move-Item -Force $tmp $target
-`, target, tmp, pid)
-	scriptPath := filepath.Join(os.TempDir(), fmt.Sprintf("ai-agent-telemetry-self-update-%d.ps1", pid))
-	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
-		return err
-	}
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
-	return cmd.Start()
-}
-
-func runSelfUpdate(installed string, stdout func(string)) error {
-	latest, err := latestReleaseTag(updateCheckTimeout)
-	if err != nil {
-		return err
-	}
-	if compareSemver(installed, latest) >= 0 {
-		stdout(fmt.Sprintf("already current: %s\n", installed))
-		return nil
-	}
-	asset, err := releaseAssetName(runtime.GOOS, runtime.GOARCH)
-	if err != nil {
-		return err
-	}
-	target, err := currentExecutablePath()
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(target)
-	tmp, err := os.CreateTemp(dir, ".ai-agent-telemetry-*")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	_ = tmp.Close()
-	keepTmp := false
-	defer func() {
-		if !keepTmp {
-			_ = os.Remove(tmpPath)
+func newUpdateHandoff(deps updateHandoffDeps) updateHandoff {
+	deps = normalizeUpdateHandoffDeps(deps)
+	return updateHandoff{Prepare: func(ctx context.Context, lifecycleArgs []string) (handoffResult, error) {
+		if deps.Bootstrap {
+			return handoffResult{}, nil
 		}
-	}()
+		latest, err := deps.Release.Latest(ctx)
+		if err != nil {
+			return handoffResult{}, fmt.Errorf("resolve latest release: %w", err)
+		}
+		if compareSemver(deps.Installed, latest) >= 0 {
+			return handoffResult{Release: latest}, nil
+		}
+		asset, err := releaseAssetName(deps.GOOS, deps.GOARCH)
+		if err != nil {
+			return handoffResult{}, err
+		}
+		temporaryDir, err := os.MkdirTemp(deps.TempBase, "ai-agent-telemetry-update-*")
+		if err != nil {
+			return handoffResult{}, fmt.Errorf("create private update directory: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(temporaryDir) }()
+		if err := os.Chmod(temporaryDir, 0o700); err != nil {
+			return handoffResult{}, fmt.Errorf("secure private update directory: %w", err)
+		}
+		candidate := filepath.Join(temporaryDir, asset)
+		downloadCtx, cancel := context.WithTimeout(ctx, updateDownloadTimeout)
+		defer cancel()
+		if err := deps.Release.Download(downloadCtx, latest, asset, candidate); err != nil {
+			return handoffResult{}, fmt.Errorf("download verified runner: %w", err)
+		}
+		sums, err := deps.Release.Checksums(downloadCtx, latest)
+		if err != nil {
+			return handoffResult{}, fmt.Errorf("download release checksums: %w", err)
+		}
+		want, err := checksumForAsset(sums, asset)
+		if err != nil {
+			return handoffResult{}, err
+		}
+		if err := verifyFileSHA256(candidate, want); err != nil {
+			return handoffResult{}, fmt.Errorf("verify release runner: %w", err)
+		}
+		if err := os.Chmod(candidate, 0o700); err != nil {
+			return handoffResult{}, fmt.Errorf("make release runner executable: %w", err)
+		}
+		args := []string{
+			"__update-runner", "--managed-path", deps.ManagedPath,
+			"--parent-pid", strconv.Itoa(deps.ParentPID()), "--release", latest, "--",
+		}
+		args = append(args, lifecycleArgs...)
+		exitCode, err := deps.Run(ctx, candidate, args, deps.Stdin, deps.Stdout, deps.Stderr)
+		if err != nil {
+			return handoffResult{}, fmt.Errorf("start verified release runner: %w", err)
+		}
+		return handoffResult{HandedOff: true, ExitCode: exitCode, Release: latest}, nil
+	}}
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), selfUpdateTimeout)
-	defer cancel()
-	if err := downloadReleaseAsset(ctx, latest, asset, tmpPath); err != nil {
-		return err
+func normalizeUpdateHandoffDeps(deps updateHandoffDeps) updateHandoffDeps {
+	if deps.Installed == "" {
+		deps.Installed = version
 	}
-	sums, err := fetchSHA256SUMS(ctx, latest)
+	if deps.GOOS == "" {
+		deps.GOOS = runtime.GOOS
+	}
+	if deps.GOARCH == "" {
+		deps.GOARCH = runtime.GOARCH
+	}
+	if deps.ParentPID == nil {
+		deps.ParentPID = os.Getpid
+	}
+	if deps.Release.Latest == nil {
+		deps.Release.Latest = func(ctx context.Context) (string, error) {
+			if selected := strings.TrimSpace(os.Getenv(installVersionEnv)); selected != "" && selected != "latest" {
+				return selected, nil
+			}
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				return latestReleaseTag(updateCheckTimeout)
+			}
+			return latestReleaseTag(time.Until(deadline))
+		}
+	}
+	if deps.Release.Download == nil {
+		deps.Release.Download = downloadReleaseAsset
+	}
+	if deps.Release.Checksums == nil {
+		deps.Release.Checksums = fetchSHA256SUMS
+	}
+	if deps.Stdin == nil {
+		deps.Stdin = os.Stdin
+	}
+	if deps.Stdout == nil {
+		deps.Stdout = os.Stdout
+	}
+	if deps.Stderr == nil {
+		deps.Stderr = os.Stderr
+	}
+	if deps.Run == nil {
+		deps.Run = runVerifiedUpdateChild
+	}
+	return deps
+}
+
+func runVerifiedUpdateChild(ctx context.Context, path string, args []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	command := exec.CommandContext(ctx, path, args...)
+	command.Stdin = stdin
+	command.Stdout = stdout
+	command.Stderr = stderr
+	err := command.Run()
+	if err == nil {
+		return 0, nil
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		return exitError.ExitCode(), nil
+	}
+	return 0, err
+}
+
+func runUpdateWithHandoff(
+	ctx context.Context,
+	lifecycleArgs []string,
+	handoff updateHandoff,
+	runCurrent func(context.Context, []string) int,
+) (int, error) {
+	result, err := handoff.Prepare(ctx, lifecycleArgs)
 	if err != nil {
-		return err
+		return 1, err
 	}
-	want, err := checksumForAsset(sums, asset)
-	if err != nil {
-		return err
+	if result.HandedOff {
+		return result.ExitCode, nil
 	}
-	if err := verifyFileSHA256(tmpPath, want); err != nil {
-		return err
-	}
-	if err := replaceExecutable(target, tmpPath); err != nil {
-		return err
-	}
-	if runtime.GOOS == "windows" {
-		keepTmp = true
-	}
-	stdout(fmt.Sprintf("updated: %s -> %s\n", installed, latest))
-	if runtime.GOOS == "windows" {
-		stdout("replacement will complete after this process exits\n")
-	}
-	return nil
+	return runCurrent(ctx, lifecycleArgs), nil
 }
 
 // normalizeVersion strips a leading "v" and any pre-release/build suffix, leaving
@@ -285,47 +642,4 @@ func compareSemver(a, b string) int {
 		}
 	}
 	return 0
-}
-
-// updateCheckResult is the verdict a caller (skill or, later, a hook) consumes.
-type updateCheckResult struct {
-	Installed string
-	Latest    string
-	Available bool
-	Err       error
-}
-
-// gatherUpdateCheck compares the installed version against the latest one the
-// fetch func reports. A fetch error yields an "unknown" verdict, never a crash:
-// an update check must never become a reason telemetry stops working.
-func gatherUpdateCheck(installed string, fetch func() (string, error)) updateCheckResult {
-	latest, err := fetch()
-	if err != nil {
-		return updateCheckResult{Installed: installed, Err: err}
-	}
-	return updateCheckResult{
-		Installed: installed,
-		Latest:    latest,
-		Available: compareSemver(installed, latest) < 0,
-	}
-}
-
-// formatUpdateCheck renders the verdict as stable key: value lines, so a skill
-// or hook can grep `update_available:` without parsing prose.
-func formatUpdateCheck(r updateCheckResult) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "installed: %s\n", r.Installed)
-	if r.Err != nil {
-		fmt.Fprint(&b, "latest: unknown\n")
-		fmt.Fprint(&b, "update_available: unknown\n")
-		fmt.Fprintf(&b, "error: %s\n", r.Err.Error())
-		return b.String()
-	}
-	fmt.Fprintf(&b, "latest: %s\n", r.Latest)
-	if r.Available {
-		fmt.Fprint(&b, "update_available: yes\n")
-	} else {
-		fmt.Fprint(&b, "update_available: no\n")
-	}
-	return b.String()
 }

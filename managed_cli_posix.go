@@ -3,10 +3,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 )
 
 type posixPathManager struct {
@@ -185,6 +190,40 @@ func removeStandalonePosixPathBlocks(content string) (string, bool) {
 	}
 	output.WriteString(content[cursor:])
 	return output.String(), true
+}
+
+func runPOSIXUpdateRunner(source, managedPath string, lifecycle func() int) (int, error) {
+	if err := copyExecutableAtomically(source, managedPath); err != nil {
+		return 1, fmt.Errorf("install verified release at %s: %w", managedPath, err)
+	}
+	return lifecycle(), nil
+}
+
+func runPlatformUpdateRunner(
+	source string,
+	options updateRunnerOptions,
+	lifecycle func() int,
+	_, _ io.Writer,
+) (int, error) {
+	return runPOSIXUpdateRunner(source, options.ManagedPath, lifecycle)
+}
+
+func waitForUpdateParent(ctx context.Context, pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return nil
+	}
+	for {
+		err := process.Signal(syscall.Signal(0))
+		if errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 func platformManagedCLIConfig(home string) managedCLIConfig {

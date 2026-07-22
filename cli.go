@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,10 +12,12 @@ import (
 )
 
 type appDeps struct {
-	In     io.Reader
-	Out    io.Writer
-	ErrOut io.Writer
-	Home   func() string
+	In           io.Reader
+	Out          io.Writer
+	ErrOut       io.Writer
+	Home         func() string
+	UpdateRunner func(context.Context, updateRunnerOptions) int
+	CleanupImage func(context.Context, cleanupImageOptions) int
 }
 
 type usageError struct{ err error }
@@ -32,6 +35,10 @@ func defaultAppDeps() appDeps {
 }
 
 func execute(args []string, deps appDeps) int {
+	deps = normalizeAppDeps(deps)
+	if handled, code := routeInternalUpdateMode(context.Background(), args, deps); handled {
+		return code
+	}
 	root := newRootCommand(deps)
 	root.SetArgs(args)
 	_, err := root.ExecuteC()
@@ -68,8 +75,6 @@ func newRootCommand(deps appDeps) *cobra.Command {
 		newSelftestCommand(deps),
 		newIngestCommand(deps),
 		newFlushCommand(deps),
-		newUpdateCheckCommand(deps),
-		newSelfUpdateCommand(deps),
 		newVersionCommand(),
 		newCompletionCommand(),
 	)
@@ -106,6 +111,17 @@ func normalizeAppDeps(deps appDeps) appDeps {
 	}
 	if deps.Home == nil {
 		deps.Home = userHomeDir
+	}
+	if deps.UpdateRunner == nil {
+		deps.UpdateRunner = func(_ context.Context, _ updateRunnerOptions) int {
+			_, _ = fmt.Fprintln(deps.ErrOut, "internal update runner is not wired")
+			return 1
+		}
+	}
+	if deps.CleanupImage == nil {
+		deps.CleanupImage = func(ctx context.Context, options cleanupImageOptions) int {
+			return cleanupUpdateImage(ctx, options, deps.ErrOut)
+		}
 	}
 	return deps
 }

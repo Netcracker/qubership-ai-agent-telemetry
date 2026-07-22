@@ -406,3 +406,30 @@ func TestManagedCLIPosixRemovePreservesBlockLookalikes(t *testing.T) {
 		t.Fatalf("lookalikes changed: got %q, want %q", data, content)
 	}
 }
+
+func TestUpdateHandoffPOSIXRunnerReplacesManagedPathBeforeLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "verified-runner")
+	target := filepath.Join(dir, "bin", "ai-agent-telemetry")
+	if err := os.WriteFile(source, []byte("new release"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("old release"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	code, err := runPOSIXUpdateRunner(source, target, func() int {
+		called = true
+		data, readErr := os.ReadFile(target)
+		if readErr != nil || string(data) != "new release" {
+			t.Fatalf("managed executable before lifecycle = %q, %v", data, readErr)
+		}
+		return 29
+	})
+	if err != nil || code != 29 || !called {
+		t.Fatalf("runPOSIXUpdateRunner() = %d, %v; called = %t", code, err, called)
+	}
+}
