@@ -84,19 +84,19 @@ func newHooksCommand(deps appDeps) *cobra.Command {
 		Args:  usageArgs(cobra.NoArgs),
 		RunE:  helpRunE,
 	}
-	var target string
+	var installTarget string
 	install := &cobra.Command{
 		Use:   "install",
 		Short: "Install or repair global harness hooks",
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if cmd.Flags().Changed("target") && target == "" {
+			if cmd.Flags().Changed("target") && installTarget == "" {
 				return usageError{err: fmt.Errorf("hook target value must not be empty")}
 			}
-			if target == "all" || target == "none" {
-				return usageError{err: fmt.Errorf("hook target %q is not valid here; omit --target to install all hooks", target)}
+			if installTarget == "all" || installTarget == "none" {
+				return usageError{err: fmt.Errorf("hook target %q is not valid here; omit --target to install all hooks", installTarget)}
 			}
-			targets, err := parseHookTargets(target)
+			targets, err := parseHookTargets(installTarget)
 			if err != nil {
 				return usageError{err: err}
 			}
@@ -123,9 +123,55 @@ func newHooksCommand(deps appDeps) *cobra.Command {
 			return nil
 		},
 	}
-	install.Flags().StringVar(&target, "target", "", "Install a comma-separated hook subset")
-	parent.AddCommand(install)
+	install.Flags().StringVar(&installTarget, "target", "", "Install a comma-separated hook subset")
+	registerHookTargetCompletion(install)
+
+	var uninstallTarget string
+	uninstall := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove owned global harness hooks",
+		Args:  usageArgs(cobra.NoArgs),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Changed("target") && uninstallTarget == "" {
+				return usageError{err: fmt.Errorf("hook target value must not be empty")}
+			}
+			if uninstallTarget == "all" || uninstallTarget == "none" {
+				return usageError{err: fmt.Errorf("hook target %q is not valid here; omit --target to uninstall all hooks", uninstallTarget)}
+			}
+			targets, err := parseHookTargets(uninstallTarget)
+			if err != nil {
+				return usageError{err: err}
+			}
+			home := deps.Home()
+			if home == "" {
+				return fmt.Errorf("hooks: no user home directory available")
+			}
+			results := uninstallHooks(home, targets, cmd.ErrOrStderr())
+			for _, result := range results {
+				state := "unchanged"
+				if result.Err != nil {
+					state = "failed"
+				} else if result.Changed {
+					state = "removed"
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s: %s\n", result.Target, state, result.Path)
+			}
+			if err := hookInstallError(results); err != nil {
+				return fmt.Errorf("hooks: %w", err)
+			}
+			return nil
+		},
+	}
+	uninstall.Flags().StringVar(&uninstallTarget, "target", "", "Remove a comma-separated hook subset")
+	registerHookTargetCompletion(uninstall)
+	parent.AddCommand(install, uninstall)
 	return parent
+}
+
+func registerHookTargetCompletion(command *cobra.Command) {
+	_ = command.RegisterFlagCompletionFunc("target", func(_ *cobra.Command, _ []string, value string) ([]string, cobra.ShellCompDirective) {
+		return completeCSV([]string{string(hookClaude), string(hookCodex), string(hookCursor)}, value)
+	})
 }
 
 func newStatusCommand(_ appDeps) *cobra.Command {

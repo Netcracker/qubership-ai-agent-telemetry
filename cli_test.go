@@ -7,8 +7,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestRootDiscoveryAndCommandRouting(t *testing.T) {
@@ -55,6 +58,50 @@ func TestCobraConfigureFlags(t *testing.T) {
 		if command.Flags().Lookup(name) == nil {
 			t.Errorf("configure flag --%s is not registered", name)
 		}
+	}
+}
+
+func TestHooksUninstallRoutesSelectedTargets(t *testing.T) {
+	home := t.TempDir()
+	if err := seedHookFile(hookPath(home, hookClaude), mergeClaudeHook); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedHookFile(hookPath(home, hookCursor), mergeCursorHook); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := execute([]string{"hooks", "uninstall", "--target=claude"}, appDeps{
+		In: strings.NewReader(""), Out: &out, ErrOut: &errOut, Home: func() string { return home },
+	})
+	if code != 0 {
+		t.Fatalf("exit code = %d; stderr = %q", code, errOut.String())
+	}
+	claudeRoot, err := readHookRoot(hookPath(home, hookClaude))
+	if err != nil || inspectClaudeHook(claudeRoot) {
+		t.Fatalf("Claude hook remains: %#v, %v", claudeRoot, err)
+	}
+	cursorRoot, err := readHookRoot(hookPath(home, hookCursor))
+	if err != nil || !inspectCursorHook(cursorRoot) {
+		t.Fatalf("Cursor hook changed: %#v, %v", cursorRoot, err)
+	}
+}
+
+func TestHooksUninstallTargetCompletionUsesCSVValues(t *testing.T) {
+	command, _, err := newRootCommand(appDeps{}).Find([]string{"hooks", "uninstall"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flag := command.Flag("target")
+	if flag == nil {
+		t.Fatal("hooks uninstall --target is not registered")
+	}
+	completion, ok := command.GetFlagCompletionFunc("target")
+	if !ok {
+		t.Fatal("hooks uninstall --target completion is not registered")
+	}
+	completions, directive := completion(command, nil, "claude,co")
+	if !reflect.DeepEqual(completions, []string{"claude,codex"}) || directive&cobra.ShellCompDirectiveNoFileComp == 0 {
+		t.Fatalf("completion = %v, %v", completions, directive)
 	}
 }
 
