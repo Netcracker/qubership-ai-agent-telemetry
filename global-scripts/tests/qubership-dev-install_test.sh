@@ -2,7 +2,9 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-INSTALLER="$SCRIPT_DIR/../qubership-dev-install.sh"
+REPO_ROOT=$(CDPATH='' cd -- "$SCRIPT_DIR/../.." && pwd)
+INSTALLER="$REPO_ROOT/scripts/install.sh"
+COMPAT_INSTALLER="$REPO_ROOT/global-scripts/qubership-dev-install.sh"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -10,144 +12,68 @@ fail() {
 }
 
 assert_contains() {
-  _haystack=$1
-  _needle=$2
-  case $_haystack in
-    *"$_needle"*) ;;
-    *) fail "expected output to contain: $_needle" ;;
+  case $1 in
+    *"$2"*) ;;
+    *) fail "expected output to contain: $2" ;;
   esac
 }
 
 assert_not_contains() {
-  _haystack=$1
-  _needle=$2
-  case $_haystack in
-    *"$_needle"*) fail "expected output not to contain: $_needle" ;;
+  case $1 in
+    *"$2"*) fail "expected output not to contain: $2" ;;
     *) ;;
   esac
 }
 
-assert_log_contains() {
-  _needle=$1
-  grep -F "$_needle" "$QDI_TEST_LOG" >/dev/null || {
-    printf 'command log:\n' >&2
-    sed 's/^/  /' "$QDI_TEST_LOG" >&2
-    fail "expected command log to contain: $_needle"
-  }
-}
-
-assert_log_not_contains() {
-  _needle=$1
-  if grep -F "$_needle" "$QDI_TEST_LOG" >/dev/null; then
-    printf 'command log:\n' >&2
-    sed 's/^/  /' "$QDI_TEST_LOG" >&2
-    fail "expected command log not to contain: $_needle"
-  fi
-}
-
-setup_component_fixture() {
-  FIXTURE_ROOT=$(mktemp -d)
+setup_fixture() {
+  FIXTURE_ROOT=$(TMPDIR=/tmp mktemp -d)
+  export FIXTURE_ROOT
   export HOME="$FIXTURE_ROOT/home"
-  export XDG_DATA_HOME="$FIXTURE_ROOT/data"
-  export XDG_CONFIG_HOME="$FIXTURE_ROOT/config"
-  export QDI_TEST_LOG="$FIXTURE_ROOT/commands.log"
-  export QDI_GIT_CONFIG="$FIXTURE_ROOT/git-hooks-path"
-  export QDI_MARKETPLACE_STATE="$FIXTURE_ROOT/marketplace-added"
-  export QDI_TELEMETRY_INSTALLER="$FIXTURE_ROOT/telemetry-installer.sh"
-  export QDI_TELEMETRY_CLI="$FIXTURE_ROOT/ai-agent-telemetry"
-  export QDI_GIT_ORIGIN_FILE="$FIXTURE_ROOT/git-origin"
-  export QDI_APM_INSTALLER="$FIXTURE_ROOT/apm-installer.sh"
-  export QDI_APM_CLI="$FIXTURE_ROOT/apm"
-  export QUBERSHIP_DEV_APM_INSTALL_URL=https://example.test/apm-unix
-  export QUBERSHIP_DEV_TELEMETRY_INSTALL_URL=https://example.test/install.sh
-  export QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY=https://example.test/pre-commit-global.git
-  export QUBERSHIP_DEV_GIT_HOOKS_DIR="$XDG_DATA_HOME/qubership/pre-commit-global"
-  export PATH="$FIXTURE_ROOT/bin:/usr/bin:/bin"
-  unset CYBER_FERRET_PASSWORD QDI_FAIL_APM_COMMAND QDI_GIT_STATUS QDI_GIT_PULL_FAIL
-  unset QDI_TEST_JAVA_EXIT_CODE QDI_TEST_JAVA_SPEC_VERSION
-  mkdir -p "$HOME" "$FIXTURE_ROOT/bin" "$XDG_CONFIG_HOME/ai-agent-telemetry"
-  printf 'AI_AGENT_TELEMETRY_ENDPOINT=https://telemetry.example.test\n' \
-    > "$XDG_CONFIG_HOME/ai-agent-telemetry/env"
+  export TMPDIR="$FIXTURE_ROOT/tmp"
+  export QDI_TEST_LOG="$FIXTURE_ROOT/curl.log"
+  export QDI_EXEC_LOG="$FIXTURE_ROOT/exec.log"
+  export QDI_INPUT_LOG="$FIXTURE_ROOT/input.log"
+  export QDI_BINARY_EXIT=0
+  export QDI_READ_INPUT=0
+  export QDI_SLEEP_SECONDS=0
+  export QDI_OS=Linux
+  export QDI_ARCH=x86_64
+  export QDI_DOWNLOAD_FAIL=0
+  export QDI_RESPONSE_BODY='private-response-body'
+  export AI_AGENT_TELEMETRY_INSTALL_BASE_URL=https://release.example.test/releases
+  unset AI_AGENT_TELEMETRY_INSTALL_VERSION AI_AGENT_TELEMETRY_TOKEN
+  mkdir -p "$HOME" "$TMPDIR" "$FIXTURE_ROOT/bin"
   : > "$QDI_TEST_LOG"
 
-  cat > "$FIXTURE_ROOT/bin/java" <<'EOF'
+  cat > "$FIXTURE_ROOT/asset" <<'EOF'
 #!/bin/sh
-printf 'java %s\n' "$*" >> "$QDI_TEST_LOG"
-if [ "${QDI_TEST_JAVA_EXIT_CODE:-0}" -ne 0 ]; then
-  exit "$QDI_TEST_JAVA_EXIT_CODE"
+printf '%s\n' "$@" > "$QDI_EXEC_LOG"
+if [ "${QDI_READ_INPUT:-0}" = 1 ]; then
+  printf 'Collector endpoint: ' >&2
+  if ! IFS= read -r answer; then
+    exit 64
+  fi
+  printf '%s\n' "$answer" > "$QDI_INPUT_LOG"
 fi
-printf '    java.specification.version = %s\n' "${QDI_TEST_JAVA_SPEC_VERSION:-21}" >&2
+if [ "${QDI_SLEEP_SECONDS:-0}" -gt 0 ]; then
+  : > "$FIXTURE_ROOT/child-ready"
+  sleep "$QDI_SLEEP_SECONDS"
+fi
+exit "${QDI_BINARY_EXIT:-0}"
 EOF
+  chmod +x "$FIXTURE_ROOT/asset"
 
-  cat > "$FIXTURE_ROOT/bin/apm" <<'EOF'
+  cat > "$FIXTURE_ROOT/bin/uname" <<'EOF'
 #!/bin/sh
-printf 'apm %s\n' "$*" >> "$QDI_TEST_LOG"
-if [ "${QDI_FAIL_APM_COMMAND:-}" = "${1:-}" ]; then
-  exit 9
-fi
-case "$*" in
-  'marketplace list')
-    [ ! -f "$QDI_MARKETPLACE_STATE" ] || printf 'qubership-ai-packages Netcracker/qubership-ai-packages\n'
-    ;;
-  'marketplace add Netcracker/qubership-ai-packages')
-    : > "$QDI_MARKETPLACE_STATE"
-    ;;
-  view*)
-    exit 1
-    ;;
+case ${1:-} in
+  -s) printf '%s\n' "$QDI_OS" ;;
+  -m) printf '%s\n' "$QDI_ARCH" ;;
+  *) exit 2 ;;
 esac
-EOF
-  cp "$FIXTURE_ROOT/bin/apm" "$QDI_APM_CLI"
-
-  cat > "$QDI_APM_INSTALLER" <<'EOF'
-#!/bin/sh
-printf 'apm-installer %s\n' "$*" >> "$QDI_TEST_LOG"
-mkdir -p "$HOME/.local/bin"
-cp "$QDI_APM_CLI" "$HOME/.local/bin/apm"
-chmod +x "$HOME/.local/bin/apm"
-EOF
-
-  cat > "$FIXTURE_ROOT/bin/git" <<'EOF'
-#!/bin/sh
-printf 'git %s\n' "$*" >> "$QDI_TEST_LOG"
-if [ "${1:-}" = config ] && [ "${2:-}" = --global ] && [ "${3:-}" = --get ]; then
-  [ -f "$QDI_GIT_CONFIG" ] || exit 1
-  cat "$QDI_GIT_CONFIG"
-  exit 0
-fi
-if [ "${1:-}" = config ] && [ "${2:-}" = --global ] && [ "${3:-}" = core.hooksPath ]; then
-  printf '%s\n' "$4" > "$QDI_GIT_CONFIG"
-  exit 0
-fi
-if [ "${1:-}" = clone ]; then
-  mkdir -p "$3/.git" "$3/hooks-global"
-  printf '%s\n' "$2" > "$QDI_GIT_ORIGIN_FILE"
-  exit 0
-fi
-if [ "${1:-}" = -C ] && [ "${3:-}" = rev-parse ]; then
-  [ -d "$2/.git" ] || exit 1
-  printf 'true\n'
-  exit 0
-fi
-if [ "${1:-}" = -C ] && [ "${3:-}" = remote ] && [ "${4:-}" = get-url ]; then
-  [ -f "$QDI_GIT_ORIGIN_FILE" ] || exit 1
-  cat "$QDI_GIT_ORIGIN_FILE"
-  exit 0
-fi
-if [ "${1:-}" = -C ] && [ "${3:-}" = status ]; then
-  [ -z "${QDI_GIT_STATUS:-}" ] || printf '%s\n' "$QDI_GIT_STATUS"
-  exit 0
-fi
-if [ "${1:-}" = -C ] && [ "${3:-}" = pull ]; then
-  [ -z "${QDI_GIT_PULL_FAIL:-}" ] || exit 1
-  exit 0
-fi
-exit 0
 EOF
 
   cat > "$FIXTURE_ROOT/bin/curl" <<'EOF'
 #!/bin/sh
-printf 'curl %s\n' "$*" >> "$QDI_TEST_LOG"
 out=
 url=
 while [ "$#" -gt 0 ]; do
@@ -160,372 +86,227 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-[ -n "$out" ] || exit 2
+if [ -z "$out" ]; then
+  cat "$QDI_BOOTSTRAP_SOURCE"
+  exit 0
+fi
+printf '%s\n' "$url" >> "$QDI_TEST_LOG"
+if [ "${QDI_DOWNLOAD_FAIL:-0}" = 1 ]; then
+  printf '%s\n' "$QDI_RESPONSE_BODY"
+  exit 22
+fi
 case $url in
-  "$QUBERSHIP_DEV_APM_INSTALL_URL") cp "$QDI_APM_INSTALLER" "$out" ;;
-  "$QUBERSHIP_DEV_TELEMETRY_INSTALL_URL") cp "$QDI_TELEMETRY_INSTALLER" "$out" ;;
-  *) exit 3 ;;
+  */SHA256SUMS) cp "$FIXTURE_ROOT/SHA256SUMS" "$out" ;;
+  *) cp "$FIXTURE_ROOT/asset" "$out" ;;
 esac
 EOF
-
-  cat > "$QDI_TELEMETRY_INSTALLER" <<'EOF'
-#!/bin/sh
-printf 'telemetry-installer %s\n' "$*" >> "$QDI_TEST_LOG"
-mkdir -p "$HOME/.local/bin"
-cp "$QDI_TELEMETRY_CLI" "$HOME/.local/bin/ai-agent-telemetry"
-chmod +x "$HOME/.local/bin/ai-agent-telemetry"
-EOF
-
-cat > "$QDI_TELEMETRY_CLI" <<'EOF'
-#!/bin/sh
-printf 'ai-agent-telemetry %s\n' "$*" >> "$QDI_TEST_LOG"
-EOF
-
-  chmod +x "$FIXTURE_ROOT/bin/java" "$FIXTURE_ROOT/bin/apm" "$FIXTURE_ROOT/bin/git" \
-    "$FIXTURE_ROOT/bin/curl" "$QDI_APM_INSTALLER" "$QDI_APM_CLI" \
-    "$QDI_TELEMETRY_INSTALLER" "$QDI_TELEMETRY_CLI"
+  chmod +x "$FIXTURE_ROOT/bin/uname" "$FIXTURE_ROOT/bin/curl"
+  export PATH="$FIXTURE_ROOT/bin:/usr/bin:/bin"
+  write_sums ai-agent-telemetry-linux-amd64
 }
 
-teardown_component_fixture() {
+write_sums() (
+  asset=$1
+  digest=$(sha256sum "$FIXTURE_ROOT/asset" | awk '{print $1}')
+  printf '%s  %s\n' "$digest" "$asset" > "$FIXTURE_ROOT/SHA256SUMS"
+)
+
+teardown_fixture() {
   rm -rf "$FIXTURE_ROOT"
-  unset FIXTURE_ROOT HOME XDG_DATA_HOME XDG_CONFIG_HOME QDI_TEST_LOG QDI_GIT_CONFIG
-  unset QDI_MARKETPLACE_STATE QDI_APM_INSTALLER QDI_APM_CLI QDI_TELEMETRY_INSTALLER QDI_TELEMETRY_CLI
-  unset QDI_GIT_ORIGIN_FILE QDI_GIT_STATUS QDI_GIT_PULL_FAIL
-  unset QUBERSHIP_DEV_APM_INSTALL_URL
-  unset QUBERSHIP_DEV_TELEMETRY_INSTALL_URL QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY
-  unset QUBERSHIP_DEV_GIT_HOOKS_DIR QDI_FAIL_APM_COMMAND CYBER_FERRET_PASSWORD
-  unset QDI_TEST_JAVA_EXIT_CODE QDI_TEST_JAVA_SPEC_VERSION
-  PATH=/usr/bin:/bin
-  export PATH
 }
 
-run_fixture_installer() {
+run_installer() {
   set +e
   RUN_OUTPUT=$(sh "$INSTALLER" "$@" 2>&1)
   RUN_CODE=$?
   set -e
 }
 
-assert_exit_with() {
-  _expected_code=$1
-  _expected_text=$2
-  shift 2
-  set +e
-  output=$(sh "$INSTALLER" "$@" 2>&1)
-  code=$?
-  set -e
-  [ "$code" -eq "$_expected_code" ] || fail "expected exit $_expected_code, got $code: $output"
-  assert_contains "$output" "$_expected_text"
+assert_temp_clean() {
+  if find "$TMPDIR" -mindepth 1 -print -quit | grep . >/dev/null 2>&1; then
+    find "$TMPDIR" -mindepth 1 -maxdepth 2 -print >&2
+    fail "private temporary directory was not removed"
+  fi
 }
 
-test_help_describes_public_options() {
-  output=$(sh "$INSTALLER" --help 2>&1) || fail "--help returned nonzero"
-  assert_contains "$output" "--components"
-  assert_contains "$output" "--skip"
-  assert_contains "$output" "--harnesses"
-  assert_contains "$output" "--force-git-hooks"
-  assert_contains "$output" "--force-update"
-  assert_contains "$output" "--non-interactive"
-}
-
-test_invalid_component_fails_before_installation() {
-  assert_exit_with 2 'unknown component "unknown"' --components unknown
-}
-
-test_invalid_harness_fails_before_installation() {
-  assert_exit_with 2 'unknown harness "unknown"' --harnesses unknown
-}
-
-test_empty_selection_fails_before_installation() {
-  assert_exit_with 2 'no components selected' --skip all
-  assert_exit_with 2 'no components selected' --components telemetry --skip telemetry
-  assert_exit_with 2 'component list contains an empty value' --components=apm,,telemetry
-  assert_exit_with 2 'harness list contains an empty value' --harnesses=claude,
-}
-
-test_git_hook_prerequisites_fail_non_interactively() {
-  empty_path=$(mktemp -d)
-  set +e
-  output=$(PATH="$empty_path" /bin/sh "$INSTALLER" --components git-hooks --non-interactive 2>&1)
-  code=$?
-  set -e
-  rm -rf "$empty_path"
-  [ "$code" -eq 1 ] || fail "expected prerequisite exit 1, got $code: $output"
-  assert_contains "$output" "Git is required"
-  assert_contains "$output" "Java 21 or newer is required"
-}
-
-test_git_hook_prerequisites_are_not_checked_when_skipped() {
-  empty_path=$(mktemp -d)
-  set +e
-  output=$(PATH="$empty_path" /bin/sh "$INSTALLER" --components telemetry --non-interactive 2>&1)
-  code=$?
-  set -e
-  rm -rf "$empty_path"
-  [ "$code" -eq 1 ] || fail "expected incomplete handler exit 1, got $code: $output"
-  case $output in
-    *"Git is required"*|*"Java is required"*) fail "checked Git or Java for telemetry-only install" ;;
-  esac
-}
-
-test_declined_prerequisite_installation_stops_bootstrap() {
-  empty_path=$(mktemp -d)
-  set +e
-  output=$(printf 'no\n' | PATH="$empty_path" /bin/sh "$INSTALLER" --components git-hooks 2>&1)
-  code=$?
-  set -e
-  rm -rf "$empty_path"
-  [ "$code" -eq 1 ] || fail "expected declined prerequisite exit 1, got $code: $output"
-  case $output in
-    *"Installation stopped"*|*"prerequisite confirmation"*) ;;
-    *) fail "expected declined or unavailable-terminal message: $output" ;;
-  esac
-}
-
-test_java_20_is_rejected() {
-  setup_component_fixture
-  QDI_TEST_JAVA_SPEC_VERSION=20
-  export QDI_TEST_JAVA_SPEC_VERSION
-  run_fixture_installer --components git-hooks --non-interactive
-  [ "$RUN_CODE" -eq 1 ] || fail "expected Java 20 rejection: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "Detected Java 20"
-  assert_contains "$RUN_OUTPUT" "Java 21 or newer is required"
-  assert_log_not_contains "git clone"
-  teardown_component_fixture
-}
-
-test_java_21_and_newer_are_accepted() {
-  for version in 21 26; do
-    setup_component_fixture
-    QDI_TEST_JAVA_SPEC_VERSION=$version
-    export QDI_TEST_JAVA_SPEC_VERSION
-    run_fixture_installer --components git-hooks --non-interactive
-    [ "$RUN_CODE" -eq 0 ] || fail "expected Java $version acceptance: $RUN_OUTPUT"
-    teardown_component_fixture
+test_asset_selection() {
+  cases='Linux x86_64 ai-agent-telemetry-linux-amd64
+Linux aarch64 ai-agent-telemetry-linux-arm64
+Darwin x86_64 ai-agent-telemetry-darwin-amd64
+Darwin arm64 ai-agent-telemetry-darwin-arm64'
+  printf '%s\n' "$cases" | while IFS=' ' read -r os arch asset; do
+    setup_fixture
+    QDI_OS=$os QDI_ARCH=$arch
+    export QDI_OS QDI_ARCH
+    write_sums "$asset"
+    run_installer update --components telemetry
+    [ "$RUN_CODE" -eq 0 ] || fail "$os/$arch failed: $RUN_OUTPUT"
+    grep -Fx "https://release.example.test/releases/latest/download/$asset" "$QDI_TEST_LOG" >/dev/null ||
+      fail "wrong asset URL for $os/$arch"
+    grep -Fx 'https://release.example.test/releases/latest/download/SHA256SUMS' "$QDI_TEST_LOG" >/dev/null ||
+      fail "missing checksum URL for $os/$arch"
+    teardown_fixture
   done
 }
 
-test_unrecognized_or_failing_java_is_rejected() {
-  setup_component_fixture
-  QDI_TEST_JAVA_SPEC_VERSION=unknown
-  export QDI_TEST_JAVA_SPEC_VERSION
-  run_fixture_installer --components git-hooks --non-interactive
-  [ "$RUN_CODE" -eq 1 ] || fail "expected malformed Java rejection: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "Could not determine the Java version"
-  teardown_component_fixture
-
-  setup_component_fixture
-  QDI_TEST_JAVA_EXIT_CODE=1
-  export QDI_TEST_JAVA_EXIT_CODE
-  run_fixture_installer --components git-hooks --non-interactive
-  [ "$RUN_CODE" -eq 1 ] || fail "expected failing Java rejection: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "Could not determine the Java version"
-  teardown_component_fixture
+test_versioned_and_latest_urls() {
+  setup_fixture
+  run_installer
+  [ "$RUN_CODE" -eq 0 ] || fail "latest run failed: $RUN_OUTPUT"
+  grep -Fx 'https://release.example.test/releases/latest/download/ai-agent-telemetry-linux-amd64' "$QDI_TEST_LOG" >/dev/null ||
+    fail "latest asset URL missing"
+  : > "$QDI_TEST_LOG"
+  AI_AGENT_TELEMETRY_INSTALL_VERSION=v1.2.3
+  export AI_AGENT_TELEMETRY_INSTALL_VERSION
+  run_installer install
+  [ "$RUN_CODE" -eq 0 ] || fail "versioned run failed: $RUN_OUTPUT"
+  grep -Fx 'https://release.example.test/releases/download/v1.2.3/ai-agent-telemetry-linux-amd64' "$QDI_TEST_LOG" >/dev/null ||
+    fail "versioned asset URL missing"
+  grep -Fx 'https://release.example.test/releases/download/v1.2.3/SHA256SUMS' "$QDI_TEST_LOG" >/dev/null ||
+    fail "versioned checksum URL missing"
+  teardown_fixture
 }
 
-test_default_install_runs_every_component() {
-  setup_component_fixture
-  run_fixture_installer --non-interactive
-  [ "$RUN_CODE" -eq 0 ] || fail "default install failed: $RUN_OUTPUT"
-  assert_log_contains "apm self-update"
-  assert_log_contains "apm install qubership-global-essentials@qubership-ai-packages -g --target claude,codex,cursor"
-  assert_log_contains "apm compile -g"
-  assert_log_contains "apm deps list -g"
-  assert_log_contains "telemetry-installer --skip-config"
-  assert_log_not_contains "telemetry-installer --skip-config --force"
-  assert_log_contains "ai-agent-telemetry hooks install --target=claude,codex,cursor"
-  assert_log_contains "ai-agent-telemetry status"
-  assert_log_contains "ai-agent-telemetry selftest"
-  assert_log_contains "git clone https://example.test/pre-commit-global.git $QUBERSHIP_DEV_GIT_HOOKS_DIR"
-  assert_contains "$RUN_OUTPUT" "apm              OK"
-  assert_contains "$RUN_OUTPUT" "telemetry        OK"
-  assert_contains "$RUN_OUTPUT" "git-hooks        OK"
-  assert_contains "$RUN_OUTPUT" "export CYBER_FERRET_PASSWORD='<password>'"
-  assert_contains "$RUN_OUTPUT" "global-scripts/README.md#cyberferret-password"
-  teardown_component_fixture
+test_command_defaulting_and_exact_argv() {
+  setup_fixture
+  run_installer
+  [ "$RUN_CODE" -eq 0 ] || fail "default run failed: $RUN_OUTPUT"
+  [ "$(cat "$QDI_EXEC_LOG")" = install ] || fail "no arguments did not default to install"
+  run_installer --components telemetry --non-interactive
+  expected='install
+--components
+telemetry
+--non-interactive'
+  [ "$(cat "$QDI_EXEC_LOG")" = "$expected" ] || fail "option-first argv changed"
+  run_installer update --components 'telemetry,apm' --non-interactive
+  expected='update
+--components
+telemetry,apm
+--non-interactive'
+  [ "$(cat "$QDI_EXEC_LOG")" = "$expected" ] || fail "explicit update argv changed"
+  run_installer uninstall --purge
+  expected='uninstall
+--purge'
+  [ "$(cat "$QDI_EXEC_LOG")" = "$expected" ] || fail "explicit uninstall argv changed"
+  teardown_fixture
 }
 
-test_missing_apm_uses_official_bootstrap_contract() {
-  setup_component_fixture
-  isolated_path="$FIXTURE_ROOT/isolated-bin"
-  mkdir -p "$isolated_path"
-  for tool in awk grep mktemp rm sh mkdir cp chmod cat sed; do
-    /bin/ln -s "$(command -v "$tool")" "$isolated_path/$tool"
+test_checksum_failures_do_not_execute() {
+  setup_fixture
+  printf 'deadbeef  ai-agent-telemetry-linux-amd64\n' > "$FIXTURE_ROOT/SHA256SUMS"
+  run_installer install
+  [ "$RUN_CODE" -ne 0 ] || fail "checksum mismatch succeeded"
+  assert_contains "$RUN_OUTPUT" 'checksum mismatch'
+  [ ! -e "$QDI_EXEC_LOG" ] || fail "binary executed after checksum mismatch"
+  assert_temp_clean
+  printf 'deadbeef  another-asset\n' > "$FIXTURE_ROOT/SHA256SUMS"
+  run_installer install
+  [ "$RUN_CODE" -ne 0 ] || fail "missing checksum entry succeeded"
+  assert_contains "$RUN_OUTPUT" 'no checksum entry'
+  [ ! -e "$QDI_EXEC_LOG" ] || fail "binary executed without checksum entry"
+  assert_temp_clean
+  teardown_fixture
+}
+
+test_exit_status_and_cleanup() {
+  setup_fixture
+  QDI_BINARY_EXIT=37
+  export QDI_BINARY_EXIT
+  run_installer update
+  [ "$RUN_CODE" -eq 37 ] || fail "binary exit 37 became $RUN_CODE: $RUN_OUTPUT"
+  assert_temp_clean
+  QDI_BINARY_EXIT=0
+  QDI_DOWNLOAD_FAIL=1
+  export QDI_BINARY_EXIT QDI_DOWNLOAD_FAIL
+  run_installer update
+  [ "$RUN_CODE" -ne 0 ] || fail "failed download succeeded"
+  assert_not_contains "$RUN_OUTPUT" "$QDI_RESPONSE_BODY"
+  assert_temp_clean
+  teardown_fixture
+}
+
+test_no_secret_output() {
+  setup_fixture
+  AI_AGENT_TELEMETRY_TOKEN='transport-secret-value'
+  export AI_AGENT_TELEMETRY_TOKEN
+  run_installer --non-interactive
+  [ "$RUN_CODE" -eq 0 ] || fail "secret-output fixture failed: $RUN_OUTPUT"
+  assert_not_contains "$RUN_OUTPUT" "$AI_AGENT_TELEMETRY_TOKEN"
+  teardown_fixture
+}
+
+test_signal_cleanup() {
+  setup_fixture
+  QDI_SLEEP_SECONDS=2
+  export QDI_SLEEP_SECONDS
+  sh "$INSTALLER" update > "$FIXTURE_ROOT/signal.out" 2>&1 &
+  installer_pid=$!
+  attempts=0
+  while [ ! -e "$FIXTURE_ROOT/child-ready" ] && [ "$attempts" -lt 100 ]; do
+    sleep 0.02
+    attempts=$((attempts + 1))
   done
-  /bin/ln -s "$FIXTURE_ROOT/bin/curl" "$isolated_path/curl"
-  PATH=$isolated_path
-  export PATH
-  run_fixture_installer --components apm --harnesses cursor --non-interactive
-  [ "$RUN_CODE" -eq 0 ] || fail "APM bootstrap failed: $RUN_OUTPUT"
-  assert_log_contains "curl -fsSL https://example.test/apm-unix -o"
-  assert_log_contains "apm-installer"
-  assert_log_not_contains "apm self-update"
-  assert_log_contains "apm install qubership-global-essentials@qubership-ai-packages -g --target cursor"
-  teardown_component_fixture
+  [ -e "$FIXTURE_ROOT/child-ready" ] || fail "signal fixture did not start child"
+  kill -TERM "$installer_pid"
+  set +e
+  wait "$installer_pid"
+  code=$?
+  set -e
+  [ "$code" -ne 0 ] || fail "terminated bootstrap returned success"
+  assert_temp_clean
+  teardown_fixture
 }
 
-test_existing_clis_are_updated_by_default() {
-  setup_component_fixture
-  cat > "$FIXTURE_ROOT/bin/ai-agent-telemetry" <<'EOF'
-#!/bin/sh
-printf 'old-ai-agent-telemetry %s\n' "$*" >> "$QDI_TEST_LOG"
-EOF
-  chmod +x "$FIXTURE_ROOT/bin/ai-agent-telemetry"
-  run_fixture_installer --components apm,telemetry --non-interactive
-  [ "$RUN_CODE" -eq 0 ] || fail "existing CLI update failed: $RUN_OUTPUT"
-  assert_log_contains "apm self-update"
-  assert_log_contains "telemetry-installer --skip-config --force"
-  assert_log_not_contains "old-ai-agent-telemetry hooks install"
-  assert_log_contains "ai-agent-telemetry hooks install --target=claude,codex,cursor"
-  teardown_component_fixture
+test_pty_prompt_reaches_controlling_terminal() {
+  setup_fixture
+  QDI_READ_INPUT=1
+  QDI_BOOTSTRAP_SOURCE=$INSTALLER
+  export QDI_READ_INPUT QDI_BOOTSTRAP_SOURCE
+  command="env PATH='$PATH' HOME='$HOME' TMPDIR='$TMPDIR' FIXTURE_ROOT='$FIXTURE_ROOT' QDI_TEST_LOG='$QDI_TEST_LOG' QDI_EXEC_LOG='$QDI_EXEC_LOG' QDI_INPUT_LOG='$QDI_INPUT_LOG' QDI_READ_INPUT=1 QDI_BOOTSTRAP_SOURCE='$INSTALLER' AI_AGENT_TELEMETRY_INSTALL_BASE_URL='$AI_AGENT_TELEMETRY_INSTALL_BASE_URL' sh -c 'curl https://bootstrap.example.test/install.sh | sh -s -- install'"
+  set +e
+  pty_output=$(printf 'https://collector.example.test/v1/logs\n' | script -qfec "$command" /dev/null 2>&1)
+  code=$?
+  set -e
+  [ "$code" -eq 0 ] || fail "PTY curl | sh failed ($code): $pty_output"
+  [ "$(cat "$QDI_INPUT_LOG")" = 'https://collector.example.test/v1/logs' ] || fail "prompt did not read from /dev/tty"
+  assert_temp_clean
+  teardown_fixture
 }
 
-test_selection_and_harnesses_are_forwarded() {
-  setup_component_fixture
-  run_fixture_installer --components apm,telemetry --skip apm --harnesses codex --non-interactive
-  [ "$RUN_CODE" -eq 0 ] || fail "selected install failed: $RUN_OUTPUT"
-  assert_log_contains "telemetry-installer --skip-config"
-  assert_log_contains "ai-agent-telemetry hooks install --target=codex"
-  assert_not_contains "$(cat "$QDI_TEST_LOG")" "apm "
-  assert_not_contains "$(cat "$QDI_TEST_LOG")" "git "
-  teardown_component_fixture
+test_no_terminal_and_noninteractive_behavior() {
+  setup_fixture
+  QDI_READ_INPUT=1
+  export QDI_READ_INPUT
+  set +e
+  output=$(setsid sh "$INSTALLER" install </dev/null 2>&1)
+  code=$?
+  set -e
+  [ "$code" -eq 64 ] || fail "no-terminal required input returned $code: $output"
+  assert_temp_clean
+  QDI_READ_INPUT=0
+  export QDI_READ_INPUT
+  set +e
+  output=$(setsid sh "$INSTALLER" --non-interactive </dev/null 2>&1)
+  code=$?
+  set -e
+  [ "$code" -eq 0 ] || fail "no-terminal noninteractive run returned $code: $output"
+  assert_temp_clean
+  teardown_fixture
 }
 
-test_force_update_refreshes_selected_components() {
-  setup_component_fixture
-  : > "$QDI_MARKETPLACE_STATE"
-  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
-  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
-  run_fixture_installer --force-update --force-git-hooks --harnesses claude --non-interactive
-  [ "$RUN_CODE" -eq 0 ] || fail "force update failed: $RUN_OUTPUT"
-  assert_log_contains "apm self-update"
-  assert_log_contains "apm marketplace update qubership-ai-packages"
-  assert_log_contains \
-    "apm install --update qubership-global-essentials@qubership-ai-packages -g --target claude"
-  assert_log_contains "telemetry-installer --skip-config --force"
-  assert_log_contains "ai-agent-telemetry hooks install --target=claude"
-  assert_log_contains "git -C $QUBERSHIP_DEV_GIT_HOOKS_DIR pull --ff-only"
-  teardown_component_fixture
+test_compatibility_path_is_source_symlink() {
+  [ -L "$COMPAT_INSTALLER" ] || fail "POSIX compatibility path is not a symlink"
+  [ "$(readlink "$COMPAT_INSTALLER")" = '../scripts/install.sh' ] || fail "POSIX compatibility symlink has the wrong target"
 }
 
-test_force_update_refreshes_git_hooks_through_symlink() {
-  setup_component_fixture
-  _physical_data="$FIXTURE_ROOT/physical-data"
-  _linked_data="$FIXTURE_ROOT/linked-data"
-  QUBERSHIP_DEV_GIT_HOOKS_DIR="$_linked_data/qubership/pre-commit-global"
-  export QUBERSHIP_DEV_GIT_HOOKS_DIR
-  mkdir -p \
-    "$_physical_data/qubership/pre-commit-global/.git" \
-    "$_physical_data/qubership/pre-commit-global/hooks-global"
-  ln -s "$_physical_data" "$_linked_data"
-  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
-  (CDPATH='' cd -- "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global" && pwd -P) > "$QDI_GIT_CONFIG"
-
-  run_fixture_installer --components git-hooks --force-update --non-interactive
-
-  [ "$RUN_CODE" -eq 0 ] || fail "symlinked Git hooks update failed: $RUN_OUTPUT"
-  assert_log_contains "git -C $QUBERSHIP_DEV_GIT_HOOKS_DIR pull --ff-only"
-  assert_contains "$RUN_OUTPUT" "git-hooks        OK"
-  teardown_component_fixture
-}
-
-test_existing_unrelated_git_hooks_are_skipped() {
-  setup_component_fixture
-  printf '/other/hooks\n' > "$QDI_GIT_CONFIG"
-  run_fixture_installer --components git-hooks --non-interactive
-  [ "$RUN_CODE" -eq 0 ] || fail "git hook skip failed: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "git-hooks        SKIPPED"
-  assert_contains "$RUN_OUTPUT" "core.hooksPath is already set to /other/hooks"
-  assert_not_contains "$(cat "$QDI_TEST_LOG")" "git clone"
-  [ "$(cat "$QDI_GIT_CONFIG")" = /other/hooks ] || fail "overwrote existing Git hooks"
-  teardown_component_fixture
-}
-
-test_component_failure_does_not_stop_independent_components() {
-  setup_component_fixture
-  export QDI_FAIL_APM_COMMAND=compile
-  run_fixture_installer --components apm,telemetry --non-interactive
-  [ "$RUN_CODE" -eq 1 ] || fail "expected aggregated failure exit 1, got $RUN_CODE: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "apm              FAILED"
-  assert_contains "$RUN_OUTPUT" "telemetry        OK"
-  assert_log_contains "telemetry-installer --skip-config"
-  assert_log_contains "ai-agent-telemetry hooks install --target=claude,codex,cursor"
-  teardown_component_fixture
-}
-
-test_unconfigured_telemetry_fails_non_interactively() {
-  setup_component_fixture
-  rm -f "$XDG_CONFIG_HOME/ai-agent-telemetry/env"
-  run_fixture_installer --components telemetry --harnesses cursor --non-interactive
-  [ "$RUN_CODE" -eq 1 ] || fail "expected unconfigured telemetry failure: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "telemetry configuration is required"
-  assert_not_contains "$(cat "$QDI_TEST_LOG")" "ai-agent-telemetry configure"
-  teardown_component_fixture
-}
-
-test_unconfigured_telemetry_configures_interactively() {
-  setup_component_fixture
-  rm -f "$XDG_CONFIG_HOME/ai-agent-telemetry/env"
-  run_fixture_installer --components telemetry --harnesses cursor
-  [ "$RUN_CODE" -eq 0 ] || fail "interactive telemetry configuration failed: $RUN_OUTPUT"
-  assert_log_contains "ai-agent-telemetry configure --hooks=cursor"
-  teardown_component_fixture
-}
-
-test_git_hooks_reject_wrong_origin_and_dirty_clone() {
-  setup_component_fixture
-  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git" "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
-  printf 'https://example.test/unrelated.git\n' > "$QDI_GIT_ORIGIN_FILE"
-  run_fixture_installer --components git-hooks --force-git-hooks --non-interactive
-  [ "$RUN_CODE" -eq 1 ] || fail "expected wrong-origin failure: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "unexpected origin"
-  assert_not_contains "$(cat "$QDI_TEST_LOG")" "git config --global core.hooksPath"
-
-  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
-  export QDI_GIT_STATUS=' M hooks-global/pre-commit'
-  run_fixture_installer --components git-hooks --force-git-hooks --force-update --non-interactive
-  [ "$RUN_CODE" -eq 1 ] || fail "expected dirty-clone failure: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "local changes"
-  assert_not_contains "$(cat "$QDI_TEST_LOG")" "git -C $QUBERSHIP_DEV_GIT_HOOKS_DIR pull --ff-only"
-  teardown_component_fixture
-}
-
-test_git_hooks_reject_non_repository_and_divergence() {
-  setup_component_fixture
-  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/hooks-global"
-  run_fixture_installer --components git-hooks --force-git-hooks --non-interactive
-  [ "$RUN_CODE" -eq 1 ] || fail "expected non-repository failure: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "not the managed Git repository"
-
-  mkdir -p "$QUBERSHIP_DEV_GIT_HOOKS_DIR/.git"
-  printf '%s\n' "$QUBERSHIP_DEV_GIT_HOOKS_REPOSITORY" > "$QDI_GIT_ORIGIN_FILE"
-  export QDI_GIT_PULL_FAIL=1
-  run_fixture_installer --components git-hooks --force-git-hooks --force-update --non-interactive
-  [ "$RUN_CODE" -eq 1 ] || fail "expected divergent update failure: $RUN_OUTPUT"
-  assert_contains "$RUN_OUTPUT" "git-hooks        FAILED"
-  teardown_component_fixture
-}
-
-test_help_describes_public_options
-test_invalid_component_fails_before_installation
-test_invalid_harness_fails_before_installation
-test_empty_selection_fails_before_installation
-test_git_hook_prerequisites_fail_non_interactively
-test_git_hook_prerequisites_are_not_checked_when_skipped
-test_declined_prerequisite_installation_stops_bootstrap
-test_java_20_is_rejected
-test_java_21_and_newer_are_accepted
-test_unrecognized_or_failing_java_is_rejected
-test_default_install_runs_every_component
-test_missing_apm_uses_official_bootstrap_contract
-test_existing_clis_are_updated_by_default
-test_selection_and_harnesses_are_forwarded
-test_force_update_refreshes_selected_components
-test_force_update_refreshes_git_hooks_through_symlink
-test_existing_unrelated_git_hooks_are_skipped
-test_component_failure_does_not_stop_independent_components
-test_unconfigured_telemetry_fails_non_interactively
-test_unconfigured_telemetry_configures_interactively
-test_git_hooks_reject_wrong_origin_and_dirty_clone
-test_git_hooks_reject_non_repository_and_divergence
-printf 'PASS: POSIX developer installer tests\n'
+test_asset_selection
+test_versioned_and_latest_urls
+test_command_defaulting_and_exact_argv
+test_checksum_failures_do_not_execute
+test_exit_status_and_cleanup
+test_no_secret_output
+test_signal_cleanup
+test_pty_prompt_reaches_controlling_terminal
+test_no_terminal_and_noninteractive_behavior
+test_compatibility_path_is_source_symlink
+printf 'PASS: thin POSIX bootstrap transport tests\n'
