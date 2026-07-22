@@ -1,0 +1,309 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func TestRunLifecyclePreflightsAllSelectedComponentsBeforeMutation(t *testing.T) {
+	var calls []string
+	deps := fakeLifecycleDeps(&calls, map[componentName]error{componentTelemetry: errors.New("collector unavailable")}, nil)
+
+	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionInstall}, deps)
+	if summary.Err == nil || !strings.Contains(summary.Err.Error(), "collector unavailable") {
+		t.Fatalf("runLifecycle() error = %v, want telemetry preflight failure", summary.Err)
+	}
+	want := []string{"preflight:apm", "preflight:telemetry", "preflight:git-hooks"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want all preflights and no mutation %v", calls, want)
+	}
+	if len(summary.Results) != 0 {
+		t.Fatalf("results = %v, want none after preflight failure", summary.Results)
+	}
+}
+
+func TestRunLifecycleUsesFixedInstallAndUpdateOrder(t *testing.T) {
+	for _, action := range []lifecycleAction{actionInstall, actionUpdate} {
+		t.Run(string(action), func(t *testing.T) {
+			var calls []string
+			deps := fakeLifecycleDeps(&calls, nil, nil)
+			summary := runLifecycle(context.Background(), lifecycleOptions{
+				Action: action, Components: []componentName{componentGitHooks, componentTelemetry, componentAPM},
+			}, deps)
+			if summary.Err != nil {
+				t.Fatal(summary.Err)
+			}
+			verb := string(action)
+			wantCalls := []string{
+				"preflight:apm", "preflight:telemetry", "preflight:git-hooks",
+				"managed:cli", verb + ":apm", verb + ":telemetry", verb + ":git-hooks",
+			}
+			if !reflect.DeepEqual(calls, wantCalls) {
+				t.Fatalf("calls = %v, want %v", calls, wantCalls)
+			}
+			wantNames := []string{"managed-cli", "apm", "telemetry", "git-hooks"}
+			if got := resultNames(summary.Results); !reflect.DeepEqual(got, wantNames) {
+				t.Fatalf("result names = %v, want %v", got, wantNames)
+			}
+		})
+	}
+}
+
+func TestRunLifecycleContinuesIndependentComponentsAfterFailures(t *testing.T) {
+	var calls []string
+	failures := map[string]error{
+		"managed:cli":       errors.New("CLI copy failed"),
+		"install:telemetry": errors.New("hook install failed"),
+	}
+	deps := fakeLifecycleDeps(&calls, nil, failures)
+
+	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionInstall}, deps)
+	if summary.Err == nil {
+		t.Fatal("runLifecycle() error = nil, want joined operational errors")
+	}
+	for _, message := range []string{"CLI copy failed", "hook install failed"} {
+		if !strings.Contains(summary.Err.Error(), message) {
+			t.Fatalf("joined error %q does not contain %q", summary.Err, message)
+		}
+	}
+	wantCalls := []string{
+		"preflight:apm", "preflight:telemetry", "preflight:git-hooks",
+		"managed:cli", "install:apm", "install:telemetry", "install:git-hooks",
+	}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("calls = %v, want continued execution %v", calls, wantCalls)
+	}
+	wantStates := []operationState{operationFailed, operationOK, operationFailed, operationOK}
+	if got := resultStates(summary.Results); !reflect.DeepEqual(got, wantStates) {
+		t.Fatalf("states = %v, want %v", got, wantStates)
+	}
+}
+
+func TestRunLifecycleUninstallsComponentsBeforeRemovingCLI(t *testing.T) {
+	var calls []string
+	deps := fakeLifecycleDeps(&calls, nil, nil)
+	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionUninstall}, deps)
+	if summary.Err != nil {
+		t.Fatal(summary.Err)
+	}
+	want := []string{
+		"preflight:apm", "preflight:telemetry", "preflight:git-hooks", "preflight-remove:cli",
+		"uninstall:apm", "uninstall:telemetry", "uninstall:git-hooks", "uninstall:cli",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
+func TestRunLifecyclePartialUninstallPreservesCLIUnlessRequested(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		removeCLI bool
+		wantCLI   bool
+	}{
+		{name: "preserve", wantCLI: false},
+		{name: "remove", removeCLI: true, wantCLI: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []string
+			deps := fakeLifecycleDeps(&calls, nil, nil)
+			summary := runLifecycle(context.Background(), lifecycleOptions{
+				Action: actionUninstall, Components: []componentName{componentTelemetry}, RemoveCLI: tt.removeCLI,
+			}, deps)
+			if summary.Err != nil {
+				t.Fatal(summary.Err)
+			}
+			gotCLI := containsString(calls, "uninstall:cli")
+			if gotCLI != tt.wantCLI {
+				t.Fatalf("calls = %v, CLI removal = %t, want %t", calls, gotCLI, tt.wantCLI)
+			}
+			if !tt.removeCLI {
+				want := []operationResult{
+					{Name: "telemetry", State: operationOK, Detail: "done"},
+					{Name: "managed-cli", State: operationSkipped, Detail: "preserved for partial uninstall"},
+				}
+				if !reflect.DeepEqual(summary.Results, want) {
+					t.Fatalf("results = %#v, want %#v", summary.Results, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRunLifecycleRejectsInvalidOperationStates(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*lifecycleDeps)
+		result    int
+	}{
+		{
+			name: "managed CLI empty state",
+			configure: func(deps *lifecycleDeps) {
+				deps.ManagedCLI.Install = func(string) operationResult {
+					return operationResult{Name: "managed-cli", Detail: "copied"}
+				}
+			},
+			result: 0,
+		},
+		{
+			name: "component unknown state",
+			configure: func(deps *lifecycleDeps) {
+				operations := deps.Components[componentAPM]
+				operations.Install = func(context.Context, lifecycleOptions) operationResult {
+					return operationResult{Name: "apm", State: "PENDING", Detail: "waiting"}
+				}
+				deps.Components[componentAPM] = operations
+			},
+			result: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []string
+			deps := fakeLifecycleDeps(&calls, nil, nil)
+			tt.configure(&deps)
+			summary := runLifecycle(context.Background(), lifecycleOptions{
+				Action: actionInstall, Components: []componentName{componentAPM},
+			}, deps)
+			if summary.Err == nil || !strings.Contains(summary.Err.Error(), "invalid operation state") {
+				t.Fatalf("runLifecycle() error = %v, want invalid-state failure", summary.Err)
+			}
+			result := summary.Results[tt.result]
+			if result.State != operationFailed {
+				t.Fatalf("result = %#v, want FAILED", result)
+			}
+			if !strings.Contains(result.Detail, "report OK, SKIPPED, or FAILED") {
+				t.Fatalf("detail = %q, want actionable valid-state guidance", result.Detail)
+			}
+		})
+	}
+}
+
+func TestRunLifecycleTelemetryFailurePreventsCLIRemoval(t *testing.T) {
+	var calls []string
+	deps := fakeLifecycleDeps(&calls, nil, map[string]error{"uninstall:telemetry": errors.New("hook cleanup failed")})
+	summary := runLifecycle(context.Background(), lifecycleOptions{
+		Action: actionUninstall, Components: []componentName{componentTelemetry}, RemoveCLI: true,
+	}, deps)
+	if summary.Err == nil || !strings.Contains(summary.Err.Error(), "hook cleanup failed") {
+		t.Fatalf("runLifecycle() error = %v, want cleanup failure", summary.Err)
+	}
+	if containsString(calls, "uninstall:cli") {
+		t.Fatalf("calls = %v, CLI removal must not run after telemetry cleanup failure", calls)
+	}
+	last := summary.Results[len(summary.Results)-1]
+	if last.Name != "managed-cli" || last.State != operationSkipped {
+		t.Fatalf("last result = %#v, want skipped managed CLI", last)
+	}
+}
+
+func TestRunLifecycleCLIOnlySkipsComponentPreflightAndExecution(t *testing.T) {
+	var calls []string
+	deps := fakeLifecycleDeps(&calls, map[componentName]error{componentAPM: errors.New("must not run")}, nil)
+	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionUpdate, CLIOnly: true}, deps)
+	if summary.Err != nil {
+		t.Fatal(summary.Err)
+	}
+	if want := []string{"managed:cli"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
+func TestRunLifecycleNormalizesBeforeSideEffects(t *testing.T) {
+	var calls []string
+	deps := fakeLifecycleDeps(&calls, nil, nil)
+	summary := runLifecycle(context.Background(), lifecycleOptions{
+		Action: actionUninstall, Components: []componentName{componentAPM}, Purge: true,
+	}, deps)
+	if summary.Err == nil || !strings.Contains(summary.Err.Error(), "--purge requires telemetry") {
+		t.Fatalf("runLifecycle() error = %v, want invalid purge selection", summary.Err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("calls = %v, want no side effects for invalid options", calls)
+	}
+}
+
+func TestRunLifecycleFormatsDeterministicFixedWidthSummary(t *testing.T) {
+	summary := lifecycleSummary{Results: []operationResult{
+		{Name: "managed-cli", State: operationOK, Detail: "installed"},
+		{Name: "apm", State: operationSkipped, Detail: "already configured"},
+		{Name: "telemetry", State: operationFailed, Detail: "collector unavailable"},
+	}}
+	want := "managed-cli  OK       installed\n" +
+		"apm          SKIPPED  already configured\n" +
+		"telemetry    FAILED   collector unavailable\n"
+	if got := formatLifecycleSummary(summary); got != want {
+		t.Fatalf("formatLifecycleSummary() = %q, want %q", got, want)
+	}
+}
+
+func fakeLifecycleDeps(calls *[]string, preflightFailures map[componentName]error, operationFailures map[string]error) lifecycleDeps {
+	result := func(call, name string) operationResult {
+		*calls = append(*calls, call)
+		if err := operationFailures[call]; err != nil {
+			return operationResult{Name: name, State: operationFailed, Detail: err.Error(), Err: err}
+		}
+		return operationResult{Name: name, State: operationOK, Detail: "done"}
+	}
+	deps := lifecycleDeps{
+		ManagedCLI: managedCLIService{
+			Install: func(string) operationResult {
+				return result("managed:cli", "managed-cli")
+			},
+			Remove: func() operationResult { return result("uninstall:cli", "managed-cli") },
+			PreflightRemove: func(lifecycleOptions) error {
+				*calls = append(*calls, "preflight-remove:cli")
+				return nil
+			},
+		},
+		Components: make(map[componentName]componentOps),
+	}
+	for _, component := range allComponents() {
+		component := component
+		deps.Components[component] = componentOps{
+			Preflight: func(context.Context, lifecycleOptions) error {
+				*calls = append(*calls, "preflight:"+string(component))
+				return preflightFailures[component]
+			},
+			Install: func(context.Context, lifecycleOptions) operationResult {
+				return result("install:"+string(component), string(component))
+			},
+			Update: func(context.Context, lifecycleOptions) operationResult {
+				return result("update:"+string(component), string(component))
+			},
+			Uninstall: func(context.Context, lifecycleOptions) operationResult {
+				return result("uninstall:"+string(component), string(component))
+			},
+		}
+	}
+	return deps
+}
+
+func resultNames(results []operationResult) []string {
+	names := make([]string, len(results))
+	for i, result := range results {
+		names[i] = result.Name
+	}
+	return names
+}
+
+func resultStates(results []operationResult) []operationState {
+	states := make([]operationState, len(results))
+	for i, result := range results {
+		states[i] = result.State
+	}
+	return states
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
