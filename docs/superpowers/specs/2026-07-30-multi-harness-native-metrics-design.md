@@ -306,7 +306,7 @@ Code and Cline in addition to the Codex fixture. Each fixture includes:
 - a deterministic value.
 
 The Cline fixture uses a test-scoped service name that is not presented as a
-client contract and does not match an identity transform rule.
+client contract and does not match a dashboard selector.
 
 The fixture stack renders all timestamps before starting the test. The smoke
 test:
