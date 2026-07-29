@@ -1,5 +1,13 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>Netcracker/renovate-config:base",
+    "github>Netcracker/renovate-config:github-actions",
+    "github>Netcracker/renovate-config:go",
+    "github>Netcracker/renovate-config:netcracker-dependencies",
+    "github>Netcracker/renovate-config:annotated-versions",
+    "github>Netcracker/renovate-config:grafana-plugins"
+  ],
   "dependencyDashboard": true,
   "labels": [
     "dependencies"
@@ -11,9 +19,21 @@
   ],
   "packageRules": [
     {
-      "description": "Group Go module minor and patch updates",
+      "description": "Group other Go module minor and patch updates",
       "matchManagers": [
         "gomod"
+      ],
+      "matchDatasources": [
+        "go"
+      ],
+      "matchPackageNames": [
+        "!k8s.io/**",
+        "!sigs.k8s.io/**",
+        "!github.com/openshift/**",
+        "!go.opentelemetry.io/**",
+        "!github.com/open-telemetry/**",
+        "!github.com/prometheus/**",
+        "!github.com/Netcracker/**"
       ],
       "matchUpdateTypes": [
         "minor",
@@ -26,18 +46,18 @@
       "matchManagers": [
         "docker-compose"
       ],
+      "matchPackageNames": [
+        "!ghcr.io/netcracker/**",
+        "!golang",
+        "!docker.io/library/golang",
+        "!index.docker.io/library/golang",
+        "!registry-1.docker.io/library/golang"
+      ],
       "matchUpdateTypes": [
         "minor",
         "patch"
       ],
       "groupName": "Docker Compose image minor and patch updates"
-    },
-    {
-      "description": "Group GitHub Actions updates",
-      "matchManagers": [
-        "github-actions"
-      ],
-      "groupName": "GitHub Actions updates"
     }
   ]
 }
