@@ -2,10 +2,10 @@
 
 ## Goal
 
-Extend the remote metrics pilot with explicit onboarding and backend fixture
-coverage for the native-metrics clients in the support matrix. Keep the
-existing hook-based telemetry contract for supported harnesses that do not
-provide a native metrics exporter.
+Extend the remote metrics pilot with explicit onboarding, backend fixture
+coverage, and Grafana dashboards for the native-metrics clients in the support
+matrix. Keep the existing hook-based telemetry contract for supported
+harnesses that do not provide a native metrics exporter.
 
 The repository supports Claude Code, Codex, and Cursor hooks. This design also
 adds Cline as a documented native-metrics client without claiming full hook or
@@ -37,8 +37,7 @@ version-pinned client integration test or recorded live pilot is added.
 
 ## Architecture
 
-The backend topology does not change. The metrics processor chain gains one
-bounded identity transform:
+The backend topology does not change:
 
 ```text
 Harness native OTLP metrics
@@ -58,19 +57,13 @@ Grafana Prometheus datasource
 
 Each native exporter sends OTLP/HTTP metrics to the authenticated
 `/v1/metrics` endpoint. The Collector converts delta metrics to cumulative
-values, adds a bounded harness identity label, batches the data, and exports it
-to VictoriaMetrics. VictoriaMetrics applies Prometheus naming rules while
-preserving resource and datapoint attributes as labels.
+values, batches the data, and exports it to VictoriaMetrics. VictoriaMetrics
+applies Prometheus naming rules while preserving resource and datapoint
+attributes as labels.
 
-The metrics processor order is `deltatocumulative`,
-`transform/metrics_identity`, then `batch`. The logs pipeline does not use the
-identity transform.
-
-Collector `0.119.0` marks the transform processor as alpha. Its default
-`error_mode` is `propagate`, which drops a payload when an OTTL statement
-returns an error. This pipeline sets `error_mode: ignore` explicitly. An OTTL
-error is logged, subsequent statements continue, and the metrics payload
-remains available to the exporter.
+The metrics processor order remains `deltatocumulative`, then `batch`. The
+Collector does not rename vendor metrics, copy them into a canonical schema, or
+add a harness identity label.
 
 ## Normalization boundary
 
@@ -78,68 +71,84 @@ Harnesses publish different metric names, instrument types, units, labels, and
 signal coverage. A shared name alone cannot make a counter equivalent to a
 histogram or replace a metric that a harness emits only as a log event.
 
-The Collector preserves every vendor metric name and instrument. It adds the
-OTLP datapoint attribute `agent.harness` only when a stable source identity is
-known:
+The Collector preserves every vendor metric name and instrument. Dashboard
+queries perform semantic normalization after storage and combine only
+equivalent signals. Exact source selectors classify the documented contracts:
 
-| Source identity | `agent.harness` |
+| Harness | Query selector |
 | --- | --- |
-| `service.name = codex_cli_rs` | `codex` |
-| `service.name = claude-code` | `claude` |
-| `service.name = claude-code-desktop` | `claude` |
+| Codex | `service_name="codex_cli_rs"` |
+| Claude Code | `service_name=~"claude-code|claude-code-desktop"` |
 
-The transform first deletes the client-provided keys `agent.harness` and
-`agent_harness` from both resource and datapoint attributes. Both spellings
-could produce the `agent_harness` storage label after Prometheus naming. It then
-sets the datapoint attribute `agent.harness` only for the allowlisted source
-identities above.
-
-A known source therefore receives the backend classification even if the
-payload supplied a conflicting value. An unknown or missing `service.name` is
-exported without `agent.harness`.
-
-This ordering makes payload delivery fail-open and harness classification
-fail-closed. If a classification statement fails, `error_mode: ignore` keeps
-the raw metric but does not restore the deleted client value.
-
-After VictoriaMetrics applies Prometheus naming, dashboards use the
-`agent_harness` label. Existing resource attributes such as `service.name`,
-`service.version`, and the deployment environment remain unchanged.
-
-The label is a query classification, not an authenticated producer identity.
-All OTLP attributes remain client-controlled while harnesses share one ingest
-credential.
+These selectors organize dashboard results. They are not authenticated
+producer identities because every OTLP attribute remains client-controlled
+while harnesses share one ingest credential. The dashboards do not read or
+trust a client-provided `agent.harness`, `agent_harness`, or spelling variant.
 
 Cline's public documentation does not define a stable `service.name`. The
 manually authored fixture is not evidence of a client identity contract, so
-this PR does not assign `agent.harness=cline`. A client-provided value is
-removed like any other untrusted classification. A Cline mapping requires a
+this PR does not include Cline in a dashboard query. A Cline mapping requires a
 recorded live export or a version-pinned client contract.
 
-### Future dashboard direction
-
-Dashboard changes are outside this PR. A future universal dashboard should
-perform semantic normalization after storage. It can use harness-specific
-MetricsQL or PromQL expressions and combine only equivalent results. Common
-panels should cover the safe intersection of available signals.
-Harness-specific sections can expose useful vendor metrics that do not have a
-valid cross-harness equivalent.
-
-A future panel should distinguish an unsupported signal from a supported
-signal whose value is zero. Dashboard descriptions and harness filters should
-identify unsupported combinations instead of rendering them as zero.
-
-Stable mappings could later move from dashboard expressions to VictoriaMetrics
-recording rules. Canonical series could then use names such as
+Stable mappings can move from dashboard expressions to VictoriaMetrics
+recording rules after live multi-harness data validates their semantics.
+Canonical series could then use names such as
 `ai_agent_sessions_started_total` or `ai_agent_tokens_total`. This promotion
-should not change or delete the raw vendor series. Collector-side metric copies
-remain outside this PR because they duplicate stored series and cannot resolve
+must not change or delete the raw vendor series. Collector-side metric copies
+remain out of scope because they duplicate stored series and cannot resolve
 semantic differences between instrument types.
 
-Sources:
+## Dashboard design
 
-- [Collector transform processor at v0.119.0][collector-transform]
-- [Collector metrics transform processor at v0.119.0][collector-metricstransform]
+This PR adds two provisioned Grafana dashboards that use the VictoriaMetrics
+Prometheus datasource.
+
+### Native agent metrics overview
+
+The overview compares the safe intersection of Codex and Claude Code signals.
+It contains:
+
+- metric freshness by harness;
+- top-level sessions started over the selected period;
+- token usage by harness, model, and token type;
+- observed client versions; and
+- a signal-availability table that distinguishes an unsupported signal from a
+  supported signal whose value is zero.
+
+Codex session queries select `codex_thread_started_total` with
+`session_source="cli"` so spawned subagent threads do not count as user
+sessions. Claude Code session queries select its session counter and exclude
+`start_type="agents_view"`, which represents the local agents dashboard rather
+than a conversational session.
+
+Token panels preserve each vendor's documented token categories. They do not
+sum categories whose cache semantics may overlap, and they do not imply that
+Codex and Claude Code calculate cached input identically.
+
+The overview uses separate harness-specific expressions and readable legends.
+It does not depend on a stored synthetic harness label.
+
+### Codex native metrics
+
+The Codex dashboard uses the live `0.146.0` pilot data to cover:
+
+- top-level sessions, conversation turns, tool calls, MCP calls, and tokens;
+- tool failure ratio;
+- tool and MCP activity over time;
+- top tools, MCP servers, and MCP outcomes;
+- token usage by model and token type;
+- turn duration at p50 and p95;
+- tool duration at p50 and p95;
+- API time to first token, time between tokens, and inference latency; and
+- skill activity when a live series has stable, useful labels.
+
+The dashboard does not synthesize cost, active sessions, in-progress work, or
+other signals that Codex does not export. Panel descriptions identify the
+vendor metric and any semantic limitation.
+
+A Claude-specific deep-dive dashboard remains follow-up work until a real
+Claude Code client exports enough data to validate query names, units, labels,
+and visual behavior.
 
 ## Harness contracts
 
@@ -278,6 +287,9 @@ The backend README gains:
 4. A Cursor note that points readers to existing hook-based telemetry.
 5. Privacy and identity caveats next to the affected client configuration.
 6. A statement that Cline is not an accepted `--harnesses` or APM target.
+7. An explanation of the difference between native metrics and the repository's
+   hook telemetry.
+8. Links to the native metrics overview and Codex deep-dive dashboards.
 
 Examples use placeholders for the server address and ingest token. They do not
 enable prompts, logs, tool content, or traces.
@@ -305,23 +317,26 @@ test:
 3. Verifies the metric value and one identifying label.
 4. Preserves the existing negative authentication and write-access tests.
 
-The Codex and Claude Code fixtures also verify the `agent_harness` identity
-mapping and confirm that the raw vendor metric names remain queryable. The
-Cline fixture does not assert a canonical harness label until a stable client
-identity is verified.
+The Codex and Claude Code fixtures include representative session and token
+metrics. They confirm that Prometheus-normalized vendor names and documented
+labels remain queryable. The Cline fixture verifies backend compatibility
+without assigning a dashboard classification.
 
-Identity tests also cover:
+The configuration contract verifies one shared metrics pipeline without an
+identity transform. Harness-specific routing is unnecessary because all native
+clients use the same OTLP receiver and exporter.
 
-- a known source with conflicting resource and datapoint classification keys,
-  which are replaced by the allowlisted value;
-- an unknown source with `agent.harness` and `agent_harness` in both attribute
-  scopes, all of which are removed;
-- a missing `service.name`, whose raw metric still reaches VictoriaMetrics
-  without `agent_harness`.
+The dashboard contract verifies:
 
-The configuration contract verifies one shared metrics pipeline and the
-bounded Codex and Claude Code identity mappings. Harness-specific routing is
-unnecessary because all native clients use the same OTLP receiver and exporter.
+- valid JSON and stable dashboard UIDs;
+- the provisioned `victoriametrics` datasource;
+- exact Codex and Claude Code source selectors;
+- the absence of a dependency on `agent_harness`;
+- the required overview and Codex deep-dive panels; and
+- documented units and readable legends for token and duration panels.
+
+Browser validation loads both dashboards in the local Grafana experiment and
+checks that the Codex panels render against the accumulated pilot data.
 
 These tests provide backend fixture coverage only. They do not launch Codex,
 Claude Code, or Cline, and they do not claim that the documented client
@@ -334,10 +349,9 @@ configuration works against a specific client release.
   logs pipeline.
 - A missing harness metric fails the bounded smoke-test poll with the expected
   metric name and value.
-- An unknown or missing `service.name` is exported without `agent.harness`; it
-  is not dropped or guessed.
-- An OTTL classification error is logged while `error_mode: ignore` keeps the
-  payload moving through the metrics pipeline.
+- An unknown or missing `service.name` remains stored as raw telemetry but does
+  not match a dashboard harness selector.
+- An unsupported dashboard signal appears as unsupported rather than zero.
 - Documentation directs Cline users to `TEL_DEBUG_DIAGNOSTICS=true` when its
   exporter cannot connect.
 - Documentation does not provide a Cline APM command that the upstream CLI
@@ -348,7 +362,8 @@ configuration works against a specific client release.
 - Adding a Collector privacy processor.
 - Adding traces or native harness logs.
 - Renaming or copying vendor metrics into a common schema at ingestion.
-- Adding dashboards in this PR.
+- Adding VictoriaMetrics recording rules.
+- Adding a Claude-specific deep-dive dashboard before a live pilot.
 - Adding a Cline hook adapter or detector.
 - Adding a Cline target to Microsoft APM or the lifecycle CLI.
 - Claiming native OTLP support for Cursor.
@@ -372,14 +387,14 @@ Source: [GitHub Copilot CLI OpenTelemetry reference][copilot-otel].
   identity limitation.
 - The smoke test verifies representative backend fixture payloads for Codex,
   Claude Code, and Cline without claiming client integration coverage.
-- Codex and Claude Code metrics gain the `agent_harness` storage label while
-  their raw vendor metric names remain queryable.
-- Client-provided `agent.harness` and `agent_harness` values cannot survive the
-  backend classification transform at resource or datapoint scope.
-- Unknown sources, including the Cline fixture, remain queryable without an
-  `agent_harness` label.
-- The transform processor sets `error_mode: ignore`, and missing or unexpected
-  source identity does not drop a metrics payload.
+- Raw vendor metric names remain queryable without a Collector identity
+  transform or canonical metric copies.
+- The native metrics overview uses explicit Codex and Claude Code selectors and
+  combines only semantically compatible signals.
+- The Codex deep-dive dashboard renders sessions, turns, tool and MCP activity,
+  tokens, failures, and latency from live pilot series.
+- Unsupported signals are distinguishable from supported signals whose value
+  is zero.
 - Existing logs, dashboards, and authentication boundaries remain unchanged.
 - Existing test assertions continue to pass.
 - Cline is not passed to APM or accepted by `--harnesses`.
@@ -387,8 +402,6 @@ Source: [GitHub Copilot CLI OpenTelemetry reference][copilot-otel].
 <!-- markdownlint-disable MD013 -->
 [claude-monitoring]: https://code.claude.com/docs/en/monitoring-usage
 [codex-schema]: https://github.com/openai/codex/blob/main/codex-rs/core/config.schema.json
-[collector-metricstransform]: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.119.0/processor/metricstransformprocessor
-[collector-transform]: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.119.0/processor/transformprocessor
 [copilot-otel]: https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#opentelemetry-monitoring
 [cursor-docs]: https://cursor.com/docs
 [cursor-hooks]: https://cursor.com/blog/hooks-partners
