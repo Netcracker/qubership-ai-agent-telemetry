@@ -1,0 +1,59 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "codex_cli_rs"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "fixture"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "codex"
+          },
+          "metrics": [
+            {
+              "name": "codex.tool.call",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "tool",
+                        "value": {
+                          "stringValue": "exec_command"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "stringValue": "true"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "__METRIC_START_TS__",
+                    "timeUnixNano": "__METRIC_TS__",
+                    "asInt": "3"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

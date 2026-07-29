@@ -5,12 +5,17 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
+  deltatocumulative: {}
   batch:
     timeout: 5s
 
 exporters:
   otlphttp/victorialogs:
     logs_endpoint: http://victorialogs:9428/insert/opentelemetry/v1/logs
+    tls:
+      insecure: true
+  otlphttp/victoriametrics:
+    metrics_endpoint: http://victoriametrics:8428/opentelemetry/v1/metrics
     tls:
       insecure: true
 
@@ -20,6 +25,10 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [otlphttp/victorialogs]
+    metrics:
+      receivers: [otlp]
+      processors: [deltatocumulative, batch]
+      exporters: [otlphttp/victoriametrics]
   telemetry:
     logs:
       level: info

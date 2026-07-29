@@ -9,11 +9,13 @@ set -eu
 backend_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 compose_file=$backend_dir/docker-compose.yml
 fixture=$backend_dir/tests/fixtures/otel-events.json
+metrics_fixture=$backend_dir/tests/fixtures/otel-metrics.json
 tmp_dir=$(mktemp -d)
 project=telemetry-dashboard-contract-$$
 env_file=$tmp_dir/backend.env
 ca_cert=$tmp_dir/caddy-root.crt
 rendered_fixture=$tmp_dir/otel-events.json
+rendered_metrics_fixture=$tmp_dir/otel-metrics.json
 dashboard_user='admin'
 dashboard_password='fixture-viewer-password'
 ingest_token='fixture-ingest-token'
@@ -40,6 +42,7 @@ password_hash=$(docker run --rm caddy:2 caddy hash-password --plaintext "$dashbo
   printf "DASHBOARD_AUTH_PASSWORD_HASH='%s'\n" "$password_hash"
   printf '%s\n' 'GRAFANA_ADMIN_PASSWORD=fixture-admin-password'
   printf '%s\n' 'VL_RETENTION=30d'
+  printf '%s\n' 'VM_RETENTION=30d'
   printf 'HTTP_PORT=%s\n' "$http_port"
   printf 'HTTPS_PORT=%s\n' "$https_port"
 } >"$env_file"
@@ -83,6 +86,12 @@ while [ "$index" -le 8 ]; do
   index=$((index + 1))
 done
 
+metric_start_timestamp=$(((now - 1) * 1000000000))
+metric_timestamp=$((now * 1000000000))
+cp "$metrics_fixture" "$rendered_metrics_fixture"
+sed -i "s/__METRIC_START_TS__/$metric_start_timestamp/g" "$rendered_metrics_fixture"
+sed -i "s/__METRIC_TS__/$metric_timestamp/g" "$rendered_metrics_fixture"
+
 curl --fail --silent --show-error --cacert "$ca_cert" \
   --header "Authorization: Bearer $ingest_token" \
   --header 'Content-Type: application/json' \
@@ -118,5 +127,6 @@ export TEST_ENV_FILE="$env_file"
 export TEST_COMPOSE_FILE="$compose_file"
 export TEST_INGEST_TOKEN="$ingest_token"
 export TEST_RENDERED_FIXTURE="$rendered_fixture"
+export TEST_RENDERED_METRICS_FIXTURE="$rendered_metrics_fixture"
 
 "$@"

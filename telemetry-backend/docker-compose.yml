@@ -12,6 +12,18 @@ services:
       - backend
     restart: unless-stopped
 
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.148.0
+    command:
+      - -storageDataPath=/vmetrics
+      - -retentionPeriod=${VM_RETENTION}
+      - -opentelemetry.usePrometheusNaming
+    volumes:
+      - vmetrics-data:/vmetrics
+    networks:
+      - backend
+    restart: unless-stopped
+
   collector:
     image: otel/opentelemetry-collector-contrib:0.119.0
     command: ["--config=/etc/otel/config.yaml"]
@@ -21,6 +33,7 @@ services:
       - backend
     depends_on:
       - victorialogs
+      - victoriametrics
     restart: unless-stopped
 
   grafana:
@@ -54,6 +67,7 @@ services:
       - backend
     depends_on:
       - victorialogs
+      - victoriametrics
     restart: unless-stopped
 
   caddy:
@@ -75,6 +89,7 @@ services:
       - backend
     depends_on:
       - collector
+      - victoriametrics
     restart: unless-stopped
 
 networks:
@@ -82,6 +97,7 @@ networks:
 
 volumes:
   vlogs-data: {}
+  vmetrics-data: {}
   grafana-data: {}
   caddy-data: {}
   caddy-config: {}

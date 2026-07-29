@@ -14,7 +14,7 @@ fail() {
   exit 1
 }
 
-for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD; do
+for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VM_RETENTION; do
   grep -q "^$name=" "$env_file" || fail "$name is missing from .env.example"
 done
 if grep -q '^GRAFANA_ADMIN_USER=' "$env_file"; then
@@ -40,6 +40,12 @@ docker compose --env-file "$env_file" -f "$compose_file" config --format json >"
 jq -e '.services.caddy.ports | length == 2' "$rendered" >/dev/null || fail 'Caddy must publish two ports'
 jq -e '[.services.collector.ports, .services.victorialogs.ports] | all(. == null)' "$rendered" >/dev/null ||
   fail 'Collector and VictoriaLogs must not publish ports'
+jq -e '.services.victoriametrics != null and .services.victoriametrics.ports == null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must exist without published ports'
+jq -e 'any(.services.victoriametrics.volumes[]?; .target == "/vmetrics")' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must persist metrics under /vmetrics'
+jq -e '.services.victoriametrics.command | index("-retentionPeriod=30d") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must use VM_RETENTION'
 jq -e '(.services.grafana.build.context // "") | endswith("/telemetry-backend/grafana")' "$rendered" >/dev/null ||
   fail 'Grafana build context is missing'
 jq -e '.services.grafana.ports == null' "$rendered" >/dev/null || fail 'Grafana must not publish ports'

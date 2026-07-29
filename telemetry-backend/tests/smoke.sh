@@ -13,6 +13,7 @@ fi
 : "${TEST_COMPOSE_FILE:?set TEST_COMPOSE_FILE}"
 : "${TEST_INGEST_TOKEN:?set TEST_INGEST_TOKEN}"
 : "${TEST_RENDERED_FIXTURE:?set TEST_RENDERED_FIXTURE}"
+: "${TEST_RENDERED_METRICS_FIXTURE:?set TEST_RENDERED_METRICS_FIXTURE}"
 
 compose() {
   docker compose -p "$TEST_COMPOSE_PROJECT" --env-file "$TEST_ENV_FILE" -f "$TEST_COMPOSE_FILE" "$@"
@@ -96,6 +97,36 @@ printf '%s' "$viewer_orgs" | jq -e 'any(.[]; .role == "Viewer")' >/dev/null ||
 
 [ "$(status --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" "$TEST_BASE_URL/select/vmui/")" = 200 ] ||
   fail 'authenticated VMUI request failed'
+[ "$(status --request POST "$TEST_BASE_URL/v1/metrics")" = 401 ] ||
+  fail 'metrics ingest must require a bearer token'
+[ "$(status "$TEST_BASE_URL/prometheus/api/v1/query?query=up")" = 401 ] ||
+  fail 'VictoriaMetrics queries must require Basic Auth'
+[ "$(status --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" --request POST \
+  "$TEST_BASE_URL/prometheus/api/v1/write")" = 404 ] ||
+  fail 'dashboard credentials must not authorize VictoriaMetrics writes'
+
+metrics_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --cacert "$TEST_CA_CERT" \
+  --request POST \
+  --header "Authorization: Bearer $TEST_INGEST_TOKEN" \
+  --header 'Content-Type: application/json' \
+  --data-binary "@$TEST_RENDERED_METRICS_FIXTURE" \
+  "$TEST_BASE_URL/v1/metrics")
+[ "$metrics_status" = 200 ] || fail "metrics ingest failed (HTTP $metrics_status)"
+
+attempt=0
+while :; do
+  metric_value=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
+    --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
+    --get \
+    --data-urlencode 'query=codex_tool_call_total{tool="exec_command",success="true"}' \
+    "$TEST_BASE_URL/prometheus/api/v1/query" |
+    jq -r '.data.result[0].value[1] // empty')
+  [ "$metric_value" = 3 ] && break
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 30 ] || fail "fixture metric did not reach VictoriaMetrics (found $metric_value, want 3)"
+  sleep 1
+done
 
 datasource=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
   --cookie "$viewer_cookie" \
@@ -107,6 +138,20 @@ datasource_health=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
   "$TEST_BASE_URL/grafana/api/datasources/uid/victorialogs/health")
 [ "$(printf '%s' "$datasource_health" | jq -r '.status')" = OK ] ||
   fail 'VictoriaLogs datasource health check failed'
+
+[ "$(status --cookie "$viewer_cookie" \
+  "$TEST_BASE_URL/grafana/api/datasources/uid/victoriametrics")" = 200 ] ||
+  fail 'VictoriaMetrics datasource was not provisioned'
+metrics_datasource=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
+  --cookie "$viewer_cookie" \
+  "$TEST_BASE_URL/grafana/api/datasources/uid/victoriametrics")
+[ "$(printf '%s' "$metrics_datasource" | jq -r '.type')" = prometheus ] ||
+  fail 'VictoriaMetrics datasource must use the Prometheus type'
+metrics_datasource_health=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
+  --cookie "$viewer_cookie" \
+  "$TEST_BASE_URL/grafana/api/datasources/uid/victoriametrics/health")
+[ "$(printf '%s' "$metrics_datasource_health" | jq -r '.status')" = OK ] ||
+  fail 'VictoriaMetrics datasource health check failed'
 
 for uid in ai-agent-health ai-agent-telemetry-adoption; do
   curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
