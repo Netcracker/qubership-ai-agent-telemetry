@@ -13,7 +13,6 @@ fi
 : "${TEST_COMPOSE_FILE:?set TEST_COMPOSE_FILE}"
 : "${TEST_INGEST_TOKEN:?set TEST_INGEST_TOKEN}"
 : "${TEST_RENDERED_FIXTURE:?set TEST_RENDERED_FIXTURE}"
-: "${TEST_RENDERED_METRICS_FIXTURE:?set TEST_RENDERED_METRICS_FIXTURE}"
 
 compose() {
   docker compose -p "$TEST_COMPOSE_PROJECT" --env-file "$TEST_ENV_FILE" -f "$TEST_COMPOSE_FILE" "$@"
@@ -104,29 +103,6 @@ printf '%s' "$viewer_orgs" | jq -e 'any(.[]; .role == "Viewer")' >/dev/null ||
 [ "$(status --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" --request POST \
   "$TEST_BASE_URL/prometheus/api/v1/write")" = 404 ] ||
   fail 'dashboard credentials must not authorize VictoriaMetrics writes'
-
-metrics_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-  --cacert "$TEST_CA_CERT" \
-  --request POST \
-  --header "Authorization: Bearer $TEST_INGEST_TOKEN" \
-  --header 'Content-Type: application/json' \
-  --data-binary "@$TEST_RENDERED_METRICS_FIXTURE" \
-  "$TEST_BASE_URL/v1/metrics")
-[ "$metrics_status" = 200 ] || fail "metrics ingest failed (HTTP $metrics_status)"
-
-attempt=0
-while :; do
-  metric_value=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
-    --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
-    --get \
-    --data-urlencode 'query=codex_tool_call_total{tool="exec_command",success="true"}' \
-    "$TEST_BASE_URL/prometheus/api/v1/query" |
-    jq -r '.data.result[0].value[1] // empty')
-  [ "$metric_value" = 3 ] && break
-  attempt=$((attempt + 1))
-  [ "$attempt" -lt 30 ] || fail "fixture metric did not reach VictoriaMetrics (found $metric_value, want 3)"
-  sleep 1
-done
 
 datasource=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
   --cookie "$viewer_cookie" \
@@ -261,6 +237,7 @@ jq -e '[.results.M.frames[].schema.fields[].labels?]
   fail 'the Grafana MCP query did not retain a tool event without a server name'
 
 sh "$script_dir/query-contract.sh"
+sh "$script_dir/metrics-query-contract.sh"
 sh "$script_dir/dashboard-contract.sh"
 
 compose stop grafana >/dev/null

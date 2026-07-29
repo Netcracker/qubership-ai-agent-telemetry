@@ -8,6 +8,7 @@ caddyfile=$backend_dir/Caddyfile
 readme=$backend_dir/README.md
 datasource_file=$backend_dir/grafana/provisioning/datasources/victorialogs.yaml
 health_dashboard=$backend_dir/grafana/dashboards/telemetry-health.json
+collector_config=$backend_dir/otel-collector-config.yaml
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -19,6 +20,13 @@ for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSW
 done
 if grep -q '^GRAFANA_ADMIN_USER=' "$env_file"; then
   fail 'Grafana administrator username must not be configurable'
+fi
+
+metrics_pipeline=$(sed -n '/^    metrics:$/,/^    [a-z]/p' "$collector_config")
+printf '%s\n' "$metrics_pipeline" | grep -Fq 'processors: [deltatocumulative, batch]' ||
+  fail 'metrics pipeline must convert delta metrics and batch them'
+if grep -Fq 'transform/metrics_identity' "$collector_config"; then
+  fail 'metrics pipeline must not classify harness identity at ingestion'
 fi
 
 grep -q '@ingest path /v1/logs' "$caddyfile" || fail 'ingest path matcher is missing'

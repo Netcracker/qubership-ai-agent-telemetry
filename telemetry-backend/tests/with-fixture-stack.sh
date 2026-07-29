@@ -116,6 +116,35 @@ while :; do
   sleep 1
 done
 
+metrics_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --cacert "$ca_cert" \
+  --request POST \
+  --header "Authorization: Bearer $ingest_token" \
+  --header 'Content-Type: application/json' \
+  --data-binary "@$rendered_metrics_fixture" \
+  "$base_url/v1/metrics")
+[ "$metrics_status" = 200 ] || {
+  printf 'FAIL: metrics ingest failed (HTTP %s)\n' "$metrics_status" >&2
+  exit 1
+}
+
+attempt=0
+while :; do
+  metric_value=$(curl --fail --silent --show-error --cacert "$ca_cert" \
+    --user "$dashboard_user:$dashboard_password" \
+    --get \
+    --data-urlencode 'query=codex_tool_call_total{tool="exec_command",success="true"}' \
+    "$base_url/prometheus/api/v1/query" |
+    jq -r '.data.result[0].value[1] // empty')
+  [ "$metric_value" = 3 ] && break
+  attempt=$((attempt + 1))
+  [ "$attempt" -lt 30 ] || {
+    printf 'FAIL: fixture metric did not reach VictoriaMetrics (found %s, want 3)\n' "$metric_value" >&2
+    exit 1
+  }
+  sleep 1
+done
+
 export TEST_BASE_URL="$base_url"
 export TEST_CA_CERT="$ca_cert"
 export TEST_DASHBOARD_USER="$dashboard_user"

@@ -50,6 +50,179 @@
                   }
                 ]
               }
+            },
+            {
+              "name": "codex.thread.started",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "session_source",
+                        "value": {
+                          "stringValue": "cli"
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "fixture-codex"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "__METRIC_START_TS__",
+                    "timeUnixNano": "__METRIC_TS__",
+                    "asInt": "2"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "codex.turn.token_usage",
+              "histogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "token_type",
+                        "value": {
+                          "stringValue": "total"
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "fixture-codex"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "__METRIC_START_TS__",
+                    "timeUnixNano": "__METRIC_TS__",
+                    "count": "1",
+                    "sum": 1200,
+                    "bucketCounts": ["0", "1"],
+                    "explicitBounds": [1000]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "claude-code"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "claude-code"
+          },
+          "metrics": [
+            {
+              "name": "claude_code.session.count",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "start_type",
+                        "value": {
+                          "stringValue": "fresh"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "__METRIC_START_TS__",
+                    "timeUnixNano": "__METRIC_TS__",
+                    "asInt": "2"
+                  }
+                ]
+              }
+            },
+            {
+              "name": "claude_code.token.usage",
+              "unit": "tokens",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "type",
+                        "value": {
+                          "stringValue": "input"
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "fixture-claude"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "__METRIC_START_TS__",
+                    "timeUnixNano": "__METRIC_TS__",
+                    "asInt": "900"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "cline-fixture"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "cline-fixture"
+          },
+          "metrics": [
+            {
+              "name": "cline.fixture.task.count",
+              "sum": {
+                "aggregationTemporality": 2,
+                "isMonotonic": true,
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "fixture",
+                        "value": {
+                          "stringValue": "true"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "__METRIC_START_TS__",
+                    "timeUnixNano": "__METRIC_TS__",
+                    "asInt": "1"
+                  }
+                ]
+              }
             }
           ]
         }
