@@ -66,6 +66,12 @@ The metrics processor order is `deltatocumulative`,
 `transform/metrics_identity`, then `batch`. The logs pipeline does not use the
 identity transform.
 
+Collector `0.119.0` marks the transform processor as alpha. Its default
+`error_mode` is `propagate`, which drops a payload when an OTTL statement
+returns an error. This pipeline sets `error_mode: ignore` explicitly. An OTTL
+error is logged, subsequent statements continue, and the metrics payload
+remains available to the exporter.
+
 ## Normalization boundary
 
 Harnesses publish different metric names, instrument types, units, labels, and
@@ -82,8 +88,21 @@ known:
 | `service.name = claude-code` | `claude` |
 | `service.name = claude-code-desktop` | `claude` |
 
-The transform does not overwrite an existing `agent.harness` attribute. After
-VictoriaMetrics applies Prometheus naming, dashboards use the
+The transform first deletes the client-provided keys `agent.harness` and
+`agent_harness` from both resource and datapoint attributes. Both spellings
+could produce the `agent_harness` storage label after Prometheus naming. It then
+sets the datapoint attribute `agent.harness` only for the allowlisted source
+identities above.
+
+A known source therefore receives the backend classification even if the
+payload supplied a conflicting value. An unknown or missing `service.name` is
+exported without `agent.harness`.
+
+This ordering makes payload delivery fail-open and harness classification
+fail-closed. If a classification statement fails, `error_mode: ignore` keeps
+the raw metric but does not restore the deleted client value.
+
+After VictoriaMetrics applies Prometheus naming, dashboards use the
 `agent_harness` label. Existing resource attributes such as `service.name`,
 `service.version`, and the deployment environment remain unchanged.
 
@@ -93,25 +112,29 @@ credential.
 
 Cline's public documentation does not define a stable `service.name`. The
 manually authored fixture is not evidence of a client identity contract, so
-this PR does not assign `agent.harness=cline`. That mapping requires a recorded
-live export or a version-pinned client contract.
+this PR does not assign `agent.harness=cline`. A client-provided value is
+removed like any other untrusted classification. A Cline mapping requires a
+recorded live export or a version-pinned client contract.
 
-Semantic normalization happens after storage. The first universal dashboard
-uses harness-specific MetricsQL or PromQL expressions and combines only
-equivalent results. Common panels cover the safe intersection of available
-signals. Harness-specific sections expose useful vendor metrics that do not
-have a valid cross-harness equivalent.
+### Future dashboard direction
 
-A panel must distinguish an unsupported signal from a supported signal whose
-value is zero. Dashboard descriptions and harness filters identify unsupported
-combinations instead of rendering them as zero.
+Dashboard changes are outside this PR. A future universal dashboard should
+perform semantic normalization after storage. It can use harness-specific
+MetricsQL or PromQL expressions and combine only equivalent results. Common
+panels should cover the safe intersection of available signals.
+Harness-specific sections can expose useful vendor metrics that do not have a
+valid cross-harness equivalent.
 
-Stable mappings can later move from dashboard expressions to VictoriaMetrics
-recording rules. Canonical series may then use names such as
+A future panel should distinguish an unsupported signal from a supported
+signal whose value is zero. Dashboard descriptions and harness filters should
+identify unsupported combinations instead of rendering them as zero.
+
+Stable mappings could later move from dashboard expressions to VictoriaMetrics
+recording rules. Canonical series could then use names such as
 `ai_agent_sessions_started_total` or `ai_agent_tokens_total`. This promotion
-does not change or delete the raw vendor series. Collector-side metric copies
-are not used because they duplicate stored series and cannot resolve semantic
-differences between instrument types.
+should not change or delete the raw vendor series. Collector-side metric copies
+remain outside this PR because they duplicate stored series and cannot resolve
+semantic differences between instrument types.
 
 Sources:
 
@@ -287,6 +310,15 @@ mapping and confirm that the raw vendor metric names remain queryable. The
 Cline fixture does not assert a canonical harness label until a stable client
 identity is verified.
 
+Identity tests also cover:
+
+- a known source with conflicting resource and datapoint classification keys,
+  which are replaced by the allowlisted value;
+- an unknown source with `agent.harness` and `agent_harness` in both attribute
+  scopes, all of which are removed;
+- a missing `service.name`, whose raw metric still reaches VictoriaMetrics
+  without `agent_harness`.
+
 The configuration contract verifies one shared metrics pipeline and the
 bounded Codex and Claude Code identity mappings. Harness-specific routing is
 unnecessary because all native clients use the same OTLP receiver and exporter.
@@ -302,8 +334,10 @@ configuration works against a specific client release.
   logs pipeline.
 - A missing harness metric fails the bounded smoke-test poll with the expected
   metric name and value.
-- An unknown `service.name` is exported without `agent.harness`; it is not
-  dropped or guessed.
+- An unknown or missing `service.name` is exported without `agent.harness`; it
+  is not dropped or guessed.
+- An OTTL classification error is logged while `error_mode: ignore` keeps the
+  payload moving through the metrics pipeline.
 - Documentation directs Cline users to `TEL_DEBUG_DIAGNOSTICS=true` when its
   exporter cannot connect.
 - Documentation does not provide a Cline APM command that the upstream CLI
@@ -340,7 +374,12 @@ Source: [GitHub Copilot CLI OpenTelemetry reference][copilot-otel].
   Claude Code, and Cline without claiming client integration coverage.
 - Codex and Claude Code metrics gain the `agent_harness` storage label while
   their raw vendor metric names remain queryable.
-- Cline does not receive a synthetic harness identity based only on a fixture.
+- Client-provided `agent.harness` and `agent_harness` values cannot survive the
+  backend classification transform at resource or datapoint scope.
+- Unknown sources, including the Cline fixture, remain queryable without an
+  `agent_harness` label.
+- The transform processor sets `error_mode: ignore`, and missing or unexpected
+  source identity does not drop a metrics payload.
 - Existing logs, dashboards, and authentication boundaries remain unchanged.
 - Existing test assertions continue to pass.
 - Cline is not passed to APM or accepted by `--harnesses`.
