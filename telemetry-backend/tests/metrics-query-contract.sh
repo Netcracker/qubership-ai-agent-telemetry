@@ -44,12 +44,46 @@ query_metric 'codex_tool_call_total{service_name="codex_cli_rs",success="false"}
   jq -e '.data.result | length == 0' >/dev/null ||
   fail 'the Codex fixture must not include failed tool calls'
 
-dashboard_path=$(CDPATH='' cd -- "$(dirname -- "$0")/../grafana/dashboards" 2>/dev/null && pwd)/codex-native-metrics.json
-tool_failure_ratio_query=$(jq -r '
-  .panels[] | select(.title == "Tool failure ratio") |
-  .targets[] | select(.refId == "A") | .expr
-' "$dashboard_path" | sed 's/\$__range/5m/g')
-assert_metric_value codex_tool_failure_ratio 0 "$tool_failure_ratio_query"
+successful_only_ratio='
+  (
+    sum(increase(codex_tool_call_total{
+      service_name="codex_cli_rs",
+      success="false"
+    }[1h]))
+    or
+    (0 * sum(increase(codex_tool_call_total{
+      service_name="codex_cli_rs"
+    }[1h])))
+  )
+  /
+  sum(increase(codex_tool_call_total{
+    service_name="codex_cli_rs"
+  }[1h]))
+'
+no_calls_ratio='
+  (
+    sum(increase(codex_tool_call_total{
+      service_name="codex-no-calls",
+      success="false"
+    }[1h]))
+    or
+    (0 * sum(increase(codex_tool_call_total{
+      service_name="codex-no-calls"
+    }[1h])))
+  )
+  /
+  sum(increase(codex_tool_call_total{
+    service_name="codex-no-calls"
+  }[1h]))
+'
+
+zero_ratio=$(query_metric "$successful_only_ratio" |
+  jq -r '.data.result[0].value[1] // empty')
+[ "$zero_ratio" = 0 ] || fail "successful-only tool calls must produce a zero failure ratio"
+
+query_metric "$no_calls_ratio" |
+  jq -e '.data.result | length == 0' >/dev/null ||
+  fail 'missing tool-call metrics must produce no failure-ratio series'
 
 query_metric '{service_name="cline-fixture",agent_harness=~".+"}' |
   jq -e '.data.result | length == 0' >/dev/null ||

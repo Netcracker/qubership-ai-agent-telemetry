@@ -45,6 +45,25 @@
                       }
                     ],
                     "startTimeUnixNano": "__METRIC_START_TS__",
+                    "timeUnixNano": "__METRIC_START_TS__",
+                    "asInt": "1"
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "tool",
+                        "value": {
+                          "stringValue": "exec_command"
+                        }
+                      },
+                      {
+                        "key": "success",
+                        "value": {
+                          "stringValue": "true"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "__METRIC_START_TS__",
                     "timeUnixNano": "__METRIC_TS__",
                     "asInt": "3"
                   }
@@ -84,6 +103,50 @@
               "histogram": {
                 "aggregationTemporality": 2,
                 "dataPoints": [
+                  {
+                    "attributes": [
+                      {
+                        "key": "token_type",
+                        "value": {
+                          "stringValue": "input"
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "fixture-codex"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "__METRIC_START_TS__",
+                    "timeUnixNano": "__METRIC_START_TS__",
+                    "count": "1",
+                    "sum": 100,
+                    "bucketCounts": ["0", "1"],
+                    "explicitBounds": [1000]
+                  },
+                  {
+                    "attributes": [
+                      {
+                        "key": "token_type",
+                        "value": {
+                          "stringValue": "input"
+                        }
+                      },
+                      {
+                        "key": "model",
+                        "value": {
+                          "stringValue": "fixture-codex"
+                        }
+                      }
+                    ],
+                    "startTimeUnixNano": "__METRIC_START_TS__",
+                    "timeUnixNano": "__METRIC_TS__",
+                    "count": "2",
+                    "sum": 1200,
+                    "bucketCounts": ["0", "2"],
+                    "explicitBounds": [1000]
+                  },
                   {
                     "attributes": [
                       {
