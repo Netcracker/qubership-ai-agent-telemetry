@@ -114,7 +114,11 @@ done
 for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD \
   "administrator username is \`admin\`" 'Upgrade an existing stack' 'docker compose config' \
   'com.docker.compose.volume=grafana-data' "Do not run \`docker compose down -v\`" \
-  'grafana cli admin reset-admin-password' 'Adoption overview' 'Telemetry health'; do
+  'grafana cli admin reset-admin-password' 'Adoption overview' 'Telemetry health' \
+  'Native agent metrics overview' 'Codex native metrics' 'Native metrics and hook telemetry' \
+  'metrics_exporter = { otlp-http = {' 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT' \
+  'OTEL_METRICS_INCLUDE_SESSION_ID=false' 'Cline is not an accepted `--harnesses` target' \
+  'Backend fixture'; do
   grep -Fq "$text" "$readme" || fail "backend README is missing: $text"
 done
 printf 'PASS: backend configuration contract\n'
