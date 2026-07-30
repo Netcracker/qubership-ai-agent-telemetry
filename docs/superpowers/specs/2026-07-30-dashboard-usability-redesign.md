@@ -25,6 +25,12 @@ The redesign covers these provisioned dashboards:
 
 ## Measurement definitions
 
+### Hook telemetry population
+
+Every adoption and health query derived from hook telemetry selects `service.name="ai-agent-telemetry"` and excludes
+events whose `agent` value is exactly `selftest`. Synthetic self-test events must not contribute to daily activity,
+inactive or active installation cohorts, target-version adoption, distributions, or diagnostic tables.
+
 ### Hourly activity
 
 Each hourly point uses `increase(<counter>[1h])`. The query step is at least one hour. A point therefore represents the
@@ -40,6 +46,23 @@ Grafana time range and the repository, harness, operating system, and version fi
   day. Events without `repo.remote` do not contribute to this count.
 - Sessions observed is the number of distinct `(agent, session.id)` pairs observed during the UTC day. Events without
   `session.id` do not contribute to this count.
+
+Repository normalization applies these steps in order:
+
+1. Trim leading and trailing ASCII whitespace.
+2. Convert the value to lowercase.
+3. For GitHub remotes, remove one recognized transport and host prefix:
+   - `git@github.com:`;
+   - `ssh://git@github.com/` or `ssh://github.com/`;
+   - `git://github.com/`;
+   - `http://github.com/` or `https://github.com/`;
+   - `github.com/`.
+4. Remove trailing `/` characters.
+5. Remove one terminal `.git` suffix.
+6. Remove trailing `/` characters again.
+
+The canonical value for a recognized GitHub remote is `owner/repository`. Other hosts retain their lowercased host and
+path after whitespace, trailing slash, and `.git` cleanup. An empty result is excluded.
 
 ### Inactive installation
 
@@ -204,7 +227,9 @@ Contract tests must verify:
 - one-hour windows and minimum query intervals for hourly panels;
 - matrix transformations and exact-count number formatting;
 - the absence of a Time column from Observed client versions;
+- exclusion of `agent="selftest"` from every hook-derived adoption and health population;
 - UTC calendar-day bucketing and unique-key definitions for all three daily adoption panels;
+- repository normalization across canonical, SSH, HTTPS, `.git`, case, whitespace, and trailing-slash variants;
 - the presence of the target-version variable and the 24-hour and 48-hour stale definitions;
 - selection of all stale-table fields from one latest event per `machine.id`, including missing-field display rules;
 - the 24-hour population for active-installation distributions;
