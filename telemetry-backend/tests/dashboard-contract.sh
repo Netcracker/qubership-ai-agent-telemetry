@@ -1,7 +1,12 @@
 #!/bin/sh
 set -eu
 
-dashboard_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/../grafana/dashboards" 2>/dev/null && pwd) || {
+default_dashboard_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/../grafana/dashboards" 2>/dev/null && pwd) || {
+  printf 'FAIL: Grafana dashboard directory is missing\n' >&2
+  exit 1
+}
+dashboard_dir=${DASHBOARD_DIR:-$default_dashboard_dir}
+[ -d "$dashboard_dir" ] || {
   printf 'FAIL: Grafana dashboard directory is missing\n' >&2
   exit 1
 }
@@ -212,6 +217,33 @@ jq -e '
   | ($targets | all(.expr | contains("service_name=\"codex_cli_rs\""))) and
     ($targets | all((.expr | contains("agent_harness")) | not))
 ' "$codex_path" >/dev/null || fail "$codex must select Codex by service_name without agent_harness"
+
+jq -e '
+  [.panels[] | select(.type != "text" and .type != "row") | .targets[]?.expr] as $expressions
+  | ($expressions | all(
+      gsub("session_source[[:space:]]*=[[:space:]]*\"cli\""; "")
+      | test("session_source"; "i") | not
+    )) and
+    ($expressions | all(
+      test("(^|[^[:alnum:]_])(by|without)[[:space:]]*\\([^)]*session_source"; "i") | not
+    ))
+' "$codex_path" >/dev/null ||
+  fail "$codex must not group or break down metrics by session_source"
+
+jq -e '
+  [
+    .panels[] | [
+      .title?,
+      .fieldConfig.defaults.displayName?,
+      .fieldConfig.defaults.displayNameFromDS?,
+      .targets[]?.legendFormat?,
+      .fieldConfig.overrides[]?.matcher.options?,
+      (.fieldConfig.overrides[]?.properties[]? | select(.id == "displayName") | .value?)
+    ][] | select(type == "string")
+  ]
+  | all(test("session_source"; "i") | not)
+' "$codex_path" >/dev/null ||
+  fail "$codex must not display session_source in titles, legends, or display names"
 
 for title in 'Turn latency' 'Tool latency' 'API latency'; do
   jq -e --arg title "$title" '
