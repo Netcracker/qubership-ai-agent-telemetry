@@ -5,7 +5,7 @@ services:
     image: victoriametrics/victoria-logs:v1.16.0-victorialogs
     command:
       - -storageDataPath=/vlogs
-      - -retentionPeriod=${VL_RETENTION}
+      - -retentionPeriod=${VL_RETENTION:-365d}
     volumes:
       - vlogs-data:/vlogs
     networks:
@@ -16,7 +16,7 @@ services:
     image: victoriametrics/victoria-metrics:v1.148.0
     command:
       - -storageDataPath=/vmetrics
-      - -retentionPeriod=${VM_RETENTION:-30d}
+      - -retentionPeriod=${VM_RETENTION:-365d}
       - -opentelemetry.usePrometheusNaming
     volumes:
       - vmetrics-data:/vmetrics

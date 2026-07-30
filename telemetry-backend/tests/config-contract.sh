@@ -16,7 +16,7 @@ fail() {
   exit 1
 }
 
-for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VM_RETENTION; do
+for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION; do
   grep -q "^$name=" "$env_file" || fail "$name is missing from .env.example"
 done
 if grep -q '^GRAFANA_ADMIN_USER=' "$env_file"; then
@@ -61,7 +61,9 @@ jq -e '.services.victoriametrics != null and .services.victoriametrics.ports == 
   fail 'VictoriaMetrics must exist without published ports'
 jq -e 'any(.services.victoriametrics.volumes[]?; .target == "/vmetrics")' "$rendered" >/dev/null ||
   fail 'VictoriaMetrics must persist metrics under /vmetrics'
-jq -e '.services.victoriametrics.command | index("-retentionPeriod=30d") != null' "$rendered" >/dev/null ||
+jq -e '.services.victorialogs.command | index("-retentionPeriod=365d") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaLogs must use VL_RETENTION'
+jq -e '.services.victoriametrics.command | index("-retentionPeriod=365d") != null' "$rendered" >/dev/null ||
   fail 'VictoriaMetrics must use VM_RETENTION'
 jq -e '(.services.grafana.build.context // "") | endswith("/telemetry-backend/grafana")' "$rendered" >/dev/null ||
   fail 'Grafana build context is missing'
@@ -116,12 +118,16 @@ for line in \
   'Verify the effective exporters: a metrics exporter must be present and a logs exporter must be absent.'; do
   grep -Fqx "$line" "$readme" || fail "backend README is missing exact safety contract: $line"
 done
-sed '/^VM_RETENTION=/d' "$env_file" >"$legacy_env"
+sed '/^VL_RETENTION=/d; /^VM_RETENTION=/d' "$env_file" >"$legacy_env"
 docker compose --env-file "$legacy_env" -f "$compose_file" config --format json >"$rendered"
-jq -e '.services.victoriametrics.command | index("-retentionPeriod=30d") != null' "$rendered" >/dev/null ||
-  fail 'VictoriaMetrics must default to 30d when a legacy environment omits VM_RETENTION'
-printf '%s\n' 'VM_RETENTION=7d' >>"$legacy_env"
+jq -e '.services.victorialogs.command | index("-retentionPeriod=365d") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaLogs must default to 365d when a legacy environment omits VL_RETENTION'
+jq -e '.services.victoriametrics.command | index("-retentionPeriod=365d") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must default to 365d when a legacy environment omits VM_RETENTION'
+printf '%s\n' 'VL_RETENTION=14d' 'VM_RETENTION=7d' >>"$legacy_env"
 docker compose --env-file "$legacy_env" -f "$compose_file" config --format json >"$rendered"
+jq -e '.services.victorialogs.command | index("-retentionPeriod=14d") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaLogs must honor an explicit VL_RETENTION override'
 jq -e '.services.victoriametrics.command | index("-retentionPeriod=7d") != null' "$rendered" >/dev/null ||
   fail 'VictoriaMetrics must honor an explicit VM_RETENTION override'
 printf 'PASS: backend configuration contract\n'
