@@ -9,6 +9,7 @@ readme=$backend_dir/README.md
 datasource_file=$backend_dir/grafana/provisioning/datasources/victorialogs.yaml
 health_dashboard=$backend_dir/grafana/dashboards/telemetry-health.json
 collector_config=$backend_dir/otel-collector-config.yaml
+fixture_stack=$backend_dir/tests/with-fixture-stack.sh
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -27,6 +28,13 @@ printf '%s\n' "$metrics_pipeline" | grep -Fq 'processors: [deltatocumulative, ba
   fail 'metrics pipeline must convert delta metrics and batch them'
 if grep -Fq 'transform/metrics_identity' "$collector_config"; then
   fail 'metrics pipeline must not classify harness identity at ingestion'
+fi
+if grep -Fq 'sed -i' "$fixture_stack"; then
+  fail 'fixture stack must render timestamps without sed -i'
+fi
+caddy_readiness=$(sed -n '/^  status=$(curl/,/sleep 1/p' "$fixture_stack")
+if printf '%s\n' "$caddy_readiness" | grep -Fq 'show-error'; then
+  fail 'expected fixture-stack readiness retries must not emit curl errors'
 fi
 
 grep -q '@ingest path /v1/logs' "$caddyfile" || fail 'ingest path matcher is missing'

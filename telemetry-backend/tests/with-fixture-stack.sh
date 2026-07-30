@@ -16,6 +16,7 @@ env_file=$tmp_dir/backend.env
 ca_cert=$tmp_dir/caddy-root.crt
 rendered_fixture=$tmp_dir/otel-events.json
 rendered_metrics_fixture=$tmp_dir/otel-metrics.json
+event_sed_script=$tmp_dir/otel-events.sed
 dashboard_user='admin'
 dashboard_password='fixture-viewer-password'
 ingest_token='fixture-ingest-token'
@@ -65,7 +66,7 @@ done
 
 attempt=0
 while :; do
-  status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     --cacert "$ca_cert" "$base_url/unknown" || true)
   [ "$status" = 404 ] && break
   attempt=$((attempt + 1))
@@ -79,18 +80,18 @@ done
 now=$(date -u +%s)
 hour=$((now - now % 3600))
 index=1
-cp "$fixture" "$rendered_fixture"
 while [ "$index" -le 8 ]; do
   timestamp=$((hour * 1000000000 + index * 100000000))
-  sed -i "s/__TS_${index}__/$timestamp/g" "$rendered_fixture"
+  printf 's/__TS_%s__/%s/g\n' "$index" "$timestamp" >>"$event_sed_script"
   index=$((index + 1))
 done
+sed -f "$event_sed_script" "$fixture" >"$rendered_fixture"
 
 metric_start_timestamp=$(((now - 1) * 1000000000))
 metric_timestamp=$((now * 1000000000))
-cp "$metrics_fixture" "$rendered_metrics_fixture"
-sed -i "s/__METRIC_START_TS__/$metric_start_timestamp/g" "$rendered_metrics_fixture"
-sed -i "s/__METRIC_TS__/$metric_timestamp/g" "$rendered_metrics_fixture"
+sed -e "s/__METRIC_START_TS__/$metric_start_timestamp/g" \
+  -e "s/__METRIC_TS__/$metric_timestamp/g" \
+  "$metrics_fixture" >"$rendered_metrics_fixture"
 
 curl --fail --silent --show-error --cacert "$ca_cert" \
   --header "Authorization: Bearer $ingest_token" \
@@ -100,7 +101,7 @@ curl --fail --silent --show-error --cacert "$ca_cert" \
 
 attempt=0
 while :; do
-  total=$(curl --fail --silent --show-error --cacert "$ca_cert" \
+  total=$(curl --fail --silent --cacert "$ca_cert" \
     --user "$dashboard_user:$dashboard_password" \
     --data-urlencode 'query={service.name="ai-agent-telemetry"} | stats count() total' \
     --data-urlencode "start=$hour" \
@@ -130,7 +131,7 @@ metrics_status=$(curl --silent --show-error --output /dev/null --write-out '%{ht
 
 attempt=0
 while :; do
-  metric_value=$(curl --fail --silent --show-error --cacert "$ca_cert" \
+  metric_value=$(curl --fail --silent --cacert "$ca_cert" \
     --user "$dashboard_user:$dashboard_password" \
     --get \
     --data-urlencode 'query=codex_tool_call_total{tool="exec_command",success="true"}' \

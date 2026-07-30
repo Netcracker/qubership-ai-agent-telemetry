@@ -28,7 +28,7 @@ assert_metric_value() {
 }
 
 assert_metric_value codex_sessions 2 \
-  'codex_thread_started_total{service_name="codex_cli_rs",session_source="cli"}'
+  'codex_thread_started_total{service_name="codex_cli_rs",session_source="cli",model="fixture-codex"}'
 assert_metric_value codex_tools 3 \
   'codex_tool_call_total{service_name="codex_cli_rs",tool="exec_command",success="true"}'
 assert_metric_value codex_tokens 1200 \
@@ -38,7 +38,7 @@ assert_metric_value claude_sessions 2 \
 assert_metric_value claude_tokens 900 \
   'claude_code_token_usage_tokens_total{service_name="claude-code",type="input",model="fixture-claude"}'
 assert_metric_value cline_fixture 1 \
-  'cline_fixture_task_count_total{service_name="cline-fixture"}'
+  'cline_fixture_task_count_total{service_name="cline-fixture",fixture="true"}'
 
 query_metric '{service_name="cline-fixture",agent_harness=~".+"}' |
   jq -e '.data.result | length == 0' >/dev/null ||
