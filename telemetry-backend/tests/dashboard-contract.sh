@@ -180,10 +180,15 @@ done
 overview=native-agent-metrics-overview.json
 check_common "$overview" native-agent-metrics-overview victoriametrics
 check_titles "$overview" \
-  'Signal availability' 'Metrics freshness' 'Top-level sessions started' 'Token usage over time' \
+  'Signal availability' 'Metrics freshness' 'Top-level sessions per hour' 'Tokens processed per hour' \
   'Tokens by model and type' 'Observed client versions'
 
 overview_path=$dashboard_dir/$overview
+for removed_title in 'Top-level sessions started' 'Token usage over time'; do
+  jq -e --arg title "$removed_title" 'all(.panels[]; .title != $title)' "$overview_path" >/dev/null ||
+    fail "$overview still contains removed panel: $removed_title"
+done
+
 jq -e '
   .panels[] | select(.title == "Signal availability") |
   .options.mode == "markdown" and
@@ -202,17 +207,45 @@ jq -e '
 ' "$overview_path" >/dev/null || fail "$overview must classify Codex and Claude without agent_harness"
 
 jq -e '
-  .panels[] | select(.title == "Top-level sessions started") |
-  any(.targets[]?; .expr | contains("session_source=\"cli\"")) and
-  any(.targets[]?; .expr | contains("start_type!=\"agents_view\""))
-' "$overview_path" >/dev/null || fail "$overview sessions panel must select top-level sessions"
+  ["Top-level sessions per hour", "Tokens processed per hour"] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
+  | ($panels | length == 2)
+    and ($panels | all(.[]; .type == "timeseries"))
+    and ($panels | all(.[]; (.targets | length > 0)))
+    and ($panels | all(.[]; all(.targets[]; .interval == "1h" and (.expr | contains("[1h]")))))
+' "$overview_path" >/dev/null ||
+  fail "$overview hourly panels must use one-hour windows and intervals"
 
-for title in 'Token usage over time' 'Tokens by model and type'; do
-  jq -e --arg title "$title" '
-    .panels[] | select(.title == $title) |
-    .fieldConfig.defaults.unit as $unit | $unit == "tokens" or $unit == "tps"
-  ' "$overview_path" >/dev/null || fail "$overview token panel '$title' must use tokens or tps"
-done
+jq -e '
+  .panels[] | select(.title == "Tokens processed per hour") |
+  .fieldConfig.defaults.unit == "locale" and .fieldConfig.defaults.decimals == 0
+' "$overview_path" >/dev/null ||
+  fail "$overview hourly tokens must render exact whole numbers"
+
+jq -e '
+  .panels[] | select(.title == "Tokens by model and type") |
+  .type == "table" and
+  .targets[0].instant == true and .targets[0].format == "time_series" and
+  any(.transformations[]?; .id == "joinByLabels"
+    and .options.join == ["agent_model"] and .options.value == "token_type") and
+  any(.fieldConfig.overrides[]?;
+    .matcher.id == "byType" and .matcher.options == "number" and
+    any(.properties[]?; .id == "unit" and .value == "locale") and
+    any(.properties[]?; .id == "decimals" and .value == 0))
+' "$overview_path" >/dev/null ||
+  fail "$overview token breakdown must be an exact-count harness/model matrix"
+
+jq -e '
+  .panels[] | select(.title == "Observed client versions") |
+  .type == "table" and (.targets | length == 1) and
+  .targets[0].instant == true and .targets[0].format == "table" and
+  any(.transformations[]?; .id == "organize"
+    and .options.excludeByName.Time == true
+    and .options.excludeByName.Value == true
+    and .options.renameByName.harness == "Harness"
+    and .options.renameByName.app_version == "Version")
+' "$overview_path" >/dev/null ||
+  fail "$overview client versions must show only harness and version"
 
 # --- Codex native metrics deep-dive ----------------------------------------
 codex=codex-native-metrics.json
