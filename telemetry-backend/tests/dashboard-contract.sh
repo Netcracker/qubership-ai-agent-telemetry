@@ -369,6 +369,22 @@ jq -e '
   fail "$overview Signal availability must use Markdown table rows with real line breaks"
 
 jq -e '
+  (.panels[] | select(.title == "Signal availability")
+    | .gridPos == {"h": 8, "w": 24, "x": 0, "y": 0}) and
+  (.panels[] | select(.title == "Metrics freshness")
+    | .gridPos == {"h": 7, "w": 12, "x": 0, "y": 8}) and
+  (.panels[] | select(.title == "Top-level sessions per hour")
+    | .gridPos == {"h": 7, "w": 12, "x": 12, "y": 8}) and
+  (.panels[] | select(.title == "Tokens processed per hour")
+    | .gridPos == {"h": 8, "w": 24, "x": 0, "y": 15}) and
+  (.panels[] | select(.title == "Tokens by model and type")
+    | .gridPos == {"h": 8, "w": 12, "x": 0, "y": 23}) and
+  (.panels[] | select(.title == "Observed client versions")
+    | .gridPos == {"h": 8, "w": 12, "x": 12, "y": 23})
+' "$overview_path" >/dev/null ||
+  fail "$overview must reserve enough space for Signal availability without overlapping later rows"
+
+jq -e '
   any(.panels[].targets[]?; .expr | contains("service_name=\"codex_cli_rs\"")) and
   any(.panels[].targets[]?; .expr | contains("service_name=~\"claude-code|claude-code-desktop\"")) and
   all(.panels[].targets[]?; (.expr | contains("agent_harness")) | not)
