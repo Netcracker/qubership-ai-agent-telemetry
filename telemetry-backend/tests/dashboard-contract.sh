@@ -202,19 +202,22 @@ jq -e '
   .panels[] | select(.title == "Stale installations") |
   .targets[0].expr as $expr |
   ($expr | contains("first 1 by (_time desc) partition by (machine.id)")) and
-  ($expr | contains("fields machine.id, _time, agent, service.version")) and
+  ($expr | split("\n") | any(. == "| fields machine.id, _time, agent, service.version")) and
   (.fieldConfig.defaults.noValue == "Unknown") and
   any(.transformations[]?; .id == "extractFields" and .options.source == "labels") and
   any(.transformations[]?; .id == "convertFieldType"
     and any(.options.conversions[]?;
       .targetField == "_time" and .destinationType == "time")) and
   any(.transformations[]?; .id == "organize"
-    and .options.renameByName["machine.id"] == "Installation"
-    and .options.renameByName._time == "Last seen"
-    and .options.renameByName.agent == "Harness"
-    and .options.renameByName["service.version"] == "Observed version")
+    and .options.excludeByName ==
+      {"Line": true, "labels": true, "detected_level": true, "_time": true}
+    and .options.renameByName ==
+      {"Time": "Last seen", "machine.id": "Installation", "agent": "Harness",
+       "service.version": "Observed version"}
+    and .options.indexByName ==
+      {"Time": 0, "agent": 1, "machine.id": 2, "service.version": 3})
 ' "$health_path" >/dev/null ||
-  fail "$health stale table must use one latest event per installation"
+  fail "$health stale table must show exactly Last seen, Harness, Installation, and Observed version"
 
 jq -e '
   ["Machines not seen on target version", "Inactive for more than 24 hours",
@@ -275,7 +278,10 @@ jq -e '
   ] as $titles
   | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
   | ($panels | length == 3)
+    and ([$panels[].title] | sort ==
+      ["Active installations per day", "Active repositories per day", "Sessions observed per day"])
     and ($panels | all(.[]; .type == "timeseries"))
+    and ($panels | all(.[]; (.targets | length > 0)))
     and ([$panels[] | .targets[]] | all(.queryType == "statsRange"))
     and ([$panels[] | .targets[]] | all(.expr | contains("agent:!=\"selftest\"")))
     and ([$panels[] | .targets[]] | all(.expr | contains("_time:1d offset 0h")))
@@ -295,6 +301,19 @@ jq -e '
   ($expr | contains("/+$"))
 ' "$dashboard_dir/$adoption" >/dev/null ||
   fail "$adoption repository count must use the approved normalization"
+
+jq -e '
+  [
+    "Telemetry activity",
+    "Top MCPs",
+    "Skills per repository (stacked)",
+    "MCPs per repository (stacked)"
+  ] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
+  | ($panels | length == 4) and
+    ($panels | all(.fieldConfig.defaults.color.mode == "continuous-BlPu"))
+' "$dashboard_dir/$adoption" >/dev/null ||
+  fail "$adoption count bar charts must use the neutral blue-purple palette"
 
 # Flat per-repository tables must parse the grouped series into readable rows.
 for title in 'Skills per repository (table)' 'MCPs per repository (table)'; do
@@ -362,8 +381,11 @@ jq -e '
     and ($panels | all(.[]; .type == "timeseries"))
     and ($panels | all(.[]; (.targets | length > 0)))
     and ($panels | all(.[]; all(.targets[]; .interval == "1h" and (.expr | contains("[1h]")))))
+    and ($panels | all(.[]; .fieldConfig.defaults.custom.showPoints == "always"))
+    and ($panels | all(.[]; .fieldConfig.defaults.custom.pointSize == 5))
+    and ($panels | all(.[]; .fieldConfig.defaults.custom.spanNulls == false))
 ' "$overview_path" >/dev/null ||
-  fail "$overview hourly panels must use one-hour windows and intervals"
+  fail "$overview hourly panels must use visible points without spanning missing windows"
 
 jq -e '
   .panels[] | select(.title == "Tokens processed per hour") |
@@ -373,16 +395,17 @@ jq -e '
 
 jq -e '
   .panels[] | select(.title == "Tokens by model and type") |
-  .type == "table" and
+  .type == "table" and (.targets | length == 1) and
   .targets[0].instant == true and .targets[0].format == "time_series" and
   any(.transformations[]?; .id == "joinByLabels"
     and .options.join == ["agent_model"] and .options.value == "token_type") and
   any(.fieldConfig.overrides[]?;
     .matcher.id == "byType" and .matcher.options == "number" and
     any(.properties[]?; .id == "unit" and .value == "locale") and
-    any(.properties[]?; .id == "decimals" and .value == 0))
+    any(.properties[]?; .id == "decimals" and .value == 0) and
+    any(.properties[]?; .id == "color" and .value.mode == "continuous-BlPu"))
 ' "$overview_path" >/dev/null ||
-  fail "$overview token breakdown must be an exact-count harness/model matrix"
+  fail "$overview token breakdown must be one exact-count target with a neutral matrix palette"
 
 jq -e '
   .panels[] | select(.title == "Observed client versions") |
@@ -391,10 +414,13 @@ jq -e '
   any(.transformations[]?; .id == "organize"
     and .options.excludeByName.Time == true
     and .options.excludeByName.Value == true
+    and .options.excludeByName.__name__ == true
     and .options.renameByName.harness == "Harness"
-    and .options.renameByName.app_version == "Version")
+    and .options.renameByName.app_version == "Version"
+    and .options.indexByName.harness == 0
+    and .options.indexByName.app_version == 1)
 ' "$overview_path" >/dev/null ||
-  fail "$overview client versions must show only harness and version"
+  fail "$overview client versions must show Harness then Version and hide metric metadata"
 
 # --- Codex native metrics deep-dive ----------------------------------------
 codex=codex-native-metrics.json
@@ -419,17 +445,33 @@ jq -e '
   | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
   | ($panels | length == 4)
     and ($panels | all(.type == "timeseries"))
+    and ($panels | all(.[]; (.targets | length > 0)))
     and ($panels | all(.[]; all(.targets[]; .interval == "1h" and (.expr | contains("[1h]")))))
+    and ($panels | all(.[]; .fieldConfig.defaults.custom.showPoints == "always"))
+    and ($panels | all(.[]; .fieldConfig.defaults.custom.pointSize == 5))
+    and ($panels | all(.[]; .fieldConfig.defaults.custom.spanNulls == false))
 ' "$codex_path" >/dev/null ||
-  fail "$codex activity panels must use one-hour windows and intervals"
+  fail "$codex activity panels must use visible points without spanning missing windows"
 
 jq -e '
   .panels[] | select(.title == "Tokens by model and type") |
-  .type == "table" and
+  .type == "table" and (.targets | length == 1) and
   any(.transformations[]?; .id == "joinByLabels"
-    and .options.join == ["model"] and .options.value == "token_type")
+    and .options.join == ["model"] and .options.value == "token_type") and
+  any(.fieldConfig.overrides[]?;
+    .matcher.id == "byType" and .matcher.options == "number" and
+    any(.properties[]?; .id == "color" and .value.mode == "continuous-BlPu"))
 ' "$codex_path" >/dev/null ||
-  fail "$codex tokens must use a model/token-type matrix"
+  fail "$codex tokens must use one model/token-type target with a neutral matrix palette"
+
+jq -e '
+  ["Top tools", "MCP servers and outcomes", "Skill injections"] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
+  | ($panels | length == 3) and
+    ($panels | all(.fieldConfig.defaults.color.mode == "continuous-BlPu")) and
+    ($panels | all(.[]; (.targets | length == 1) and .targets[0].instant == true))
+' "$codex_path" >/dev/null ||
+  fail "$codex topk bar gauges must use instant queries and a neutral blue-purple palette"
 
 jq -e '
   .panels[] | select(.title == "API latency") |

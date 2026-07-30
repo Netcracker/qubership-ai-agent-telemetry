@@ -86,7 +86,7 @@
       "transformations": [
         {"id": "extractFields", "options": {"source": "labels"}},
         {"id": "convertFieldType", "options": {"conversions": [{"targetField": "_time", "destinationType": "time"}]}},
-        {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true}, "renameByName": {"machine.id": "Installation", "_time": "Last seen", "agent": "Harness", "service.version": "Observed version"}}}
+        {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true, "detected_level": true, "_time": true}, "renameByName": {"Time": "Last seen", "machine.id": "Installation", "agent": "Harness", "service.version": "Observed version"}, "indexByName": {"Time": 0, "agent": 1, "machine.id": 2, "service.version": 3}}}
       ]
     },
     {

@@ -207,6 +207,9 @@
     "defaults": {
      "min": 0,
      "unit": "short",
+     "color": {
+      "mode": "continuous-BlPu"
+     },
      "custom": {
       "drawStyle": "bars",
       "fillOpacity": 85,
@@ -560,6 +563,9 @@
     "defaults": {
      "min": 0,
      "unit": "short",
+     "color": {
+      "mode": "continuous-BlPu"
+     },
      "custom": {
       "fillOpacity": 85,
       "lineWidth": 1
@@ -873,6 +879,9 @@
     "defaults": {
      "min": 0,
      "unit": "short",
+     "color": {
+      "mode": "continuous-BlPu"
+     },
      "custom": {
       "fillOpacity": 85,
       "lineWidth": 1
@@ -1159,6 +1168,9 @@
     "defaults": {
      "min": 0,
      "unit": "short",
+     "color": {
+      "mode": "continuous-BlPu"
+     },
      "custom": {
       "fillOpacity": 85,
       "lineWidth": 1

@@ -40,7 +40,7 @@
       "description": "Each point shows top-level sessions observed during the trailing one-hour window. Claude Code agent-view sessions are excluded.",
       "gridPos": {"h": 7, "w": 12, "x": 12, "y": 5},
       "datasource": {"type": "prometheus", "uid": "victoriametrics"},
-      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0}, "overrides": []},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_thread_started_total{service_name=\"codex_cli_rs\",session_source=\"cli\"}[1h]))", "legendFormat": "Codex", "interval": "1h"},
@@ -54,7 +54,7 @@
       "description": "Each point shows tokens processed during the trailing one-hour window.",
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
       "datasource": {"type": "prometheus", "uid": "victoriametrics"},
-      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "overrides": []}, "overrides": []},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}, "overrides": []}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (token_type) (increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[1h]))", "legendFormat": "Codex · {{token_type}}", "interval": "1h"},
@@ -67,7 +67,7 @@
       "title": "Tokens by model and type",
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
       "datasource": {"type": "prometheus", "uid": "victoriametrics"},
-      "fieldConfig": {"defaults": {"min": 0}, "overrides": [{"matcher": {"id": "byType", "options": "number"}, "properties": [{"id": "unit", "value": "locale"}, {"id": "decimals", "value": 0}, {"id": "custom.align", "value": "center"}, {"id": "custom.cellOptions", "value": {"type": "color-background"}}]}]},
+      "fieldConfig": {"defaults": {"min": 0}, "overrides": [{"matcher": {"id": "byType", "options": "number"}, "properties": [{"id": "unit", "value": "locale"}, {"id": "decimals", "value": 0}, {"id": "color", "value": {"mode": "continuous-BlPu"}}, {"id": "custom.align", "value": "center"}, {"id": "custom.cellOptions", "value": {"type": "color-background"}}]}]},
       "options": {"showHeader": true},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "label_join(\n  label_set(\n    sum by (model, token_type) (\n      increase(codex_turn_token_usage_sum{\n        service_name=\"codex_cli_rs\",\n        token_type!=\"total\"\n      }[$__range])\n    ),\n    \"harness\", \"Codex\"\n  ),\n  \"agent_model\", \" · \", \"harness\", \"model\"\n)\nor\nlabel_join(\n  label_set(\n    label_move(\n      sum by (model, type) (\n        increase(claude_code_token_usage_tokens_total{\n          service_name=~\"claude-code|claude-code-desktop\"\n        }[$__range])\n      ),\n      \"type\", \"token_type\"\n    ),\n    \"harness\", \"Claude\"\n  ),\n  \"agent_model\", \" · \", \"harness\", \"model\"\n)", "instant": true, "format": "time_series"}
