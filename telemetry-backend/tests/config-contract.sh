@@ -51,7 +51,8 @@ grep -q 'header_up X-WEBAUTH-USER viewer-{http.auth.user.id}' "$caddyfile" ||
   fail 'Grafana auth proxy must isolate viewer identities from native administrators'
 
 rendered=$(mktemp)
-trap 'rm -f "$rendered"' EXIT HUP INT TERM
+legacy_env=$(mktemp)
+trap 'rm -f "$rendered" "$legacy_env"' EXIT HUP INT TERM
 docker compose --env-file "$env_file" -f "$compose_file" config --format json >"$rendered"
 jq -e '.services.caddy.ports | length == 2' "$rendered" >/dev/null || fail 'Caddy must publish two ports'
 jq -e '[.services.collector.ports, .services.victorialogs.ports] | all(. == null)' "$rendered" >/dev/null ||
@@ -139,4 +140,12 @@ for line in \
   'Verify the effective exporters: a metrics exporter must be present and a logs exporter must be absent.'; do
   grep -Fqx "$line" "$readme" || fail "backend README is missing exact safety contract: $line"
 done
+sed '/^VM_RETENTION=/d' "$env_file" >"$legacy_env"
+docker compose --env-file "$legacy_env" -f "$compose_file" config --format json >"$rendered"
+jq -e '.services.victoriametrics.command | index("-retentionPeriod=30d") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must default to 30d when a legacy environment omits VM_RETENTION'
+printf '%s\n' 'VM_RETENTION=7d' >>"$legacy_env"
+docker compose --env-file "$legacy_env" -f "$compose_file" config --format json >"$rendered"
+jq -e '.services.victoriametrics.command | index("-retentionPeriod=7d") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must honor an explicit VM_RETENTION override'
 printf 'PASS: backend configuration contract\n'
