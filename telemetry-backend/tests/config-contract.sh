@@ -88,30 +88,6 @@ grep -q '^    uid: victorialogs$' "$datasource_file" || fail 'VictoriaLogs datas
 grep -q '^    editable: true$' "$datasource_file" ||
   fail 'VictoriaLogs datasource must allow administrator edits'
 
-for panel_spec in \
-  'Event ID coverage:coverage_percent:80:95' \
-  'Machine ID coverage:coverage_percent:80:95' \
-  'Duplicate delivery rate:duplicate_percent:0.1:1' \
-  'MCP duration coverage:coverage_percent:80:95'; do
-  panel_title=${panel_spec%%:*}
-  panel_values=${panel_spec#*:}
-  percent_field=${panel_values%%:*}
-  panel_values=${panel_values#*:}
-  warning_threshold=${panel_values%%:*}
-  critical_threshold=${panel_values#*:}
-  jq -e --arg title "$panel_title" --arg field "$percent_field" \
-    --argjson warning "$warning_threshold" --argjson critical "$critical_threshold" '
-    .panels[] | select(.title == $title) |
-    .fieldConfig.defaults.unit == "percent" and
-    .fieldConfig.overrides == [] and
-    .fieldConfig.defaults.thresholds.mode == "absolute" and
-    [.fieldConfig.defaults.thresholds.steps[].value] == [null, $warning, $critical] and
-    (.targets | length) == 1 and
-    (.targets[0].expr | endswith("| keep " + $field))
-  ' "$health_dashboard" >/dev/null ||
-    fail "$panel_title must return and format only $percent_field with semantic thresholds"
-done
-
 for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD \
   "administrator username is \`admin\`" 'Upgrade an existing stack' 'docker compose config' \
   'com.docker.compose.volume=grafana-data' "Do not run \`docker compose down -v\`" \

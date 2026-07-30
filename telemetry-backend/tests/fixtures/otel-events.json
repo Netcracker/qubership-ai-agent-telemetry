@@ -146,6 +146,34 @@
           ]
         }
       ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "ai-agent-telemetry"}},
+          {"key": "service.version", "value": {"stringValue": "v1.0.0"}},
+          {"key": "machine.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000004"}},
+          {"key": "os.type", "value": {"stringValue": "linux"}}
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {"name": "ai-agent-telemetry"},
+          "logRecords": [
+            {
+              "timeUnixNano": "__TS_9__",
+              "body": {"stringValue": "skill_executed"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0009-7000-8000-000000000009"}},
+                {"key": "agent", "value": {"stringValue": "codex"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000044"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-d"}},
+                {"key": "skill.name", "value": {"stringValue": "maintenance"}}
+              ]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

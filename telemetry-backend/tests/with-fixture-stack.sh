@@ -85,6 +85,8 @@ while [ "$index" -le 8 ]; do
   printf 's/__TS_%s__/%s/g\n' "$index" "$timestamp" >>"$event_sed_script"
   index=$((index + 1))
 done
+stale_timestamp=$(((hour - 2 * 86400) * 1000000000 + 900000000))
+printf 's/__TS_9__/%s/g\n' "$stale_timestamp" >>"$event_sed_script"
 sed -f "$event_sed_script" "$fixture" >"$rendered_fixture"
 
 metric_fixture_time=$((now - 60))
