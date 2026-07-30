@@ -1,4 +1,7 @@
 #!/bin/sh
+# Literal Markdown and shell snippets are matched as data, not evaluated by this script.
+# shellcheck disable=SC2016
+
 set -eu
 
 backend_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)

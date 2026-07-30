@@ -1,4 +1,7 @@
 #!/bin/sh
+# PromQL templates such as $__range and $__rate_interval are matched literally.
+# shellcheck disable=SC2016
+
 set -eu
 
 default_dashboard_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/../grafana/dashboards" 2>/dev/null && pwd) || {
@@ -439,7 +442,7 @@ jq -e '
   fail "$overview client versions must show Harness then Version and hide metric metadata"
 
 # --- Codex native metrics deep-dive ----------------------------------------
-codex=codex-native-metrics.json
+codex='codex-native-metrics.json'
 check_common "$codex" codex-native-metrics victoriametrics
 check_titles "$codex" \
   'Sessions and turns per hour' 'Tool and MCP calls per hour' \
