@@ -118,7 +118,25 @@ for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_A
   'Native agent metrics overview' 'Codex native metrics' 'Native metrics and hook telemetry' \
   'metrics_exporter = { otlp-http = {' 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT' \
   'OTEL_METRICS_INCLUDE_SESSION_ID=false' 'Cline is not an accepted `--harnesses` target' \
-  'Backend fixture'; do
+  'Backend fixture' 'per-session high-cardinality labels'; do
   grep -Fq "$text" "$readme" || fail "backend README is missing: $text"
+done
+
+for line in \
+  'exporter = "none"' \
+  'trace_exporter = "none"' \
+  'log_user_prompt = false' \
+  'export OTEL_LOGS_EXPORTER=none' \
+  'export OTEL_TRACES_EXPORTER=none' \
+  'export OTEL_METRICS_INCLUDE_SESSION_ID=false' \
+  '| Codex | Supported | Supported | Live pilot and backend fixture | Supported |' \
+  '| Claude Code | Supported | Supported | Backend fixture | Supported |' \
+  '| Cursor | Supported | Not documented | Existing hook coverage | Supported |' \
+  '| Cline | Not supported | Supported | Backend fixture | Not supported |' \
+  '`Backend fixture` means that a manually authored OTLP payload passes through the authenticated backend pipeline.' \
+  '`Live pilot` means that an actual client exported metrics to the deployed backend.' \
+  'An administrator must disable logs in Remote Configuration before onboarding Cline.' \
+  'Verify the effective exporters: a metrics exporter must be present and a logs exporter must be absent.'; do
+  grep -Fqx "$line" "$readme" || fail "backend README is missing exact safety contract: $line"
 done
 printf 'PASS: backend configuration contract\n'

@@ -155,12 +155,13 @@ harnesses that might export OTLP metrics.
 | Cursor | Supported | Not documented | Existing hook coverage | Supported |
 | Cline | Not supported | Supported | Backend fixture | Not supported |
 
-`Backend fixture` means that a manually authored OTLP payload passes through the authenticated backend pipeline. It
-does not validate a client binary, configuration syntax, environment variable support, header encoding, or actual
+`Backend fixture` means that a manually authored OTLP payload passes through the authenticated backend pipeline.
+It does not validate a client binary, configuration syntax, environment variable support, header encoding, or actual
 export behavior.
 
-`Live pilot` means that an actual client exported metrics to the deployed backend. The current pilot covers Codex CLI
-`0.146.0`, observed on July 30, 2026. Claude Code and Cline onboarding is documentation-derived until a version-pinned
+`Live pilot` means that an actual client exported metrics to the deployed backend.
+The current pilot covers Codex CLI `0.146.0`, observed on July 30, 2026. Claude Code and Cline onboarding is
+documentation-derived until a version-pinned
 client integration test or recorded live pilot is available.
 
 ### Native metrics and hook telemetry
@@ -220,6 +221,9 @@ export OTEL_METRICS_INCLUDE_VERSION=true
 claude
 ```
 
+`OTEL_METRICS_INCLUDE_SESSION_ID=false` avoids per-session high-cardinality labels. It reduces privacy exposure,
+storage cost, and query cardinality.
+
 The default metrics export interval is 60 seconds. Run `claude --debug` to expose export failures when the expected
 metrics do not arrive.
 
@@ -235,9 +239,10 @@ to `https://<SITE_ADDRESS>/v1/metrics`, use `http/protobuf`, and provide the ing
 overrides take precedence over Remote Configuration, but Cline documents only `console` and `otlp` for its logs
 exporter. It does not document a `none` value, so an environment-only setup cannot guarantee metrics-only export.
 
-An administrator must disable logs in Remote Configuration before onboarding Cline. Start VS Code once with the
-following command and use the Developer Tools Console to verify the effective exporters: a metrics exporter must be
-present and a logs exporter must be absent.
+An administrator must disable logs in Remote Configuration before onboarding Cline.
+Start VS Code once with the following command and use the Developer Tools Console to verify the effective exporters.
+
+Verify the effective exporters: a metrics exporter must be present and a logs exporter must be absent.
 
 ```bash
 TEL_DEBUG_DIAGNOSTICS=true code .
