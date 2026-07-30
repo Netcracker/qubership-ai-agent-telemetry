@@ -212,6 +212,11 @@ check_titles "$codex" \
   'Tokens by model and type' 'Turn latency' 'Tool latency' 'API latency' 'Skill injections'
 
 codex_path=$dashboard_dir/$codex
+codex_panel_count=$(jq '[.panels[] | select(.type != "text" and .type != "row")] | length' "$codex_path")
+[ "$codex_panel_count" -eq 14 ] || fail "$codex must contain exactly 14 query panels"
+codex_target_count=$(jq '[.panels[] | select(.type != "text" and .type != "row") | .targets[]?] | length' "$codex_path")
+[ "$codex_target_count" -eq 19 ] || fail "$codex must contain exactly 19 approved targets"
+
 jq -e '
   [.panels[] | select(.type != "text" and .type != "row") | .targets[]?] as $targets
   | ($targets | all(.expr | contains("service_name=\"codex_cli_rs\""))) and
@@ -285,8 +290,20 @@ check_codex_legend() {
   ' "$codex_path" >/dev/null || fail "$codex panel '$title' must use legend '$legend' for $ref_id"
 }
 
+check_codex_no_legend() {
+  title=$1
+  ref_id=$2
+  jq -e --arg title "$title" --arg ref_id "$ref_id" '
+    .panels[] | select(.title == $title) |
+    any(.targets[]?; .refId == $ref_id and (.legendFormat? == null))
+  ' "$codex_path" >/dev/null || fail "$codex panel '$title' must not set a legend for $ref_id"
+}
+
 for title in 'Top-level sessions' 'Conversation turns' 'Tool calls' 'MCP calls' 'Total tokens'; do
   check_neutral_stat "$codex" "$title"
+done
+for title in 'Top-level sessions' 'Conversation turns' 'Tool calls' 'MCP calls' 'Total tokens' 'Tool failure ratio'; do
+  check_codex_no_legend "$title" A
 done
 
 check_codex_target 'Top-level sessions' A 'sum(increase(codex_thread_started_total{service_name="codex_cli_rs",session_source="cli"}[$__range]))'
