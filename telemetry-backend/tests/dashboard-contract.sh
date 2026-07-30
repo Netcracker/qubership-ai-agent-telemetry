@@ -136,11 +136,40 @@ for removed_title in \
 done
 
 jq -e '
+  .panels[] | select(.title == "OTLP coverage boundary") |
+  .type == "text" and .options.mode == "markdown" and
+  .options.content == "Native OTLP metrics do not share an installation identifier with hook telemetry.
+This dashboard can show native-signal freshness, but it cannot count installations
+that have or have not configured OTLP export."
+' "$health_path" >/dev/null ||
+  fail "$health must distinguish native freshness from installation-level OTLP coverage"
+
+jq -e '
   any(.templating.list[];
-    .name == "target_version" and .type == "textbox" and
+    .name == "target_version" and .type == "textbox" and .hide == 0 and
+    .label == "Target version" and
+    .query == "v1.2.0" and
     .current.text == "v1.2.0" and .current.value == "v1.2.0")
 ' "$health_path" >/dev/null ||
-  fail "$health must expose target_version with default v1.2.0"
+  fail "$health must expose a labeled target_version with default v1.2.0"
+
+jq -e '
+  .panels[] | select(.title == "Native metrics freshness") |
+  .datasource.type == "prometheus" and .datasource.uid == "victoriametrics" and
+  .description == "Seconds since the latest native metric sample for each documented exporter." and
+  .fieldConfig.defaults.unit == "s" and
+  .options.colorMode == "none" and
+  (.targets | length == 2) and
+  all(.targets[];
+    .datasource.type == "prometheus" and .datasource.uid == "victoriametrics") and
+  any(.targets[];
+    .legendFormat == "Codex" and
+    .expr == "time() - max(timestamp(codex_tool_call_total{service_name=\"codex_cli_rs\"}))") and
+  any(.targets[];
+    .legendFormat == "Claude" and
+    .expr == "time() - max(timestamp(claude_code_session_count_total{service_name=~\"claude-code|claude-code-desktop\"}))")
+' "$health_path" >/dev/null ||
+  fail "$health native freshness must use the approved neutral VictoriaMetrics queries"
 
 jq -e '
   [
@@ -192,10 +221,33 @@ jq -e '
     "Inactive for more than 48 hours", "Active installations by version",
     "Active installations by harness and OS"] as $titles
   | [.panels[] | select(.title as $title | $titles | index($title))]
-  | all(.[]; .fieldConfig.defaults.color.mode == "fixed" and
+  | all(.[]; .fieldConfig.defaults.unit == "locale" and
+      .fieldConfig.defaults.decimals == 0 and
+      .fieldConfig.defaults.color.mode == "fixed" and
       .fieldConfig.defaults.color.fixedColor == "blue")
 ' "$health_path" >/dev/null ||
-  fail "$health count panels must use the neutral blue palette"
+  fail "$health count panels must use whole-number locale units and the neutral blue palette"
+
+jq -e '
+  ["Active installations by version", "Active installations by harness and OS"] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
+  | ($panels | length == 2) and
+    ($panels | all(.[];
+      (.targets | length == 1) and
+      (.targets[0].expr | contains("first 1 by (_time desc) partition by (machine.id)")) and
+      (.targets[0].expr | endswith("| limit 15"))))
+' "$health_path" >/dev/null ||
+  fail "$health active distributions must use one latest event per installation and limit 15"
+
+jq -e '
+  (.panels[] | select(.title == "Active installations by version")
+    | .targets[0].expr | contains("format if (!service.version:*) \"Unknown\" as service.version")) and
+  (.panels[] | select(.title == "Active installations by harness and OS")
+    | .targets[0].expr as $expr
+    | ($expr | contains("format if (!agent:*) \"Unknown\" as agent")) and
+      ($expr | contains("format if (!os.type:*) \"Unknown\" as os.type")))
+' "$health_path" >/dev/null ||
+  fail "$health active distributions must label missing dimensions as Unknown"
 
 # --- Adoption overview (replaces the four per-domain dashboards) ------------
 adoption=ai-agent-telemetry-adoption.json
