@@ -129,7 +129,11 @@ metrics_datasource_health=$(curl --fail --silent --show-error --cacert "$TEST_CA
 [ "$(printf '%s' "$metrics_datasource_health" | jq -r '.status')" = OK ] ||
   fail 'VictoriaMetrics datasource health check failed'
 
-for uid in ai-agent-health ai-agent-telemetry-adoption; do
+for uid in \
+  ai-agent-health \
+  ai-agent-telemetry-adoption \
+  native-agent-metrics-overview \
+  codex-native-metrics; do
   curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
     --cookie "$viewer_cookie" \
     "$TEST_BASE_URL/grafana/api/dashboards/uid/$uid" >/dev/null || fail "dashboard $uid was not provisioned"
@@ -154,7 +158,8 @@ admin_user=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" --cookie
   fail 'Grafana administrator session does not have administrator access'
 
 time_from_ms=$((TEST_TIME_FROM * 1000))
-time_to_ms=$((TEST_TIME_TO * 1000))
+# Instant Prometheus queries evaluate at `to`. Keep it close to ingestion so fixture samples are in the lookback window.
+time_to_ms=$(($(date -u +%s) * 1000))
 jq -n --arg from "$time_from_ms" --arg to "$time_to_ms" '{
   from: $from,
   to: $to,
@@ -193,6 +198,16 @@ jq -n --arg from "$time_from_ms" --arg to "$time_to_ms" '{
       datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
       expr: "{service.name=\"ai-agent-telemetry\"} _msg:=\"mcp_tool_executed\" | format if (!mcp.server.name:*) \"Unknown\" as mcp.server.name | stats by (mcp.server.name, mcp.tool.name) count_uniq(event.id) calls",
       queryType: "stats", refId: "M", maxDataPoints: 1000, intervalMs: 60000
+    },
+    {
+      datasource: {type: "prometheus", uid: "victoriametrics"},
+      expr: "sum(codex_tool_call_total{service_name=\"codex_cli_rs\"})",
+      format: "time_series", instant: true, refId: "CM", maxDataPoints: 1000, intervalMs: 60000
+    },
+    {
+      datasource: {type: "prometheus", uid: "victoriametrics"},
+      expr: "sum(claude_code_token_usage_tokens_total{service_name=\"claude-code\",type=\"input\"})",
+      format: "time_series", instant: true, refId: "HM", maxDataPoints: 1000, intervalMs: 60000
     }
   ]
 }' >"$grafana_query"
@@ -235,6 +250,22 @@ jq -e '[.results.M.frames[].schema.fields[].labels?]
   | any(.["mcp.server.name"] == "Unknown" and .["mcp.tool.name"] == "search")' \
   "$grafana_response" >/dev/null ||
   fail 'the Grafana MCP query did not retain a tool event without a server name'
+jq -e '.results | [.CM, .HM] | all(
+  .status == 200 and
+  (.frames | length > 0) and
+  ([.frames[].schema.fields[]] | any(.type == "number"))
+)' "$grafana_response" >/dev/null ||
+  fail 'Grafana Prometheus queries did not return numeric frames'
+jq -e '.results.CM.frames | any(
+  ([.schema.fields[]] | any(.type == "number")) and
+  any(.data.values[]?; any(.[]?; . == 3))
+)' "$grafana_response" >/dev/null ||
+  fail 'the Grafana Codex metrics query did not return 3 as numeric data'
+jq -e '.results.HM.frames | any(
+  ([.schema.fields[]] | any(.type == "number")) and
+  any(.data.values[]?; any(.[]?; . == 900))
+)' "$grafana_response" >/dev/null ||
+  fail 'the Grafana Claude metrics query did not return 900 as numeric data'
 
 sh "$script_dir/query-contract.sh"
 sh "$script_dir/metrics-query-contract.sh"

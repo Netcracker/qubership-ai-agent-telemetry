@@ -53,7 +53,9 @@ queries=$(mktemp)
 response=$(mktemp)
 trap 'rm -f "$queries" "$response"' EXIT HUP INT TERM
 for dashboard in "$dashboard_dir"/*.json; do
-  jq -r '[.panels[].targets[]?.expr] | unique[]' "$dashboard" >>"$queries"
+  jq -r '[.panels[].targets[]?
+    | select(.datasource.uid == "victorialogs")
+    | .expr] | unique[]' "$dashboard" >>"$queries"
 done
 sort -u "$queries" -o "$queries"
 while IFS= read -r query; do
