@@ -87,8 +87,14 @@ while [ "$index" -le 8 ]; do
 done
 sed -f "$event_sed_script" "$fixture" >"$rendered_fixture"
 
-metric_start_timestamp=$(((now - 1) * 1000000000))
-metric_timestamp=$((now * 1000000000))
+metric_fixture_time=$((now - 60))
+metric_start_timestamp=$(((metric_fixture_time - 1) * 1000000000))
+metric_timestamp=$((metric_fixture_time * 1000000000))
+metric_visibility_cutoff=$(((now - 45) * 1000000000))
+[ "$metric_timestamp" -le "$metric_visibility_cutoff" ] || {
+  printf 'FAIL: fixture metrics must be timestamped at least 45 seconds in the past\n' >&2
+  exit 1
+}
 sed -e "s/__METRIC_START_TS__/$metric_start_timestamp/g" \
   -e "s/__METRIC_TS__/$metric_timestamp/g" \
   "$metrics_fixture" >"$rendered_metrics_fixture"
