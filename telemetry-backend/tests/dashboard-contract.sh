@@ -140,10 +140,46 @@ check_common "$adoption" ai-agent-telemetry-adoption victorialogs
 check_logs_selector "$adoption"
 check_numeric_stats "$adoption" 'Onboarding over time'
 check_titles "$adoption" \
-  'Installs' 'Used in repositories' 'Sessions caught' 'Telemetry activity' 'Onboarding over time' \
-  'Activity per machine' 'Top skills executed' 'Top MCPs' 'Machines by harness' 'Machines by OS' \
+  'Active installations per day' 'Active repositories per day' 'Sessions observed per day' \
+  'Telemetry activity' 'Onboarding over time' 'Activity per installation' \
+  'Top skills executed' 'Top MCPs' 'Machines by harness' 'Machines by OS' \
   'Skills per repository (matrix)' 'Skills per repository (stacked)' 'Skills per repository (table)' \
   'MCPs per repository (matrix)' 'MCPs per repository (stacked)' 'MCPs per repository (table)'
+
+for removed_title in 'Installs' 'Used in repositories' 'Sessions caught' 'Activity per machine'; do
+  jq -e --arg title "$removed_title" 'all(.panels[]; .title != $title)' \
+    "$dashboard_dir/$adoption" >/dev/null ||
+    fail "$adoption still contains removed panel: $removed_title"
+done
+
+jq -e '
+  [
+    "Active installations per day",
+    "Active repositories per day",
+    "Sessions observed per day"
+  ] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
+  | ($panels | length == 3)
+    and ($panels | all(.[]; .type == "timeseries"))
+    and ([$panels[] | .targets[]] | all(.queryType == "statsRange"))
+    and ([$panels[] | .targets[]] | all(.expr | contains("agent:!=\"selftest\"")))
+    and ([$panels[] | .targets[]] | all(.expr | contains("_time:1d offset 0h")))
+' "$dashboard_dir/$adoption" >/dev/null ||
+  fail "$adoption daily panels must use selftest-free UTC calendar days"
+
+jq -e '
+  .panels[] | select(.title == "Active repositories per day") |
+  .targets[0].expr as $expr |
+  ($expr | contains("repo.remote:*")) and
+  ($expr | contains("replace_regexp")) and
+  ($expr | contains("git@github[.]com:")) and
+  ($expr | contains("ssh://(git@)?github[.]com/")) and
+  ($expr | contains("https?://github[.]com/")) and
+  ($expr | contains("<lc:repo.remote>")) and
+  ($expr | contains("[.]git$")) and
+  ($expr | contains("/+$"))
+' "$dashboard_dir/$adoption" >/dev/null ||
+  fail "$adoption repository count must use the approved normalization"
 
 # Flat per-repository tables must parse the grouped series into readable rows.
 for title in 'Skills per repository (table)' 'MCPs per repository (table)'; do
@@ -158,21 +194,19 @@ for title in 'Skills per repository (table)' 'MCPs per repository (table)'; do
 done
 
 # Session and event identifiers are never exposed. A raw machine.id is allowed only in the
-# intentional per-machine ranking, where the machine is the unit of analysis.
+# intentional per-installation ranking, where the installation is the unit of analysis.
 jq -e '[.panels[].title, .panels[].fieldConfig.defaults.displayName?]
   | map(select(. != null))
   | all(test("session\\.id|event\\.id") | not)' "$dashboard_dir/$adoption" >/dev/null ||
   fail "$adoption displays a raw session or event identifier"
-jq -e '[.panels[] | select(.title != "Activity per machine")
+jq -e '[.panels[] | select(.title != "Activity per installation")
     | .title, .fieldConfig.defaults.displayName?]
   | map(select(. != null))
   | all(test("machine\\.id") | not)' "$dashboard_dir/$adoption" >/dev/null ||
-  fail "$adoption exposes a machine identifier outside the per-machine panel"
+  fail "$adoption exposes a machine identifier outside the per-installation panel"
 
-for title in 'Installs' 'Used in repositories' 'Sessions caught'; do
-  check_neutral_stat "$adoption" "$title"
-done
-for title in 'Installs' 'Used in repositories' 'Sessions caught' 'Machines by harness' 'Machines by OS'; do
+for title in 'Active installations per day' 'Active repositories per day' 'Sessions observed per day' \
+  'Machines by harness' 'Machines by OS'; do
   check_selftest_excluded "$adoption" "$title"
 done
 
