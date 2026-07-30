@@ -1,0 +1,208 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "links": [
+    {"title": "Native agent metrics overview", "type": "link", "url": "/grafana/d/native-agent-metrics-overview"},
+    {"title": "Adoption overview", "type": "link", "url": "/grafana/d/ai-agent-telemetry-adoption"},
+    {"title": "Telemetry health", "type": "link", "url": "/grafana/d/ai-agent-health"}
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Top-level sessions",
+      "description": "CLI sessions started during the selected range.",
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_thread_started_total{service_name=\"codex_cli_rs\",session_source=\"cli\"}[$__range]))"}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Conversation turns",
+      "description": "CLI conversation turns completed during the selected range.",
+      "gridPos": {"h": 5, "w": 8, "x": 8, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_conversation_turn_count_total{service_name=\"codex_cli_rs\",session_source=\"cli\"}[$__range]))"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Tool calls",
+      "description": "Tool calls recorded during the selected range.",
+      "gridPos": {"h": 5, "w": 8, "x": 16, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__range]))"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "MCP calls",
+      "description": "Model Context Protocol calls recorded during the selected range.",
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_mcp_call_total{service_name=\"codex_cli_rs\"}[$__range]))"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Total tokens",
+      "description": "Total tokens reported by completed turns in the selected range.",
+      "gridPos": {"h": 5, "w": 8, "x": 8, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "tokens"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type=\"total\"}[$__range]))"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Tool failure ratio",
+      "description": "Share of tool calls that reported failure. The denominator clamp prevents division by zero.",
+      "gridPos": {"h": 5, "w": 8, "x": 16, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 1, "unit": "percentunit"}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_tool_call_total{service_name=\"codex_cli_rs\",success=\"false\"}[$__range])) / clamp_min(sum(increase(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__range])), 1)"}
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Tool and MCP activity",
+      "description": "Per-second tool and Model Context Protocol call rates.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 10},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ops"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(rate(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__rate_interval]))", "legendFormat": "Tool calls"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(rate(codex_mcp_call_total{service_name=\"codex_cli_rs\"}[$__rate_interval]))", "legendFormat": "MCP calls"}
+      ]
+    },
+    {
+      "id": 8,
+      "type": "bargauge",
+      "title": "Top tools",
+      "description": "The ten most frequently called tools in the selected range.",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 18},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "options": {"displayMode": "gradient", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "topk(10, sum by (tool) (increase(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__range])))", "legendFormat": "{{tool}}"}
+      ]
+    },
+    {
+      "id": 9,
+      "type": "bargauge",
+      "title": "MCP servers and outcomes",
+      "description": "The ten most frequent Model Context Protocol server and outcome combinations.",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 18},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "options": {"displayMode": "gradient", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "topk(10, sum by (server, status) (increase(codex_mcp_call_total{service_name=\"codex_cli_rs\"}[$__range])))", "legendFormat": "{{server}} · {{status}}"}
+      ]
+    },
+    {
+      "id": 10,
+      "type": "bargauge",
+      "title": "Tokens by model and type",
+      "description": "Token usage grouped by the reported model and token type.",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 18},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "tokens"}, "overrides": []},
+      "options": {"displayMode": "gradient", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (model, token_type) (increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[$__range]))", "legendFormat": "{{model}} · {{token_type}}"}
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Turn latency",
+      "description": "End-to-end turn p50 and p95 latency. Histogram quantiles require enough observations in the selected rate interval.",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 26},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ms"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(codex_turn_e2e_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "p50"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_turn_e2e_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "p95"}
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Tool latency",
+      "description": "Tool call p50 and p95 latency. Histogram quantiles require enough observations in the selected rate interval.",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 26},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ms"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(codex_tool_call_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "p50"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_tool_call_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "p95"}
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "API latency",
+      "description": "Responses API latency stages at p95. Histogram quantiles require enough observations in the selected rate interval.",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 26},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ms"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "TTFT p95"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "TBT p95"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_inference_time_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "Inference p95"}
+      ]
+    },
+    {
+      "id": 14,
+      "type": "bargauge",
+      "title": "Skill injections",
+      "description": "The fifteen most frequent injected skills by invocation type and outcome.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 34},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "options": {"displayMode": "gradient", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "topk(15, sum by (skill, invoke_type, status) (increase(codex_skill_injected_total{service_name=\"codex_cli_rs\"}[$__range])))", "legendFormat": "{{skill}} · {{invoke_type}} · {{status}}"}
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 41,
+  "tags": ["ai-agent-telemetry", "native-metrics", "codex"],
+  "templating": {"list": []},
+  "time": {"from": "now-7d", "to": "now"},
+  "timezone": "browser",
+  "title": "Codex native metrics",
+  "uid": "codex-native-metrics",
+  "version": 1
+}

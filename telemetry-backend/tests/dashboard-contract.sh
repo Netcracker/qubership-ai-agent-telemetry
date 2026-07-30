@@ -198,4 +198,97 @@ for title in 'Token usage over time' 'Tokens by model and type'; do
   ' "$overview_path" >/dev/null || fail "$overview token panel '$title' must use tokens or tps"
 done
 
+# --- Codex native metrics deep-dive ----------------------------------------
+codex=codex-native-metrics.json
+check_common "$codex" codex-native-metrics victoriametrics
+check_titles "$codex" \
+  'Top-level sessions' 'Conversation turns' 'Tool calls' 'MCP calls' 'Total tokens' \
+  'Tool failure ratio' 'Tool and MCP activity' 'Top tools' 'MCP servers and outcomes' \
+  'Tokens by model and type' 'Turn latency' 'Tool latency' 'API latency' 'Skill injections'
+
+codex_path=$dashboard_dir/$codex
+jq -e '
+  [.panels[] | select(.type != "text" and .type != "row") | .targets[]?] as $targets
+  | ($targets | all(.expr | contains("service_name=\"codex_cli_rs\""))) and
+    ($targets | all((.expr | contains("agent_harness")) | not))
+' "$codex_path" >/dev/null || fail "$codex must select Codex by service_name without agent_harness"
+
+for title in 'Turn latency' 'Tool latency' 'API latency'; do
+  jq -e --arg title "$title" '
+    .panels[] | select(.title == $title) |
+    .fieldConfig.defaults.unit == "ms" and
+    (.description | contains("Histogram quantiles require enough observations in the selected rate interval."))
+  ' "$codex_path" >/dev/null || fail "$codex panel '$title' must use milliseconds and explain quantile requirements"
+done
+
+jq -e '
+  .panels[] | select(.title == "Tool failure ratio") |
+  .fieldConfig.defaults.unit == "percentunit"
+' "$codex_path" >/dev/null || fail "$codex failure ratio must use percentunit"
+
+jq -e '
+  .links | length == 3 and
+  any(.[]; .title == "Native agent metrics overview" and .url == "/grafana/d/native-agent-metrics-overview") and
+  any(.[]; .title == "Adoption overview" and .url == "/grafana/d/ai-agent-telemetry-adoption") and
+  any(.[]; .title == "Telemetry health" and .url == "/grafana/d/ai-agent-health")
+' "$codex_path" >/dev/null || fail "$codex must link to the overview and telemetry dashboards"
+
+check_codex_target() {
+  title=$1
+  ref_id=$2
+  expr=$3
+  jq -e --arg title "$title" --arg ref_id "$ref_id" --arg expr "$expr" '
+    .panels[] | select(.title == $title) |
+    any(.targets[]?; .refId == $ref_id and .expr == $expr)
+  ' "$codex_path" >/dev/null || fail "$codex panel '$title' has an unexpected target $ref_id"
+}
+
+check_codex_legend() {
+  title=$1
+  ref_id=$2
+  legend=$3
+  jq -e --arg title "$title" --arg ref_id "$ref_id" --arg legend "$legend" '
+    .panels[] | select(.title == $title) |
+    any(.targets[]?; .refId == $ref_id and .legendFormat == $legend)
+  ' "$codex_path" >/dev/null || fail "$codex panel '$title' must use legend '$legend' for $ref_id"
+}
+
+for title in 'Top-level sessions' 'Conversation turns' 'Tool calls' 'MCP calls' 'Total tokens'; do
+  check_neutral_stat "$codex" "$title"
+done
+
+check_codex_target 'Top-level sessions' A 'sum(increase(codex_thread_started_total{service_name="codex_cli_rs",session_source="cli"}[$__range]))'
+check_codex_target 'Conversation turns' A 'sum(increase(codex_conversation_turn_count_total{service_name="codex_cli_rs",session_source="cli"}[$__range]))'
+check_codex_target 'Tool calls' A 'sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__range]))'
+check_codex_target 'MCP calls' A 'sum(increase(codex_mcp_call_total{service_name="codex_cli_rs"}[$__range]))'
+check_codex_target 'Total tokens' A 'sum(increase(codex_turn_token_usage_sum{service_name="codex_cli_rs",token_type="total"}[$__range]))'
+check_codex_target 'Tool failure ratio' A 'sum(increase(codex_tool_call_total{service_name="codex_cli_rs",success="false"}[$__range])) / clamp_min(sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__range])), 1)'
+check_codex_target 'Tool and MCP activity' A 'sum(rate(codex_tool_call_total{service_name="codex_cli_rs"}[$__rate_interval]))'
+check_codex_target 'Tool and MCP activity' B 'sum(rate(codex_mcp_call_total{service_name="codex_cli_rs"}[$__rate_interval]))'
+check_codex_target 'Top tools' A 'topk(10, sum by (tool) (increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__range])))'
+check_codex_target 'MCP servers and outcomes' A 'topk(10, sum by (server, status) (increase(codex_mcp_call_total{service_name="codex_cli_rs"}[$__range])))'
+check_codex_target 'Tokens by model and type' A 'sum by (model, token_type) (increase(codex_turn_token_usage_sum{service_name="codex_cli_rs",token_type!="total"}[$__range]))'
+check_codex_target 'Skill injections' A 'topk(15, sum by (skill, invoke_type, status) (increase(codex_skill_injected_total{service_name="codex_cli_rs"}[$__range])))'
+check_codex_target 'Turn latency' A 'histogram_quantile(0.50, sum by (le) (rate(codex_turn_e2e_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+check_codex_target 'Turn latency' B 'histogram_quantile(0.95, sum by (le) (rate(codex_turn_e2e_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+check_codex_target 'Tool latency' A 'histogram_quantile(0.50, sum by (le) (rate(codex_tool_call_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+check_codex_target 'Tool latency' B 'histogram_quantile(0.95, sum by (le) (rate(codex_tool_call_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+check_codex_target 'API latency' A 'histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+check_codex_target 'API latency' B 'histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+check_codex_target 'API latency' C 'histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_inference_time_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+
+check_codex_legend 'Tool and MCP activity' A 'Tool calls'
+check_codex_legend 'Tool and MCP activity' B 'MCP calls'
+check_codex_legend 'Top tools' A '{{tool}}'
+check_codex_legend 'MCP servers and outcomes' A '{{server}} · {{status}}'
+check_codex_legend 'Tokens by model and type' A '{{model}} · {{token_type}}'
+check_codex_legend 'Turn latency' A p50
+check_codex_legend 'Turn latency' B p95
+check_codex_legend 'Tool latency' A p50
+check_codex_legend 'Tool latency' B p95
+check_codex_legend 'API latency' A 'TTFT p95'
+check_codex_legend 'API latency' B 'TBT p95'
+check_codex_legend 'API latency' C 'Inference p95'
+check_codex_legend 'Skill injections' A '{{skill}} · {{invoke_type}} · {{status}}'
+
 printf 'PASS: Grafana dashboard contract\n'
