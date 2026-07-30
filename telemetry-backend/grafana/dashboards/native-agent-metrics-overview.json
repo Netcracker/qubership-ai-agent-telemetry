@@ -1,0 +1,99 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "links": [
+    {"title": "Adoption overview", "type": "link", "url": "/grafana/d/ai-agent-telemetry-adoption"},
+    {"title": "Telemetry health", "type": "link", "url": "/grafana/d/ai-agent-health"},
+    {"title": "Codex native metrics", "type": "link", "url": "/grafana/d/codex-native-metrics"}
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Signal availability",
+      "transparent": true,
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "| Harness | Native metrics | Hook telemetry |\\n| --- | --- | --- |\\n| Codex | Supported | Supported |\\n| Claude Code | Supported | Supported |\\n| Cursor | Not documented | Supported |\\n| Cline | Backend fixture only | Not supported |\\n\\nNative exporters and hooks provide different signals. Unsupported or unverified signals remain descriptive instead of numeric zeroes."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Metrics freshness",
+      "description": "Seconds since the newest native metric received from each documented exporter.",
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "s", "overrides": []}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(timestamp(codex_tool_call_total{service_name=\"codex_cli_rs\"}))", "legendFormat": "Codex"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(timestamp({__name__=~\"claude_code_.*\",service_name=~\"claude-code|claude-code-desktop\"}))", "legendFormat": "Claude"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Top-level sessions started",
+      "description": "Sessions started during the selected range. Claude Code agent-view sessions are excluded.",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "short"}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_thread_started_total{service_name=\"codex_cli_rs\",session_source=\"cli\"}[$__range]))", "legendFormat": "Codex"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(claude_code_session_count_total{service_name=~\"claude-code|claude-code-desktop\",start_type!=\"agents_view\"}[$__range]))", "legendFormat": "Claude"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Token usage over time",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "tps", "overrides": []}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (token_type) (rate(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[$__rate_interval]))", "legendFormat": "Codex · {{token_type}}"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (type) (rate(claude_code_token_usage_tokens_total{service_name=~\"claude-code|claude-code-desktop\"}[$__rate_interval]))", "legendFormat": "Claude · {{type}}"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "bargauge",
+      "title": "Tokens by model and type",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "tokens"}, "overrides": []},
+      "options": {"displayMode": "gradient", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (model, token_type) (increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[$__range]))", "legendFormat": "Codex · {{model}} · {{token_type}}"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (model, type) (increase(claude_code_token_usage_tokens_total{service_name=~\"claude-code|claude-code-desktop\"}[$__range]))", "legendFormat": "Claude · {{model}} · {{type}}"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Observed client versions",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"showHeader": true},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "group by (app_version) (max_over_time(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__range]))", "legendFormat": "Codex · {{app_version}}"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "group by (app_version) (max_over_time(claude_code_session_count_total{service_name=~\"claude-code|claude-code-desktop\"}[$__range]))", "legendFormat": "Claude · {{app_version}}"}
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 41,
+  "tags": ["ai-agent-telemetry", "native-metrics"],
+  "templating": {"list": []},
+  "time": {"from": "now-7d", "to": "now"},
+  "timezone": "browser",
+  "title": "Native agent metrics overview",
+  "uid": "native-agent-metrics-overview",
+  "version": 1
+}

@@ -15,14 +15,21 @@ fail() {
 check_common() {
   file=$1
   uid=$2
+  datasource_uid=$3
   path=$dashboard_dir/$file
   [ -f "$path" ] || fail "$file is missing"
   jq empty "$path" || fail "$file is not valid JSON"
   [ "$(jq -r '.uid' "$path")" = "$uid" ] || fail "$file has an unexpected UID"
   [ "$(jq -r '.editable' "$path")" = false ] || fail "$file must not be editable"
-  jq -e '[.panels[] | select(.type != "text" and .type != "row") | .targets[]?]
-    | length > 0 and all(.datasource.uid == "victorialogs")' "$path" >/dev/null ||
-    fail "$file must use the provisioned VictoriaLogs datasource"
+  jq -e --arg uid "$datasource_uid" '
+    [.panels[] | select(.type != "text" and .type != "row") | .targets[]?]
+    | length > 0 and all(.datasource.uid == $uid)
+  ' "$path" >/dev/null || fail "$file must use datasource $datasource_uid"
+}
+
+check_logs_selector() {
+  file=$1
+  path=$dashboard_dir/$file
   jq -e '[.panels[] | select(.type != "text" and .type != "row") | .targets[]?]
     | all(.expr | contains("service.name=\"ai-agent-telemetry\""))' "$path" >/dev/null ||
     fail "$file contains a query without the service selector"
@@ -100,7 +107,8 @@ check_metric_mappings() {
 
 # --- Telemetry health -------------------------------------------------------
 health=telemetry-health.json
-check_common "$health" ai-agent-health
+check_common "$health" ai-agent-health victorialogs
+check_logs_selector "$health"
 check_numeric_stats "$health"
 check_titles "$health" \
   'Event ID coverage' 'Machine ID coverage' 'Duplicate delivery rate' 'MCP duration coverage' \
@@ -123,7 +131,8 @@ check_metric_mappings "$health" 'Data quality by version'
 
 # --- Adoption overview (replaces the four per-domain dashboards) ------------
 adoption=ai-agent-telemetry-adoption.json
-check_common "$adoption" ai-agent-telemetry-adoption
+check_common "$adoption" ai-agent-telemetry-adoption victorialogs
+check_logs_selector "$adoption"
 check_numeric_stats "$adoption" 'Onboarding over time'
 check_titles "$adoption" \
   'Installs' 'Used in repositories' 'Sessions caught' 'Telemetry activity' 'Onboarding over time' \
@@ -160,6 +169,33 @@ for title in 'Installs' 'Used in repositories' 'Sessions caught'; do
 done
 for title in 'Installs' 'Used in repositories' 'Sessions caught' 'Machines by harness' 'Machines by OS'; do
   check_selftest_excluded "$adoption" "$title"
+done
+
+# --- Native agent metrics overview -----------------------------------------
+overview=native-agent-metrics-overview.json
+check_common "$overview" native-agent-metrics-overview victoriametrics
+check_titles "$overview" \
+  'Signal availability' 'Metrics freshness' 'Top-level sessions started' 'Token usage over time' \
+  'Tokens by model and type' 'Observed client versions'
+
+overview_path=$dashboard_dir/$overview
+jq -e '
+  any(.panels[].targets[]?; .expr | contains("service_name=\"codex_cli_rs\"")) and
+  any(.panels[].targets[]?; .expr | contains("service_name=~\"claude-code|claude-code-desktop\"")) and
+  all(.panels[].targets[]?; (.expr | contains("agent_harness")) | not)
+' "$overview_path" >/dev/null || fail "$overview must classify Codex and Claude without agent_harness"
+
+jq -e '
+  .panels[] | select(.title == "Top-level sessions started") |
+  any(.targets[]?; .expr | contains("session_source=\"cli\"")) and
+  any(.targets[]?; .expr | contains("start_type!=\"agents_view\""))
+' "$overview_path" >/dev/null || fail "$overview sessions panel must select top-level sessions"
+
+for title in 'Token usage over time' 'Tokens by model and type'; do
+  jq -e --arg title "$title" '
+    .panels[] | select(.title == $title) |
+    .fieldConfig.defaults.unit as $unit | $unit == "tokens" or $unit == "tps"
+  ' "$overview_path" >/dev/null || fail "$overview token panel '$title' must use tokens or tps"
 done
 
 printf 'PASS: Grafana dashboard contract\n'
