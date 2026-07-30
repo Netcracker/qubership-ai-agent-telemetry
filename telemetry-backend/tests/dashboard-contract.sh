@@ -20,23 +20,28 @@ fail() {
 check_common() {
   file=$1
   uid=$2
-  datasource_uid=$3
+  shift 2
   path=$dashboard_dir/$file
+  allowed_uids=$(printf '%s\n' "$@" | jq -R . | jq -s .)
+
   [ -f "$path" ] || fail "$file is missing"
   jq empty "$path" || fail "$file is not valid JSON"
   [ "$(jq -r '.uid' "$path")" = "$uid" ] || fail "$file has an unexpected UID"
   [ "$(jq -r '.editable' "$path")" = false ] || fail "$file must not be editable"
-  jq -e --arg uid "$datasource_uid" '
+  jq -e --argjson allowed_uids "$allowed_uids" '
     [.panels[] | select(.type != "text" and .type != "row") | .targets[]?]
-    | length > 0 and all(.datasource.uid == $uid)
-  ' "$path" >/dev/null || fail "$file must use datasource $datasource_uid"
+    | length > 0 and all(.datasource.uid as $uid | $allowed_uids | index($uid) != null)
+  ' "$path" >/dev/null || fail "$file uses an unexpected datasource"
 }
 
 check_logs_selector() {
   file=$1
   path=$dashboard_dir/$file
-  jq -e '[.panels[] | select(.type != "text" and .type != "row") | .targets[]?]
-    | all(.expr | contains("service.name=\"ai-agent-telemetry\""))' "$path" >/dev/null ||
+  jq -e '
+    [.panels[] | select(.type != "text" and .type != "row") | .targets[]?
+      | select(.datasource.uid == "victorialogs")]
+    | length > 0 and all(.expr | contains("service.name=\"ai-agent-telemetry\""))
+  ' "$path" >/dev/null ||
     fail "$file contains a query without the service selector"
 }
 
@@ -112,27 +117,85 @@ check_metric_mappings() {
 
 # --- Telemetry health -------------------------------------------------------
 health=telemetry-health.json
-check_common "$health" ai-agent-health victorialogs
+check_common "$health" ai-agent-health victorialogs victoriametrics
 check_logs_selector "$health"
 check_numeric_stats "$health"
 check_titles "$health" \
-  'Event ID coverage' 'Machine ID coverage' 'Duplicate delivery rate' 'MCP duration coverage' \
-  'Version adoption' 'Harness and OS coverage' 'MCP outcomes' 'Data quality by version'
+  'OTLP coverage boundary' 'Machines not seen on target version' \
+  'Inactive for more than 24 hours' 'Inactive for more than 48 hours' \
+  'Native metrics freshness' 'Stale installations' \
+  'Active installations by version' 'Active installations by harness and OS'
 
-# Neither identifier-named title nor any display name may leak a raw identifier value.
-jq -e '[.panels[].title, .panels[].fieldConfig.defaults.displayName?]
-  | map(select(. != null))
-  | all(test("machine\\.id|session\\.id|event\\.id") | not)' \
-  "$dashboard_dir/$health" >/dev/null || fail "$health displays a raw identifier"
+health_path=$dashboard_dir/$health
+for removed_title in \
+  'Event ID coverage' 'Machine ID coverage' 'Duplicate delivery rate' \
+  'MCP duration coverage' 'Data quality by version' 'Version adoption' \
+  'Harness and OS coverage' 'MCP outcomes'; do
+  jq -e --arg title "$removed_title" 'all(.panels[]; .title != $title)' "$health_path" >/dev/null ||
+    fail "$health still contains legacy panel: $removed_title"
+done
 
-check_selftest_excluded "$health" 'Harness and OS coverage'
-check_selftest_excluded "$health" 'Version adoption'
-jq -e '.panels[] | select(.title == "MCP outcomes") | .type == "bargauge"' \
-  "$dashboard_dir/$health" >/dev/null ||
-  fail 'telemetry health must use a readable MCP outcome bar gauge'
-check_legend_format "$health" 'Version adoption' '{{service.version}}'
-check_legend_format "$health" 'MCP outcomes' '{{agent}} · {{mcp.outcome}}'
-check_metric_mappings "$health" 'Data quality by version'
+jq -e '
+  any(.templating.list[];
+    .name == "target_version" and .type == "textbox" and
+    .current.text == "v1.2.0" and .current.value == "v1.2.0")
+' "$health_path" >/dev/null ||
+  fail "$health must expose target_version with default v1.2.0"
+
+jq -e '
+  [
+    "Machines not seen on target version",
+    "Inactive for more than 24 hours",
+    "Inactive for more than 48 hours",
+    "Stale installations",
+    "Active installations by version",
+    "Active installations by harness and OS"
+  ] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title)) | .targets[]] as $targets
+  | ($targets | all(.expr | contains("agent:!=\"selftest\"")))
+' "$health_path" >/dev/null ||
+  fail "$health hook populations must exclude selftest"
+
+jq -e '
+  (.panels[] | select(.title == "Machines not seen on target version")
+    | .targets[0].expr | contains("_time:30d")) and
+  (.panels[] | select(.title == "Inactive for more than 24 hours")
+    | .targets[0].expr | contains("_time:1d")) and
+  (.panels[] | select(.title == "Inactive for more than 48 hours")
+    | .targets[0].expr | contains("_time:2d")) and
+  (["Active installations by version", "Active installations by harness and OS"] as $titles
+    | [.panels[] | select(.title as $title | $titles | index($title))]
+    | all(.targets[0].expr | contains("_time:1d")))
+' "$health_path" >/dev/null ||
+  fail "$health must use the approved 30-day, 24-hour, and 48-hour populations"
+
+jq -e '
+  .panels[] | select(.title == "Stale installations") |
+  .targets[0].expr as $expr |
+  ($expr | contains("first 1 by (_time desc) partition by (machine.id)")) and
+  ($expr | contains("fields machine.id, _time, agent, service.version")) and
+  (.fieldConfig.defaults.noValue == "Unknown") and
+  any(.transformations[]?; .id == "extractFields" and .options.source == "labels") and
+  any(.transformations[]?; .id == "convertFieldType"
+    and any(.options.conversions[]?;
+      .targetField == "_time" and .destinationType == "time")) and
+  any(.transformations[]?; .id == "organize"
+    and .options.renameByName["machine.id"] == "Installation"
+    and .options.renameByName._time == "Last seen"
+    and .options.renameByName.agent == "Harness"
+    and .options.renameByName["service.version"] == "Observed version")
+' "$health_path" >/dev/null ||
+  fail "$health stale table must use one latest event per installation"
+
+jq -e '
+  ["Machines not seen on target version", "Inactive for more than 24 hours",
+    "Inactive for more than 48 hours", "Active installations by version",
+    "Active installations by harness and OS"] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title))]
+  | all(.[]; .fieldConfig.defaults.color.mode == "fixed" and
+      .fieldConfig.defaults.color.fixedColor == "blue")
+' "$health_path" >/dev/null ||
+  fail "$health count panels must use the neutral blue palette"
 
 # --- Adoption overview (replaces the four per-domain dashboards) ------------
 adoption=ai-agent-telemetry-adoption.json

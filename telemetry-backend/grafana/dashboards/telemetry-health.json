@@ -1,17 +1,132 @@
 {
-  "annotations": {"list": []}, "editable": false, "graphTooltip": 1,
-  "links": [{"title": "Adoption overview", "type": "link", "url": "/grafana/d/ai-agent-telemetry-adoption"}],
-  "panels": [
-    {"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "description": "Share of telemetry events that carry a delivery ID. Legacy releases can lower this value.", "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 80}, {"color": "green", "value": 95}]}, "unit": "percent"}, "overrides": []}, "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}, "id": 1, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}, "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} | stats count() total, count(event.id) with_id | math 100 * with_id / total as coverage_percent | keep coverage_percent", "queryType": "stats", "refId": "A"}], "title": "Event ID coverage", "type": "stat"},
-    {"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "description": "Share of telemetry events that carry an anonymous installation identifier.", "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 80}, {"color": "green", "value": 95}]}, "unit": "percent"}, "overrides": []}, "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}, "id": 2, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}, "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} | stats count() total, count(machine.id) with_id | math 100 * with_id / total as coverage_percent | keep coverage_percent", "queryType": "stats", "refId": "A"}], "title": "Machine ID coverage", "type": "stat"},
-    {"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "description": "Share of delivered events whose delivery ID appears more than once.", "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 1}]}, "unit": "percent"}, "overrides": []}, "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}, "id": 3, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}, "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"} , "expr": "{service.name=\"ai-agent-telemetry\"} event.id:* | stats count(event.id) delivered, count_uniq(event.id) distinct | math 100 * (delivered - distinct) / delivered as duplicate_percent | keep duplicate_percent", "queryType": "stats", "refId": "A"}], "title": "Duplicate delivery rate", "type": "stat"},
-    {"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "description": "Share of MCP tool events that carry execution duration.", "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 80}, {"color": "green", "value": 95}]}, "unit": "percent"}, "overrides": []}, "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}, "id": 4, "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}, "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} _msg:=\"mcp_tool_executed\" | stats count() total, count(mcp.duration_ms) with_duration | math 100 * with_duration / total as coverage_percent | keep coverage_percent", "queryType": "stats", "refId": "A"}], "title": "MCP duration coverage", "type": "stat"},
-    {"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "description": "Active installs observed by CLI version. One install can appear under multiple versions during the selected time range.", "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}, "id": 5, "options": {"legend": {"displayMode": "list", "placement": "bottom"}}, "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" | stats by (service.version) count_uniq(machine.id) active_installs", "legendFormat": "{{service.version}}", "queryType": "statsRange", "refId": "A"}], "title": "Version adoption", "type": "timeseries"},
-    {"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "fieldConfig": {"defaults": {}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}, "id": 6, "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Active installs"}]}, "transformations": [{"id": "seriesToRows", "options": {}}, {"id": "extractFields", "options": {"format": "regexp", "regExp": "/^(?<metric>[^{]+)\\{agent=\"(?<harness>[^\"]+)\",os\\.type=\"(?<os>[^\"]+)\"\\}$/", "source": "Metric"}}, {"id": "organize", "options": {"excludeByName": {"Metric": true, "Time": true, "metric": true}, "indexByName": {"Value": 2, "harness": 0, "os": 1}, "renameByName": {"Value": "Active installs", "harness": "Harness", "os": "OS"}}}], "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" | stats by (agent, os.type) count_uniq(machine.id) active_installs | sort by (active_installs) desc | limit 50", "queryType": "stats", "refId": "A"}], "title": "Harness and OS coverage", "type": "table"},
-    {"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12}, "id": 7, "options": {"displayMode": "gradient", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"}, "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} _msg:=\"mcp_tool_executed\" | stats by (agent, mcp.outcome) count_uniq(event.id) events | sort by (events) desc | limit 20", "legendFormat": "{{agent}} · {{mcp.outcome}}", "queryType": "stats", "refId": "A"}], "title": "MCP outcomes", "type": "bargauge"},
-    {"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "fieldConfig": {"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "Metric"}, "properties": [{"id": "mappings", "value": [{"options": {"missing_event_id": {"text": "Missing event ID"}, "missing_machine_id": {"text": "Missing machine ID"}, "missing_repo_remote": {"text": "Missing repository"}, "total": {"text": "Total events"}}, "type": "value"}]}]}]}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12}, "id": 8, "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Value"}]}, "transformations": [{"id": "seriesToRows", "options": {}}, {"id": "extractFields", "options": {"format": "regexp", "regExp": "/^(?<metric>[^{]+)\\{service\\.version=\"(?<version>[^\"]+)\"\\}$/", "source": "Metric"}}, {"id": "organize", "options": {"excludeByName": {"Metric": true, "Time": true}, "indexByName": {"Value": 2, "metric": 1, "version": 0}, "renameByName": {"Value": "Value", "metric": "Metric", "version": "CLI version"}}}], "targets": [{"datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} | stats by (service.version) count() total, count_empty(event.id) missing_event_id, count_empty(machine.id) missing_machine_id, count_empty(repo.remote) missing_repo_remote | sort by (total) desc | limit 50", "queryType": "stats", "refId": "A"}], "title": "Data quality by version", "type": "table"}
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "links": [
+    {"title": "Adoption overview", "type": "link", "url": "/grafana/d/ai-agent-telemetry-adoption"},
+    {"title": "Native metrics overview", "type": "link", "url": "/grafana/d/native-agent-metrics-overview"}
   ],
-  "refresh": "15m", "schemaVersion": 42, "tags": ["ai-agent-telemetry"], "templating": {"list": []},
-  "time": {"from": "now-7d", "to": "now"}, "timezone": "browser",
-  "title": "Telemetry health", "uid": "ai-agent-health", "version": 1
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "OTLP coverage boundary",
+      "transparent": true,
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "Native OTLP metrics do not share an installation identifier with hook telemetry.\nThis dashboard can show native-signal freshness, but it cannot count installations\nthat have or have not configured OTLP export."
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Machines not seen on target version",
+      "description": "Installations in the fixed trailing 30-day cohort that have not reported the target version during that period.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "locale", "decimals": 0}, "overrides": []},
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 4},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "options(ignore_global_time_filter=true)\n_time:30d\n{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nmachine.id:*\nNOT machine.id:in(\n  _time:30d\n  {service.name=\"ai-agent-telemetry\"}\n  agent:!=\"selftest\"\n  service.version:=\"$target_version\"\n  machine.id:*\n  | uniq by (machine.id)\n)\n| stats count_uniq(machine.id) machines", "queryType": "stats"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Inactive for more than 24 hours",
+      "description": "Installations in the fixed trailing 30-day cohort with no hook telemetry during the past 24 hours.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "locale", "decimals": 0}, "overrides": []},
+      "gridPos": {"h": 5, "w": 8, "x": 8, "y": 4},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "options(ignore_global_time_filter=true)\n_time:30d\n{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nmachine.id:*\nNOT machine.id:in(\n  _time:1d\n  {service.name=\"ai-agent-telemetry\"}\n  agent:!=\"selftest\"\n  machine.id:*\n  | uniq by (machine.id)\n)\n| stats count_uniq(machine.id) machines", "queryType": "stats"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Inactive for more than 48 hours",
+      "description": "Installations in the fixed trailing 30-day cohort with no hook telemetry during the past 48 hours.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "locale", "decimals": 0}, "overrides": []},
+      "gridPos": {"h": 5, "w": 8, "x": 16, "y": 4},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "options(ignore_global_time_filter=true)\n_time:30d\n{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nmachine.id:*\nNOT machine.id:in(\n  _time:2d\n  {service.name=\"ai-agent-telemetry\"}\n  agent:!=\"selftest\"\n  machine.id:*\n  | uniq by (machine.id)\n)\n| stats count_uniq(machine.id) machines", "queryType": "stats"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Native metrics freshness",
+      "description": "Seconds since the latest native metric sample for each documented exporter.",
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "s", "decimals": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 9},
+      "options": {"colorMode": "none", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(timestamp(codex_tool_call_total{service_name=\"codex_cli_rs\"}))", "legendFormat": "Codex"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(timestamp(claude_code_session_count_total{service_name=~\"claude-code|claude-code-desktop\"}))", "legendFormat": "Claude"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Stale installations",
+      "description": "The latest hook event for each installation that has been inactive for more than 24 hours within the fixed trailing 30-day cohort.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "fieldConfig": {"defaults": {"noValue": "Unknown"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 16, "x": 8, "y": 9},
+      "options": {"showHeader": true},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "options(ignore_global_time_filter=true)\n_time:30d\n{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nmachine.id:*\nNOT machine.id:in(\n  _time:1d\n  {service.name=\"ai-agent-telemetry\"}\n  agent:!=\"selftest\"\n  machine.id:*\n  | uniq by (machine.id)\n)\n| first 1 by (_time desc) partition by (machine.id)\n| fields machine.id, _time, agent, service.version\n| sort by (_time desc)\n| limit 100", "queryType": "logs"}
+      ],
+      "transformations": [
+        {"id": "extractFields", "options": {"source": "labels"}},
+        {"id": "convertFieldType", "options": {"conversions": [{"targetField": "_time", "destinationType": "time"}]}},
+        {"id": "organize", "options": {"excludeByName": {"Line": true, "labels": true}, "renameByName": {"machine.id": "Installation", "_time": "Last seen", "agent": "Harness", "service.version": "Observed version"}}}
+      ]
+    },
+    {
+      "id": 7,
+      "type": "bargauge",
+      "title": "Active installations by version",
+      "description": "Installations with hook activity during the trailing 24 hours, grouped by the latest observed version.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "locale", "decimals": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "options": {"displayMode": "basic", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "options(ignore_global_time_filter=true)\n_time:1d\n{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nmachine.id:*\n| first 1 by (_time desc) partition by (machine.id)\n| format if (!service.version:*) \"Unknown\" as service.version\n| stats by (service.version) count() installations\n| sort by (installations desc)\n| limit 15", "legendFormat": "{{service.version}}", "queryType": "stats"}
+      ]
+    },
+    {
+      "id": 8,
+      "type": "bargauge",
+      "title": "Active installations by harness and OS",
+      "description": "Installations with hook activity during the trailing 24 hours, grouped by the latest observed harness and operating system.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "locale", "decimals": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "options": {"displayMode": "basic", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "options(ignore_global_time_filter=true)\n_time:1d\n{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nmachine.id:*\n| first 1 by (_time desc) partition by (machine.id)\n| format if (!agent:*) \"Unknown\" as agent\n| format if (!os.type:*) \"Unknown\" as os.type\n| stats by (agent, os.type) count() installations\n| sort by (installations desc)\n| limit 15", "legendFormat": "{{agent}} · {{os.type}}", "queryType": "stats"}
+      ]
+    }
+  ],
+  "refresh": "15m",
+  "schemaVersion": 42,
+  "tags": ["ai-agent-telemetry"],
+  "templating": {
+    "list": [
+      {"name": "target_version", "label": "Target version", "type": "textbox", "hide": 0, "query": "v1.2.0", "current": {"selected": true, "text": "v1.2.0", "value": "v1.2.0"}}
+    ]
+  },
+  "time": {"from": "now-7d", "to": "now"},
+  "timezone": "browser",
+  "title": "Telemetry health",
+  "uid": "ai-agent-health",
+  "version": 1
 }
