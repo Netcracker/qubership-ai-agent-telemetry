@@ -40,6 +40,17 @@ assert_metric_value claude_tokens 900 \
 assert_metric_value cline_fixture 1 \
   'cline_fixture_task_count_total{service_name="cline-fixture",fixture="true"}'
 
+query_metric 'codex_tool_call_total{service_name="codex_cli_rs",success="false"}' |
+  jq -e '.data.result | length == 0' >/dev/null ||
+  fail 'the Codex fixture must not include failed tool calls'
+
+dashboard_path=$(CDPATH='' cd -- "$(dirname -- "$0")/../grafana/dashboards" 2>/dev/null && pwd)/codex-native-metrics.json
+tool_failure_ratio_query=$(jq -r '
+  .panels[] | select(.title == "Tool failure ratio") |
+  .targets[] | select(.refId == "A") | .expr
+' "$dashboard_path" | sed 's/\$__range/5m/g')
+assert_metric_value codex_tool_failure_ratio 0 "$tool_failure_ratio_query"
+
 query_metric '{service_name="cline-fixture",agent_harness=~".+"}' |
   jq -e '.data.result | length == 0' >/dev/null ||
   fail 'the Cline fixture must not gain a synthetic harness label'

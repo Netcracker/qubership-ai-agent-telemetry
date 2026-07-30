@@ -322,7 +322,7 @@ check_codex_target 'Conversation turns' A 'sum(increase(codex_conversation_turn_
 check_codex_target 'Tool calls' A 'sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__range]))'
 check_codex_target 'MCP calls' A 'sum(increase(codex_mcp_call_total{service_name="codex_cli_rs"}[$__range]))'
 check_codex_target 'Total tokens' A 'sum(increase(codex_turn_token_usage_sum{service_name="codex_cli_rs",token_type="total"}[$__range]))'
-check_codex_target 'Tool failure ratio' A 'sum(increase(codex_tool_call_total{service_name="codex_cli_rs",success="false"}[$__range])) / clamp_min(sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__range])), 1)'
+check_codex_target 'Tool failure ratio' A '(sum(increase(codex_tool_call_total{service_name="codex_cli_rs",success="false"}[$__range])) or vector(0)) / clamp_min(sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__range])), 1)'
 check_codex_target 'Tool and MCP activity' A 'sum(rate(codex_tool_call_total{service_name="codex_cli_rs"}[$__rate_interval]))'
 check_codex_target 'Tool and MCP activity' B 'sum(rate(codex_mcp_call_total{service_name="codex_cli_rs"}[$__rate_interval]))'
 check_codex_target 'Top tools' A 'topk(10, sum by (tool) (increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__range])))'
