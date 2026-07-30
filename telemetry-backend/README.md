@@ -88,7 +88,7 @@ Add the dashboard credentials and Grafana administrator password to an existing 
 DASHBOARD_AUTH_USER=viewer
 DASHBOARD_AUTH_PASSWORD_HASH='<caddy-bcrypt-hash>'
 GRAFANA_ADMIN_PASSWORD=<new-admin-password>
-VM_RETENTION=30d
+VM_RETENTION=365d
 ```
 
 Generate the hash as described in [Create credentials](#1-create-credentials), and remove an obsolete
@@ -103,7 +103,8 @@ docker compose up -d --build
 ```
 
 Select the volume that belongs to this Compose project. Grafana restores provisioned dashboards and the datasource,
-but local Grafana changes are lost. Do not run `docker compose down -v`: it also deletes the VictoriaLogs data volume.
+but local Grafana changes are lost. Do not run `docker compose down -v`: it deletes both the VictoriaLogs and
+VictoriaMetrics data volumes.
 
 Validate and update the stack:
 
@@ -121,27 +122,25 @@ docker compose exec grafana grafana cli admin reset-admin-password '<new-admin-p
 
 ## Dashboards
 
-The default time range is 30 days, except Telemetry health, which defaults to seven days.
+`Adoption overview` defaults to 30 days. `Telemetry health`, `Native agent metrics overview`, and
+`Codex native metrics` default to seven days.
 
-- **Adoption overview** — installs, repositories, and sessions; skill and MCP activity over time; onboarding growth;
-  per-machine, per-harness, and per-OS breakdowns; and skills and MCP tools per repository.
-- **Telemetry health** — delivery-ID coverage, duplicates, duration coverage, versions, harnesses, and missing fields.
-- **Native agent metrics overview** — native Codex and Claude Code signals, classified at query time with separate
-  harness-specific expressions.
-- **Codex native metrics** — the Codex `0.146.0` live-pilot contract, including sessions, turns, tool and MCP
-  activity, tokens, failures, and latency.
+- **Adoption overview** — daily active installations, active repositories, and observed sessions; Telemetry activity,
+  Onboarding over time, and Activity per installation (the per-installation ranking); top skills and MCPs; harness and
+  operating-system distributions; and skill and MCP repository views in matrix, stacked, and table formats.
+- **Telemetry health** — target-version gap; 24-hour and 48-hour inactivity; native-metrics freshness; correlated stale
+  installations; and active-installation distributions by version and by harness and operating system.
+- **Native agent metrics overview** — signal availability and freshness, hourly sessions and tokens, the model and token
+  type matrix, and observed client versions for native Codex and Claude Code metrics.
+- **Codex native metrics** — hourly sessions, turns, calls, failure ratio, and tokens; top tool, MCP, and skill
+  rankings; the model and token type matrix; and turn, tool, and API latency.
 
 Open the native-metrics dashboards at `/grafana/d/native-agent-metrics-overview` and
 `/grafana/d/codex-native-metrics`.
 
 Filters expose repositories, harnesses, operating systems, and CLI versions. Panels do not display raw session or event
-identifiers. The per-machine activity ranking on the Adoption overview is the one exception: the machine is the unit of
-analysis there, so its ID labels each row.
-
-The two dashboards count events differently, by design. Telemetry health measures raw `event.id` coverage, so its
-event-based panels reflect only records that carry an ID. Adoption overview instead synthesizes a stable ID from the
-delivery stream and the original event time for records that lack one. That collapses delivery retries while still
-counting harnesses whose events predate `event.id`.
+identifiers. Activity per installation is the one exception: the installation is the unit of analysis, so its ID labels
+each row.
 
 ## Native agent metrics
 

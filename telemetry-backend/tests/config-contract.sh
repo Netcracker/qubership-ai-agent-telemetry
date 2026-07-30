@@ -8,6 +8,9 @@ caddyfile=$backend_dir/Caddyfile
 readme=$backend_dir/README.md
 datasource_file=$backend_dir/grafana/provisioning/datasources/victorialogs.yaml
 health_dashboard=$backend_dir/grafana/dashboards/telemetry-health.json
+adoption_dashboard=$backend_dir/grafana/dashboards/ai-agent-telemetry-adoption.json
+overview_dashboard=$backend_dir/grafana/dashboards/native-agent-metrics-overview.json
+codex_dashboard=$backend_dir/grafana/dashboards/codex-native-metrics.json
 collector_config=$backend_dir/otel-collector-config.yaml
 fixture_stack=$backend_dir/tests/with-fixture-stack.sh
 
@@ -36,6 +39,46 @@ caddy_readiness=$(sed -n '/^  status=$(curl/,/sleep 1/p' "$fixture_stack")
 if printf '%s\n' "$caddy_readiness" | grep -Fq 'show-error'; then
   fail 'expected fixture-stack readiness retries must not emit curl errors'
 fi
+
+upgrade_section=$(sed -n '/^## Upgrade an existing stack$/,/^## Dashboards$/p' "$readme")
+printf '%s\n' "$upgrade_section" | grep -Fqx 'VM_RETENTION=365d' ||
+  fail 'backend README upgrade snippet must use the default 365-day metrics retention'
+upgrade_text=$(printf '%s\n' "$upgrade_section" | tr '\n' ' ' | tr -s ' ')
+printf '%s\n' "$upgrade_text" |
+  grep -Fq 'Do not run `docker compose down -v`: it deletes both the VictoriaLogs and VictoriaMetrics data volumes.' ||
+  fail 'backend README must warn that down -v deletes both telemetry data volumes'
+
+dashboards_section=$(sed -n '/^## Dashboards$/,/^## Native agent metrics$/p' "$readme")
+dashboards_text=$(printf '%s\n' "$dashboards_section" | tr '\n' ' ' | tr -s ' ')
+for text in \
+  '`Adoption overview` defaults to 30 days.' \
+  '`Telemetry health`, `Native agent metrics overview`, and `Codex native metrics` default to seven days.' \
+  'daily active installations, active repositories, and observed sessions' \
+  'Telemetry activity, Onboarding over time, and Activity per installation' \
+  'skill and MCP repository views in matrix, stacked, and table formats' \
+  'target-version gap' \
+  '24-hour and 48-hour inactivity' \
+  'native-metrics freshness' \
+  'correlated stale installations' \
+  'active-installation distributions by version and by harness and operating system'; do
+  printf '%s\n' "$dashboards_text" | grep -Fq "$text" ||
+    fail "backend README dashboard summary is missing: $text"
+done
+printf '%s\n' "$dashboards_text" | grep -Fq 'per-installation' ||
+  fail 'backend README dashboard summary must use per-installation terminology'
+if printf '%s\n' "$dashboards_text" | grep -Fq 'per-machine'; then
+  fail 'backend README dashboard summary must not use per-machine terminology'
+fi
+if printf '%s\n' "$dashboards_text" | grep -Fq 'event.id'; then
+  fail 'backend README dashboard summary must not describe obsolete event.id health semantics'
+fi
+
+[ "$(jq -r '.time.from' "$adoption_dashboard")" = now-30d ] ||
+  fail 'Adoption overview must default to 30 days'
+for dashboard in "$health_dashboard" "$overview_dashboard" "$codex_dashboard"; do
+  [ "$(jq -r '.time.from' "$dashboard")" = now-7d ] ||
+    fail "$(basename "$dashboard") must default to seven days"
+done
 
 grep -q '@ingest path /v1/logs' "$caddyfile" || fail 'ingest path matcher is missing'
 grep -q '@grafana path /grafana/\\*' "$caddyfile" || fail 'Grafana path matcher is missing'
