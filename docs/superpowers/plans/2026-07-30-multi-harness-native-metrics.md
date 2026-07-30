@@ -573,7 +573,7 @@ git commit -m "feat(telemetry): add Codex metrics dashboard"
 
 ---
 
-### Task 5: Verify provisioning, datasource execution, and the live dashboard
+### Task 5: Verify provisioning, local installation, datasource execution, and the live dashboards
 
 **Files:**
 
@@ -588,7 +588,8 @@ git commit -m "feat(telemetry): add Codex metrics dashboard"
 
 - Consumes: both dashboard UIDs and the fixture metrics from Tasks 1, 3, and 4.
 - Produces: end-to-end proof that Grafana provisions and executes Prometheus targets.
-- Produces: browser-validated dashboards against the accumulated remote Codex pilot.
+- Produces: browser-validated dashboards in the existing Grafana at `http://localhost:13000`.
+- Preserves: every existing local Grafana datasource and its configuration.
 
 - [ ] **Step 1: Add failing provisioning checks**
 
@@ -655,12 +656,25 @@ PASS: Grafana dashboard contract
 PASS: telemetry backend smoke test
 ```
 
-- [ ] **Step 4: Open the overview against the remote datasource**
+- [ ] **Step 4: Install the dashboards in the existing local Grafana**
+
+Use the authenticated browser session and the Grafana dashboard API to create or overwrite only these dashboard UIDs:
+
+```text
+native-agent-metrics-overview
+codex-native-metrics
+```
+
+Import the repository JSON models with `overwrite: true`. Do not create, update, delete, or reprovision any datasource.
+Before and after the import, capture the datasource UID, type, URL, and access mode from the Grafana API and verify that
+they are unchanged.
+
+- [ ] **Step 5: Open the overview against the existing real-data datasource**
 
 Use the existing local Grafana and Chrome DevTools connection. Open:
 
 ```text
-https://localhost:18443/grafana/d/native-agent-metrics-overview
+http://localhost:13000/grafana/d/native-agent-metrics-overview
 ```
 
 Set the time range to seven days. Confirm:
@@ -671,12 +685,12 @@ Set the time range to seven days. Confirm:
 - the signal-availability table explains unsupported combinations; and
 - the browser console has no dashboard query errors.
 
-- [ ] **Step 5: Open the Codex deep-dive against accumulated data**
+- [ ] **Step 6: Open the Codex deep-dive against accumulated data**
 
 Open:
 
 ```text
-https://localhost:18443/grafana/d/codex-native-metrics
+http://localhost:13000/grafana/d/codex-native-metrics
 ```
 
 Confirm:
@@ -691,7 +705,7 @@ Confirm:
 Adjust only queries, units, legends, descriptions, or layout defects observed in this browser pass. Re-run
 `dashboard-contract.sh` after every dashboard JSON change.
 
-- [ ] **Step 6: Run final repository checks**
+- [ ] **Step 7: Run final repository checks**
 
 Run:
 
@@ -703,7 +717,7 @@ TEST_HTTP_PORT=28080 TEST_HTTPS_PORT=28443 sh telemetry-backend/tests/smoke.sh
 
 Expected: all commands exit `0`.
 
-- [ ] **Step 7: Commit end-to-end verification changes**
+- [ ] **Step 8: Commit end-to-end verification changes**
 
 ```bash
 git add telemetry-backend/tests/smoke.sh \
@@ -713,7 +727,7 @@ git add telemetry-backend/tests/smoke.sh \
 git commit -m "test(telemetry): verify native metrics dashboards"
 ```
 
-- [ ] **Step 8: Review branch state before PR update**
+- [ ] **Step 9: Review branch state before PR update**
 
 Run:
 
