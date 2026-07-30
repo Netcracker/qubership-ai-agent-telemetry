@@ -16,7 +16,7 @@
       "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
       "options": {
         "mode": "markdown",
-        "content": "| Harness | Native metrics | Hook telemetry |\\n| --- | --- | --- |\\n| Codex | Supported | Supported |\\n| Claude Code | Supported | Supported |\\n| Cursor | Not documented | Supported |\\n| Cline | Backend fixture only | Not supported |\\n\\nNative exporters and hooks provide different signals. Unsupported or unverified signals remain descriptive instead of numeric zeroes."
+        "content": "| Harness | Native metrics | Hook telemetry |\n| --- | --- | --- |\n| Codex | Supported | Supported |\n| Claude Code | Supported | Supported |\n| Cursor | Not documented | Supported |\n| Cline | Backend fixture only | Not supported |\n\nNative exporters and hooks provide different signals. Unsupported or unverified signals remain descriptive instead of numeric zeroes."
       }
     },
     {

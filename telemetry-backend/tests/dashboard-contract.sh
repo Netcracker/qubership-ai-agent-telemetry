@@ -185,6 +185,17 @@ check_titles "$overview" \
 
 overview_path=$dashboard_dir/$overview
 jq -e '
+  .panels[] | select(.title == "Signal availability") |
+  .options.mode == "markdown" and
+  (.options.content | contains("| Harness | Native metrics | Hook telemetry |")) and
+  (.options.content | contains("\n| --- | --- | --- |")) and
+  (.options.content | contains("\n| Codex | Supported | Supported |")) and
+  (.options.content | contains("\n| Claude Code | Supported | Supported |")) and
+  (.options.content | contains("\\n") | not)
+' "$overview_path" >/dev/null ||
+  fail "$overview Signal availability must use Markdown table rows with real line breaks"
+
+jq -e '
   any(.panels[].targets[]?; .expr | contains("service_name=\"codex_cli_rs\"")) and
   any(.panels[].targets[]?; .expr | contains("service_name=~\"claude-code|claude-code-desktop\"")) and
   all(.panels[].targets[]?; (.expr | contains("agent_harness")) | not)
