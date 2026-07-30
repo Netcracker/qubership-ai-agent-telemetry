@@ -579,6 +579,7 @@ git commit -m "feat(telemetry): add Codex metrics dashboard"
 
 - Modify: `telemetry-backend/tests/smoke.sh`
 - Modify: `telemetry-backend/tests/metrics-query-contract.sh`
+- Modify: `telemetry-backend/tests/query-contract.sh`
 - Modify if browser review finds a defect:
   `telemetry-backend/grafana/dashboards/native-agent-metrics-overview.json`
 - Modify if browser review finds a defect:
@@ -665,9 +666,13 @@ native-agent-metrics-overview
 codex-native-metrics
 ```
 
-Import the repository JSON models with `overwrite: true`. Do not create, update, delete, or reprovision any datasource.
-Before and after the import, capture the datasource UID, type, URL, and access mode from the Grafana API and verify that
-they are unchanged.
+Import the repository JSON models with `overwrite: true`. The existing local Prometheus datasource has UID
+`victoriametrics-local`, while the provisioned backend uses `victoriametrics`. For the local import only, build
+in-memory dashboard copies that replace target datasource UID `victoriametrics` with `victoriametrics-local`. Do not
+edit the repository JSON for this local difference.
+
+Do not create, update, delete, or reprovision any datasource. Before and after the import, capture the datasource UID,
+type, URL, and access mode from the Grafana API and verify that they are unchanged.
 
 - [ ] **Step 5: Open the overview against the existing real-data datasource**
 
@@ -722,6 +727,7 @@ Expected: all commands exit `0`.
 ```bash
 git add telemetry-backend/tests/smoke.sh \
   telemetry-backend/tests/metrics-query-contract.sh \
+  telemetry-backend/tests/query-contract.sh \
   telemetry-backend/grafana/dashboards/native-agent-metrics-overview.json \
   telemetry-backend/grafana/dashboards/codex-native-metrics.json
 git commit -m "test(telemetry): verify native metrics dashboards"
