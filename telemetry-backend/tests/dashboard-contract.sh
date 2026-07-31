@@ -127,16 +127,26 @@ check_titles "$health" \
   'OTLP coverage boundary' 'Machines not seen on target version' \
   'Inactive for more than 24 hours' 'Inactive for more than 48 hours' \
   'Native metric sample age' 'Stale installations' \
-  'Active installations by version' 'Active installations by harness and OS'
+  'Active installations by version' 'Active installations by harness and OS' \
+  'Machine ID coverage' 'Duplicate delivery rate' 'MCP duration coverage'
 
 health_path=$dashboard_dir/$health
 for removed_title in \
-  'Event ID coverage' 'Machine ID coverage' 'Duplicate delivery rate' \
-  'MCP duration coverage' 'Data quality by version' 'Version adoption' \
+  'Event ID coverage' 'Data quality by version' 'Version adoption' \
   'Harness and OS coverage' 'MCP outcomes'; do
   jq -e --arg title "$removed_title" 'all(.panels[]; .title != $title)' "$health_path" >/dev/null ||
     fail "$health still contains legacy panel: $removed_title"
 done
+
+jq -e '
+  ["Machine ID coverage", "Duplicate delivery rate", "MCP duration coverage"] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
+  | ($panels | length == 3) and
+    ($panels | all(.type == "timeseries")) and
+    ([$panels[] | .targets[]] | all(.queryType == "statsRange")) and
+    ([$panels[] | .targets[]] | all(.expr | contains("by (_time:1h)")))
+' "$health_path" >/dev/null ||
+  fail "$health delivery-quality panels must show hourly time series"
 
 jq -e '
   .panels[] | select(.title == "OTLP coverage boundary") |
@@ -151,10 +161,10 @@ jq -e '
   any(.templating.list[];
     .name == "target_version" and .type == "textbox" and .hide == 0 and
     .label == "Target version" and
-    .query == "v1.2.0" and
-    .current.text == "v1.2.0" and .current.value == "v1.2.0")
+    (.query | length > 0) and
+    .current.text == .query and .current.value == .query)
 ' "$health_path" >/dev/null ||
-  fail "$health must expose a labeled target_version with default v1.2.0"
+  fail "$health must expose a labeled target_version with a release-managed default"
 
 jq -e '
   .panels[] | select(.title == "Native metric sample age") |
@@ -255,7 +265,21 @@ jq -e '
     | ($expr | contains("format if (!agent:*) \"Unknown\" as agent")) and
       ($expr | contains("format if (!os.type:*) \"Unknown\" as os.type")))
 ' "$health_path" >/dev/null ||
-  fail "$health active distributions must label missing dimensions as Unknown"
+fail "$health active distributions must label missing dimensions as Unknown"
+
+# Native client versions use the OpenTelemetry resource label that both supported exporters emit.
+overview_path=$dashboard_dir/native-agent-metrics-overview.json
+jq -e '
+  .panels[] | select(.title == "Observed client versions") |
+  (.targets | length == 1) and
+  (.targets[0].expr | contains("group by (service_version)")) and
+  (.targets[0].expr | contains("service_name=\"codex_cli_rs\"")) and
+  (.targets[0].expr | contains("service_name=~\"claude-code|claude-code-desktop\"")) and
+  any(.transformations[]?; .id == "organize" and
+    .options.excludeByName.Time == true and
+    .options.renameByName.service_version == "Version")
+' "$overview_path" >/dev/null ||
+  fail 'Observed client versions must show service_version without the query timestamp'
 
 # --- Adoption overview (replaces the four per-domain dashboards) ------------
 adoption=ai-agent-telemetry-adoption.json
@@ -475,9 +499,9 @@ jq -e '
     and .options.excludeByName.Value == true
     and .options.excludeByName.__name__ == true
     and .options.renameByName.harness == "Harness"
-    and .options.renameByName.app_version == "Version"
+    and .options.renameByName.service_version == "Version"
     and .options.indexByName.harness == 0
-    and .options.indexByName.app_version == 1)
+    and .options.indexByName.service_version == 1)
 ' "$overview_path" >/dev/null ||
   fail "$overview client versions must show Harness then Version and hide metric metadata"
 

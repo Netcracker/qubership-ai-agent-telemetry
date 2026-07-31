@@ -18,6 +18,9 @@ services:
       - -storageDataPath=/vmetrics
       - -retentionPeriod=${VM_RETENTION:-365d}
       - -opentelemetry.usePrometheusNaming
+      - -storage.maxHourlySeries=${VM_MAX_HOURLY_SERIES:-50000}
+      - -storage.maxDailySeries=${VM_MAX_DAILY_SERIES:-200000}
+      - -storage.minFreeDiskSpaceBytes=${VM_MIN_FREE_DISK_SPACE_BYTES:-1073741824}
     volumes:
       - vmetrics-data:/vmetrics
     networks:

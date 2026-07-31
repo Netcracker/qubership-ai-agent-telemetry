@@ -53,6 +53,9 @@ Set every value in `.env`:
 | `GRAFANA_ADMIN_PASSWORD` | Initial Grafana administrator password. |
 | `VL_RETENTION` | VictoriaLogs retention, such as `30d`. |
 | `VM_RETENTION` | VictoriaMetrics retention, such as `30d`. |
+| `VM_MAX_HOURLY_SERIES` | Maximum unique metric series accepted during one hour. |
+| `VM_MAX_DAILY_SERIES` | Maximum unique metric series accepted during one day. |
+| `VM_MIN_FREE_DISK_SPACE_BYTES` | Free space VictoriaMetrics reserves before rejecting new writes. |
 | `HTTP_PORT`, `HTTPS_PORT` | Published Caddy ports. Keep `80` and `443` on a public server. |
 
 Do not put the plaintext dashboard password in `.env`. `GRAFANA_ADMIN_PASSWORD` initializes a new `grafana-data`
@@ -90,6 +93,10 @@ DASHBOARD_AUTH_PASSWORD_HASH='<caddy-bcrypt-hash>'
 GRAFANA_ADMIN_PASSWORD=<new-admin-password>
 VM_RETENTION=365d
 ```
+
+The example above changes only metrics retention. Existing `.env` values remain in effect after an upgrade. Add
+`VL_RETENTION=365d` separately if you also want to extend log retention; omitting either variable uses the 365-day
+Compose default for that backend.
 
 Generate the hash as described in [Create credentials](#1-create-credentials), and remove an obsolete
 `GRAFANA_ADMIN_USER` entry from `.env`. If an earlier preview created `grafana-data` with any administrator username
@@ -129,7 +136,8 @@ docker compose exec grafana grafana cli admin reset-admin-password '<new-admin-p
   Onboarding over time, and Activity per installation (the per-installation ranking); top skills and MCPs; harness and
   operating-system distributions; and skill and MCP repository views in matrix, stacked, and table formats.
 - **Telemetry health** — target-version gap; 24-hour and 48-hour inactivity; native-metrics freshness; correlated stale
-  installations; and active-installation distributions by version and by harness and operating system.
+  installations; active-installation distributions; and hourly machine ID, duplicate-delivery, and MCP-duration
+  quality signals.
 - **Native agent metrics overview** — signal availability and freshness, hourly sessions and tokens, the model and token
   type matrix, and observed client versions for native Codex and Claude Code metrics.
 - **Codex native metrics** — hourly sessions, turns, calls, failure ratio, and tokens; top tool, MCP, and skill
@@ -172,6 +180,10 @@ The backend accepts, stores, and visualizes supported native OTLP metrics, but t
 exporters. The `ai-agent-telemetry` lifecycle installer configures hook telemetry only. Follow
 [Native OTLP onboarding](native-otlp-onboarding.md) to opt in manually, verify delivery, or remove the configuration.
 
+The Collector removes `session.id`, `user.email`, `user.account_uuid`, and `organization.id` from native metric
+resource and data-point attributes before export. Add new sensitive vendor attributes to both privacy processors before
+supporting an exporter that emits them.
+
 ## Connect another Grafana through Caddy
 
 To query logs from a separate Grafana instance, add a VictoriaLogs datasource with:
@@ -208,6 +220,10 @@ To query metrics, add a Prometheus datasource with:
 - URL: `https://<SITE_ADDRESS>:<HTTPS_PORT>/prometheus`;
 - access mode: Server/Proxy;
 - Basic Auth enabled with the dashboard username and plaintext password.
+
+Caddy exposes only the Prometheus read endpoints allowlisted in `Caddyfile`, plus `/prometheus/vmui/*`. A Grafana
+feature that calls an unsupported Prometheus API receives `404 not found`; ingest, remote-write, and delete APIs are not
+available through dashboard credentials.
 
 The equivalent provisioning fields are:
 
@@ -246,6 +262,15 @@ Repeat the process for **VictoriaMetrics**, use `https://<SITE_ADDRESS>:<HTTPS_P
 | View VictoriaMetrics logs | `docker compose logs -f victoriametrics` |
 | Restart Grafana only | `docker compose restart grafana` |
 
+The default VictoriaMetrics limits accept 50,000 unique series per hour and 200,000 per day, and reserve 1 GiB of free
+disk. Size these values for the deployment before increasing them. Monitor `vm_hourly_series_limit_current_series`,
+`vm_daily_series_limit_current_series`, `vm_free_disk_space_bytes`, and `vm_data_size_bytes`. VictoriaMetrics drops new
+series after a cardinality limit is reached and stops accepting writes when free space falls below the configured
+reserve.
+
+Before a release, update the `Target version` default in `grafana/dashboards/telemetry-health.json` to the release being
+rolled out. The textbox remains editable at dashboard runtime for staged adoption checks.
+
 Reset an initialized Grafana administrator password with:
 
 ```sh
@@ -261,5 +286,5 @@ docker compose exec grafana grafana cli admin reset-admin-password '<new-admin-p
 | `/grafana/login` | Grafana `:3000` | Caddy Basic Auth, then a Grafana Viewer or administrator session |
 | other `/grafana/*` paths | Grafana `:3000` | Grafana session cookie |
 | `/select/*` | VictoriaLogs `:9428` | Caddy Basic Auth |
-| `/prometheus/*` | VictoriaMetrics `:8428` | Caddy Basic Auth |
+| Allowlisted `/prometheus/api/v1/*` reads and `/prometheus/vmui/*` | VictoriaMetrics `:8428` | Caddy Basic Auth |
 | everything else | None | `404 not found` |

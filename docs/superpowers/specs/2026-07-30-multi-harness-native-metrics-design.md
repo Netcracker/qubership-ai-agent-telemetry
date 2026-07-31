@@ -68,9 +68,11 @@ values, batches the data, and exports it to VictoriaMetrics. VictoriaMetrics
 applies Prometheus naming rules while preserving resource and datapoint
 attributes as labels.
 
-The metrics processor order remains `deltatocumulative`, then `batch`. The
-Collector does not rename vendor metrics, copy them into a canonical schema, or
-add a harness identity label.
+The metrics processor order is `memory_limiter`, `resource/privacy`,
+`attributes/privacy`, `deltatocumulative`, then `batch`. The privacy processors
+remove the known session and account identifiers defined in
+[ADR 0007][native-privacy]. The Collector does not rename vendor metrics, copy
+them into a canonical schema, or add a harness identity label.
 
 ## Normalization boundary
 
@@ -213,8 +215,9 @@ standard attributes include `service.name`, `session.id`, and
 installation-scoped `user.id`.
 
 When the user authenticates through OAuth, Claude Code can attach `user.email`
-to metrics. This PR does not add a Collector privacy processor, so the
-documentation must disclose that behavior before showing the configuration.
+to metrics. The Collector removes this attribute before storage. The onboarding
+document still discloses the source behavior because the backend removal list
+is not a complete client-side allowlist.
 
 Source: [Claude Code monitoring][claude-monitoring].
 
@@ -342,9 +345,10 @@ metrics. They confirm that Prometheus-normalized vendor names and documented
 labels remain queryable. The Cline fixture verifies backend compatibility
 without assigning a dashboard classification.
 
-The configuration contract verifies one shared metrics pipeline without an
-identity transform. Harness-specific routing is unnecessary because all native
-clients use the same OTLP receiver and exporter.
+The configuration contract verifies one shared metrics pipeline with memory,
+privacy, and delta-state bounds, and without an identity transform.
+Harness-specific routing is unnecessary because all native clients use the
+same OTLP receiver and exporter.
 
 The dashboard contract verifies, subject to the superseding usability design:
 
@@ -379,7 +383,6 @@ configuration works against a specific client release.
 
 ## Non-goals
 
-- Adding a Collector privacy processor.
 - Configuring native OTLP exporters through the lifecycle installer.
 - Adding traces or native harness logs.
 - Renaming or copying vendor metrics into a common schema at ingestion.
@@ -411,6 +414,8 @@ Source: [GitHub Copilot CLI OpenTelemetry reference][copilot-otel].
   Claude Code, and Cline without claiming client integration coverage.
 - Raw vendor metric names remain queryable without a Collector identity
   transform or canonical metric copies.
+- Known session and account attributes are removed before metrics storage, and
+  Collector state plus VictoriaMetrics series cardinality remain bounded.
 - The native metrics overview uses explicit Codex and Claude Code selectors and
   combines only semantically compatible signals.
 - The Codex deep-dive dashboard renders sessions, turns, tool and MCP activity,
@@ -431,4 +436,5 @@ Source: [GitHub Copilot CLI OpenTelemetry reference][copilot-otel].
 [cline-override]: https://docs.cline.bot/enterprise-solutions/monitoring/opentelemetry_override
 [apm-targets]: https://github.com/microsoft/apm
 [dashboard-redesign]: 2026-07-30-dashboard-usability-redesign.md
+[native-privacy]: ../../adr/0007-native-otlp-metrics-privacy-and-capacity.md
 <!-- markdownlint-enable MD013 -->

@@ -114,6 +114,45 @@
       "targets": [
         {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "options(ignore_global_time_filter=true)\n_time:1d\n{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nmachine.id:*\n| first 1 by (_time desc) partition by (machine.id)\n| format if (!agent:*) \"Unknown\" as agent\n| format if (!os.type:*) \"Unknown\" as os.type\n| stats by (agent, os.type) count() installations\n| sort by (installations desc)\n| limit 15", "legendFormat": "{{agent}} · {{os.type}}", "queryType": "stats"}
       ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Machine ID coverage",
+      "description": "Hourly share of hook telemetry events that carry an anonymous installation identifier.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "percent", "min": 0, "max": 100}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
+      "options": {"legend": {"displayMode": "hidden", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"}\n| stats by (_time:1h) count() total, count(machine.id) with_id\n| math 100 * with_id / total as coverage_percent\n| keep _time, coverage_percent", "legendFormat": "Machine ID coverage", "queryType": "statsRange"}
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Duplicate delivery rate",
+      "description": "Hourly share of delivered hook events whose delivery ID appears more than once.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "percent", "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 24},
+      "options": {"legend": {"displayMode": "hidden", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} event.id:*\n| stats by (_time:1h) count(event.id) delivered, count_uniq(event.id) distinct\n| math 100 * (delivered - distinct) / delivered as duplicate_percent\n| keep _time, duplicate_percent", "legendFormat": "Duplicate delivery rate", "queryType": "statsRange"}
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "MCP duration coverage",
+      "description": "Hourly share of MCP tool events that carry execution duration.",
+      "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "percent", "min": 0, "max": 100}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 24},
+      "options": {"legend": {"displayMode": "hidden", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"}, "expr": "{service.name=\"ai-agent-telemetry\"} _msg:=\"mcp_tool_executed\"\n| stats by (_time:1h) count() total, count(mcp.duration_ms) with_duration\n| math 100 * with_duration / total as coverage_percent\n| keep _time, coverage_percent", "legendFormat": "MCP duration coverage", "queryType": "statsRange"}
+      ]
     }
   ],
   "refresh": "15m",

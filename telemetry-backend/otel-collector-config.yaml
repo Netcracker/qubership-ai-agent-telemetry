@@ -5,7 +5,32 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
-  deltatocumulative: {}
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+  resource/privacy:
+    attributes:
+      - key: session.id
+        action: delete
+      - key: user.email
+        action: delete
+      - key: user.account_uuid
+        action: delete
+      - key: organization.id
+        action: delete
+  attributes/privacy:
+    actions:
+      - key: session.id
+        action: delete
+      - key: user.email
+        action: delete
+      - key: user.account_uuid
+        action: delete
+      - key: organization.id
+        action: delete
+  deltatocumulative:
+    max_streams: 100000
   batch:
     timeout: 5s
 
@@ -27,7 +52,7 @@ service:
       exporters: [otlphttp/victorialogs]
     metrics:
       receivers: [otlp]
-      processors: [deltatocumulative, batch]
+      processors: [memory_limiter, resource/privacy, attributes/privacy, deltatocumulative, batch]
       exporters: [otlphttp/victoriametrics]
   telemetry:
     logs:

@@ -83,9 +83,9 @@
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
       "options": {"showHeader": true},
       "targets": [
-        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "label_set(\n  group by (app_version) (\n    max_over_time(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__range])\n  ),\n  \"harness\", \"Codex\"\n)\nor\nlabel_set(\n  group by (app_version) (\n    max_over_time(claude_code_session_count_total{\n      service_name=~\"claude-code|claude-code-desktop\"\n    }[$__range])\n  ),\n  \"harness\", \"Claude\"\n)", "instant": true, "format": "table"}
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "label_set(\n  group by (service_version) (\n    max_over_time(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__range])\n  ),\n  \"harness\", \"Codex\"\n)\nor\nlabel_set(\n  group by (service_version) (\n    max_over_time(claude_code_session_count_total{\n      service_name=~\"claude-code|claude-code-desktop\"\n    }[$__range])\n  ),\n  \"harness\", \"Claude\"\n)", "instant": true, "format": "table"}
       ],
-      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true, "__name__": true}, "renameByName": {"harness": "Harness", "app_version": "Version"}, "indexByName": {"harness": 0, "app_version": 1}}}]
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true, "__name__": true}, "renameByName": {"harness": "Harness", "service_version": "Version"}, "indexByName": {"harness": 0, "service_version": 1}}}]
     }
   ],
   "refresh": "5m",

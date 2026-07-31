@@ -17,8 +17,9 @@ identical resource labels can collide in one time series. Limit the current pilo
 producer-identity design is available.
 
 Claude Code includes an anonymous installation-scoped `user.id` in every telemetry export. OAuth authentication can
-also add `user.email`, organization, and account attributes. The backend has no Collector privacy processor. Enable
-the exporter only when receiving these attributes complies with your privacy policy.
+also add `user.email`, organization, and account attributes. The Collector removes the known `user.email`,
+`user.account_uuid`, and `organization.id` attributes before metrics storage. This minimum removal list is not a full
+vendor-attribute allowlist, so review the effective exporter attributes against your privacy policy.
 
 ## Codex metrics only
 

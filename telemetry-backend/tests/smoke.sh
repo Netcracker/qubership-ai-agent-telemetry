@@ -211,6 +211,21 @@ jq -n --arg from "$time_from_ms" --arg to "$time_to_ms" '{
       queryType: "logs", refId: "ST", maxDataPoints: 1000, intervalMs: 60000
     },
     {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} | stats by (_time:1h) count() total, count(machine.id) with_id | math 100 * with_id / total as coverage_percent | keep _time, coverage_percent",
+      queryType: "statsRange", refId: "QI", maxDataPoints: 1000, intervalMs: 3600000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} event.id:* | stats by (_time:1h) count(event.id) delivered, count_uniq(event.id) distinct | math 100 * (delivered - distinct) / delivered as duplicate_percent | keep _time, duplicate_percent",
+      queryType: "statsRange", refId: "QD", maxDataPoints: 1000, intervalMs: 3600000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} _msg:=\"mcp_tool_executed\" | stats by (_time:1h) count() total, count(mcp.duration_ms) with_duration | math 100 * with_duration / total as coverage_percent | keep _time, coverage_percent",
+      queryType: "statsRange", refId: "QM", maxDataPoints: 1000, intervalMs: 3600000
+    },
+    {
       datasource: {type: "prometheus", uid: "victoriametrics"},
       expr: "sum(codex_tool_call_total{service_name=\"codex_cli_rs\"})",
       format: "time_series", instant: true, refId: "CM", maxDataPoints: 1000, intervalMs: 60000
@@ -231,11 +246,21 @@ curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
   --cookie "$viewer_cookie" \
   --header 'Content-Type: application/json' --data-binary "@$grafana_query" \
   "$TEST_BASE_URL/grafana/api/ds/query" >"$grafana_response"
-jq -e '.results | [.S, .T, .P, .R, .H, .O, .M] | all(.status == 200 and (.frames | length > 0))' \
+jq -e '.results | [.S, .T, .P, .R, .H, .O, .M, .QI, .QD, .QM] |
+  all(.status == 200 and (.frames | length > 0))' \
   "$grafana_response" >/dev/null || fail 'Grafana datasource queries did not return frames'
-jq -e '[.results | [.S, .T, .P, .R, .H, .O, .M, .DA] | .[].frames[].schema.fields[].name]
+jq -e '[.results | [.S, .T, .P, .R, .H, .O, .M, .DA, .QI, .QD, .QM] | .[].frames[].schema.fields[].name]
   | index("Line") == null' \
   "$grafana_response" >/dev/null || fail 'an aggregate Grafana query returned a raw log frame'
+
+for ref_id in QI QD QM; do
+  jq -e --arg ref_id "$ref_id" '
+    .results[$ref_id].status == 200 and
+    (.results[$ref_id].frames | [.[].schema.fields[]] |
+      any(.name == "Time" and .type == "time") and any(.name == "Value" and .type == "number"))
+  ' "$grafana_response" >/dev/null ||
+    fail "the Grafana $ref_id delivery-quality query did not return a numeric time series"
+done
 jq -e '.results.S.frames[0]
   | (.schema.fields | any(.name == "Value" and .type == "number"))
     and (.data.values[1][0] == 3)' "$grafana_response" >/dev/null ||

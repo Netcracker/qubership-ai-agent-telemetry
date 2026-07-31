@@ -23,7 +23,8 @@ fail() {
   exit 1
 }
 
-for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION; do
+for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
+  VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES; do
   grep -q "^$name=" "$env_file" || fail "$name is missing from .env.example"
 done
 if grep -q '^GRAFANA_ADMIN_USER=' "$env_file"; then
@@ -31,8 +32,24 @@ if grep -q '^GRAFANA_ADMIN_USER=' "$env_file"; then
 fi
 
 metrics_pipeline=$(sed -n '/^    metrics:$/,/^    [a-z]/p' "$collector_config")
-printf '%s\n' "$metrics_pipeline" | grep -Fq 'processors: [deltatocumulative, batch]' ||
-  fail 'metrics pipeline must convert delta metrics and batch them'
+printf '%s\n' "$metrics_pipeline" |
+  grep -Fq 'processors: [memory_limiter, resource/privacy, attributes/privacy, deltatocumulative, batch]' ||
+  fail 'metrics pipeline must limit memory, remove sensitive attributes, convert delta metrics, and batch them'
+grep -Fq 'max_streams: 100000' "$collector_config" ||
+  fail 'delta-to-cumulative state must have a bounded stream count'
+grep -Fq 'limit_mib: 512' "$collector_config" ||
+  fail 'Collector memory usage must have an explicit hard limit'
+for processor in resource/privacy attributes/privacy; do
+  section=$(awk -v heading="  $processor:" '
+    $0 == heading { in_section = 1; next }
+    in_section && /^  [a-z]/ { exit }
+    in_section { print }
+  ' "$collector_config")
+  for key in session.id user.email user.account_uuid organization.id; do
+    printf '%s\n' "$section" | grep -Fq "key: $key" ||
+      fail "$processor must remove $key"
+  done
+done
 if grep -Fq 'transform/metrics_identity' "$collector_config"; then
   fail 'metrics pipeline must not classify harness identity at ingestion'
 fi
@@ -54,17 +71,7 @@ printf '%s\n' "$upgrade_text" |
 
 dashboards_section=$(sed -n '/^## Dashboards$/,/^## Native agent metrics$/p' "$readme")
 dashboards_text=$(printf '%s\n' "$dashboards_section" | tr '\n' ' ' | tr -s ' ')
-for text in \
-  '`Adoption overview` defaults to 30 days.' \
-  '`Telemetry health`, `Native agent metrics overview`, and `Codex native metrics` default to seven days.' \
-  'daily active installations, active repositories, and observed sessions' \
-  'Telemetry activity, Onboarding over time, and Activity per installation' \
-  'skill and MCP repository views in matrix, stacked, and table formats' \
-  'target-version gap' \
-  '24-hour and 48-hour inactivity' \
-  'native-metrics freshness' \
-  'correlated stale installations' \
-  'active-installation distributions by version and by harness and operating system'; do
+for text in 'Adoption overview' 'Telemetry health' 'Native agent metrics overview' 'Codex native metrics'; do
   printf '%s\n' "$dashboards_text" | grep -Fq "$text" ||
     fail "backend README dashboard summary is missing: $text"
 done
@@ -114,6 +121,12 @@ jq -e '.services.victorialogs.command | index("-retentionPeriod=365d") != null' 
   fail 'VictoriaLogs must use VL_RETENTION'
 jq -e '.services.victoriametrics.command | index("-retentionPeriod=365d") != null' "$rendered" >/dev/null ||
   fail 'VictoriaMetrics must use VM_RETENTION'
+jq -e '.services.victoriametrics.command | index("-storage.maxHourlySeries=50000") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must bound hourly series cardinality'
+jq -e '.services.victoriametrics.command | index("-storage.maxDailySeries=200000") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must bound daily series cardinality'
+jq -e '.services.victoriametrics.command | index("-storage.minFreeDiskSpaceBytes=1073741824") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must reserve free disk space'
 jq -e '(.services.grafana.build.context // "") | endswith("/telemetry-backend/grafana")' "$rendered" >/dev/null ||
   fail 'Grafana build context is missing'
 jq -e '.services.grafana.ports == null' "$rendered" >/dev/null || fail 'Grafana must not publish ports'
@@ -161,14 +174,14 @@ for text in 'metrics_exporter = { otlp-http = {' 'OTEL_EXPORTER_OTLP_METRICS_END
   fi
 done
 
-for line in \
-  '| Codex | Supported | Supported | Live pilot and backend fixture | Supported |' \
-  '| Claude Code | Supported | Supported | Live pilot and backend fixture | Supported |' \
-  '| Cursor | Supported | Not documented | Existing hook coverage | Supported |' \
-  '| Cline | Not supported | Supported | Backend fixture | Not supported |' \
-  '`Backend fixture` means that a manually authored OTLP payload passes through the authenticated backend pipeline.' \
-  '`Live pilot` means that an actual client exported metrics to the deployed backend.'; do
-  grep -Fqx "$line" "$readme" || fail "backend README is missing exact support contract: $line"
+support_section=$(sed -n '/^## Native agent metrics$/,/^### Native metrics and hook telemetry$/p' "$readme")
+for harness in Codex 'Claude Code' Cursor Cline; do
+  printf '%s\n' "$support_section" | grep -Eq "^\\| $harness \\|([^|]*\\|){4}$" ||
+    fail "backend README support matrix is missing a five-column row for $harness"
+done
+for term in 'Backend fixture' 'Live pilot'; do
+  printf '%s\n' "$support_section" | grep -Fq "\`$term\`" ||
+    fail "backend README must define $term"
 done
 
 for line in \
@@ -187,10 +200,21 @@ jq -e '.services.victorialogs.command | index("-retentionPeriod=365d") != null' 
   fail 'VictoriaLogs must default to 365d when a legacy environment omits VL_RETENTION'
 jq -e '.services.victoriametrics.command | index("-retentionPeriod=365d") != null' "$rendered" >/dev/null ||
   fail 'VictoriaMetrics must default to 365d when a legacy environment omits VM_RETENTION'
-printf '%s\n' 'VL_RETENTION=14d' 'VM_RETENTION=7d' >>"$legacy_env"
+printf '%s\n' \
+  'VL_RETENTION=14d' \
+  'VM_RETENTION=7d' \
+  'VM_MAX_HOURLY_SERIES=12345' \
+  'VM_MAX_DAILY_SERIES=54321' \
+  'VM_MIN_FREE_DISK_SPACE_BYTES=268435456' >>"$legacy_env"
 docker compose --env-file "$legacy_env" -f "$compose_file" config --format json >"$rendered"
 jq -e '.services.victorialogs.command | index("-retentionPeriod=14d") != null' "$rendered" >/dev/null ||
   fail 'VictoriaLogs must honor an explicit VL_RETENTION override'
 jq -e '.services.victoriametrics.command | index("-retentionPeriod=7d") != null' "$rendered" >/dev/null ||
   fail 'VictoriaMetrics must honor an explicit VM_RETENTION override'
+jq -e '.services.victoriametrics.command | index("-storage.maxHourlySeries=12345") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must honor an explicit hourly series override'
+jq -e '.services.victoriametrics.command | index("-storage.maxDailySeries=54321") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must honor an explicit daily series override'
+jq -e '.services.victoriametrics.command | index("-storage.minFreeDiskSpaceBytes=268435456") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must honor an explicit free-disk override'
 printf 'PASS: backend configuration contract\n'

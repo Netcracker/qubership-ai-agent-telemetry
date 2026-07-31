@@ -40,6 +40,65 @@ assert_metric_value claude_tokens 900 \
 assert_metric_value cline_fixture 1 \
   'cline_fixture_task_count_total{service_name="cline-fixture",fixture="true"}'
 
+for query in \
+  '{session_id=~".+"}' \
+  '{user_email=~".+"}' \
+  '{user_account_uuid=~".+"}' \
+  '{organization_id=~".+"}'; do
+  query_metric "$query" | jq -e '.data.result | length == 0' >/dev/null ||
+    fail "sensitive native metric attribute reached storage: $query"
+done
+
+assert_metric_value codex_conversation_turns 4 \
+  'codex_conversation_turn_count_total{service_name="codex_cli_rs"}'
+assert_metric_value codex_mcp_calls 3 \
+  'codex_mcp_call_total{service_name="codex_cli_rs",server="fixture-mcp",status="ok"}'
+assert_metric_value codex_skill_injections 2 \
+  'codex_skill_injected_total{service_name="codex_cli_rs",skill="fixture-skill",invoke_type="explicit",status="ok"}'
+
+for metric in \
+  codex_turn_e2e_duration_ms_milliseconds_bucket \
+  codex_tool_call_duration_ms_milliseconds_bucket \
+  codex_responses_api_engine_service_ttft_duration_ms_milliseconds_bucket \
+  codex_responses_api_engine_service_tbt_duration_ms_milliseconds_bucket \
+  codex_responses_api_inference_time_duration_ms_milliseconds_bucket; do
+  query_metric "$metric{service_name=\"codex_cli_rs\",le=\"+Inf\"}" |
+    jq -e '.data.result | length == 1' >/dev/null ||
+    fail "$metric fixture must expose an explicit le bucket"
+  query_metric "histogram_quantile(0.95, sum by (le) (rate($metric{service_name=\"codex_cli_rs\"}[1h])))" |
+    jq -e '(.data.result | length == 1) and (.data.result[0].value[1] | tonumber) > 0' >/dev/null ||
+    fail "$metric must support the dashboard histogram_quantile query"
+done
+
+assert_metric_value claude_version 1 \
+  'count(group by (service_version) (claude_code_session_count_total{service_name="claude-code",service_version="fixture-claude"}))'
+
+assert_metric_value claude_session_increase 2 \
+  'sum(increase(claude_code_session_count_total{service_name="claude-code",start_type="fresh"}[1h]))'
+assert_metric_value claude_token_increase 900 \
+  'sum(increase(claude_code_token_usage_tokens_total{service_name="claude-code",type="input",model="fixture-claude"}[1h]))'
+
+versions_query='label_set(
+  group by (service_version) (
+    max_over_time(codex_tool_call_total{service_name="codex_cli_rs"}[1h])
+  ),
+  "harness", "Codex"
+)
+or
+label_set(
+  group by (service_version) (
+    max_over_time(claude_code_session_count_total{service_name=~"claude-code|claude-code-desktop"}[1h])
+  ),
+  "harness", "Claude"
+)'
+query_metric "$versions_query" | jq -e '
+  [.data.result[].metric | {harness, service_version}] | sort_by(.harness) ==
+  [
+    {"harness": "Claude", "service_version": "fixture-claude"},
+    {"harness": "Codex", "service_version": "fixture"}
+  ]
+' >/dev/null || fail 'client versions query must return Codex and Claude service versions'
+
 query_metric 'codex_tool_call_total{service_name="codex_cli_rs",success="false"}' |
   jq -e '.data.result | length == 0' >/dev/null ||
   fail 'the Codex fixture must not include failed tool calls'
