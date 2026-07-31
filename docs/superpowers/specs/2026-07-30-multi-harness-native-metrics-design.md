@@ -35,6 +35,13 @@ backend. The pilots cover Codex CLI `0.146.0` and Claude Code `2.1.220`,
 observed on July 30, 2026. Cline onboarding remains documentation-derived
 until a version-pinned client integration test or recorded live pilot is added.
 
+`Native metrics: Supported` means that the backend accepts the documented
+protocol and the onboarding document covers the client. It does not imply that
+the client has a stable selector for shared dashboards. Codex and Claude Code
+are the dashboard-classifiable harnesses in this PR. Cline remains
+backend-compatible but unclassified because its public contract does not
+define a stable `service.name`.
+
 ## Architecture
 
 The backend topology does not change:
@@ -103,14 +110,20 @@ semantic differences between instrument types.
 This PR adds two provisioned Grafana dashboards that use the VictoriaMetrics
 Prometheus datasource.
 
+The [dashboard usability redesign][dashboard-redesign] supersedes the panel
+definitions, presentation rules, dashboard contract, and related acceptance
+criteria in this section when the documents conflict.
+
 ### Native agent metrics overview
 
 The overview compares the safe intersection of Codex and Claude Code signals.
 It contains:
 
-- metric freshness by harness;
-- top-level sessions started over the selected period;
-- token usage by harness, model, and token type;
+- native metric sample age by harness;
+- top-level sessions started per trailing hour;
+- tokens processed per trailing hour;
+- token usage by harness, model, and source-native token type for the selected
+  period;
 - observed client versions; and
 - a signal-availability table that distinguishes an unsupported signal from a
   supported signal whose value is zero.
@@ -333,7 +346,7 @@ The configuration contract verifies one shared metrics pipeline without an
 identity transform. Harness-specific routing is unnecessary because all native
 clients use the same OTLP receiver and exporter.
 
-The dashboard contract verifies:
+The dashboard contract verifies, subject to the superseding usability design:
 
 - valid JSON and stable dashboard UIDs;
 - the provisioned `victoriametrics` datasource;
@@ -387,12 +400,13 @@ Source: [GitHub Copilot CLI OpenTelemetry reference][copilot-otel].
 
 ## Acceptance criteria
 
-- Codex and Claude Code have metrics-only remote configuration examples.
+- The onboarding document has metrics-only remote configuration examples for
+  Codex and Claude Code.
 - Cline has a conditional remote configuration example that requires logs to
   be disabled in Remote Configuration and verified in diagnostics.
 - Cursor's support level is explicit and does not imply a native exporter.
-- The README discloses Claude Code identity attributes and the Codex producer
-  identity limitation.
+- The onboarding document discloses Claude Code identity attributes and the
+  Codex producer identity limitation.
 - The smoke test verifies representative backend fixture payloads for Codex,
   Claude Code, and Cline without claiming client integration coverage.
 - Raw vendor metric names remain queryable without a Collector identity
@@ -403,7 +417,7 @@ Source: [GitHub Copilot CLI OpenTelemetry reference][copilot-otel].
   tokens, failures, and latency from live pilot series.
 - Unsupported signals are distinguishable from supported signals whose value
   is zero.
-- Existing logs, dashboards, and authentication boundaries remain unchanged.
+- Existing log ingestion and authentication boundaries remain unchanged.
 - Existing test assertions continue to pass.
 - Cline is not passed to APM or accepted by `--harnesses`.
 
@@ -416,4 +430,5 @@ Source: [GitHub Copilot CLI OpenTelemetry reference][copilot-otel].
 [cline-otel]: https://docs.cline.bot/enterprise-solutions/monitoring/opentelemetry
 [cline-override]: https://docs.cline.bot/enterprise-solutions/monitoring/opentelemetry_override
 [apm-targets]: https://github.com/microsoft/apm
+[dashboard-redesign]: 2026-07-30-dashboard-usability-redesign.md
 <!-- markdownlint-enable MD013 -->

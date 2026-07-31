@@ -5,6 +5,10 @@
 Make every telemetry dashboard answer a specific operational question without requiring the reader to infer whether a
 value is a lifetime total, a rate, or a count for the selected time range.
 
+This specification supersedes the panel definitions, presentation rules, dashboard contract, and related acceptance
+criteria in the multi-harness native metrics design when the two documents conflict. The multi-harness design remains
+authoritative for backend architecture, harness contracts, and support scope.
+
 The redesign covers these provisioned dashboards:
 
 - Native agent metrics overview
@@ -40,6 +44,11 @@ activity observed during the trailing hour, not an instantaneous per-second rate
 
 Daily adoption panels use calendar-day buckets aligned to UTC with `_time:1d offset 0h`. They respect the selected
 Grafana time range and the repository, harness, operating system, and version filters.
+
+The dashboard timezone is UTC, and its default range is `now-30d/d` through `now/d`. This shows the previous 30 complete
+UTC days. If a viewer selects a range whose boundaries are not UTC midnight, the first and last buckets are partial.
+Every daily panel description must identify those edge buckets as partial rather than presenting them as complete
+calendar days.
 
 - Active installations is the number of distinct non-empty `machine.id` values observed during the UTC day.
 - Active repositories is the number of distinct normalized, non-empty `repo.remote` values observed during the UTC
@@ -93,11 +102,16 @@ value.
 Exact installation-level OTLP coverage is not measurable. Hook telemetry has `machine.id`, while the Codex and Claude
 native OTLP metrics do not expose a shared installation identifier.
 
-The health dashboard must state this limitation. It may show native-metric freshness by harness, but it must not label
-freshness or the presence of a harness-wide signal as the number or percentage of configured installations.
+The health dashboard must state this limitation. It may show native metric sample age by harness, but it must not label
+sample age or the presence of a harness-wide signal as the number or percentage of configured installations.
 
-Freshness is the age of the newest matching native metric sample received during the previous 30 days. The query uses
-the complete documented metric namespace for each harness rather than one representative metric:
+Native metric sample age is `time() - sample timestamp` for the newest matching native metric sample during the
+previous 30 days. The timestamp originates from the harness, not the Collector. Client clock skew or replayed samples
+can therefore make the displayed age differ from time since server receipt. The dashboard describes the value as a
+diagnostic based on client timestamps, not an exact server-receipt measurement.
+
+The query uses the complete documented metric namespace for each dashboard-classifiable harness rather than one
+representative metric:
 
 - Codex: `codex_.*` with `service_name="codex_cli_rs"`;
 - Claude Code: `claude_code_.*` with `service_name=~"claude-code|claude-code-desktop"`.
@@ -113,8 +127,8 @@ The dashboard answers: "Which native agent signals are available, and how much a
 ### Panels
 
 - Keep Signal availability as a descriptive support matrix.
-- Keep Metrics freshness and clarify that it reports the age of the last native signal received during the previous
-  30 days for each harness.
+- Replace Metrics freshness with Native metric sample age and disclose its client-timestamp semantics and fixed
+  30-day lookback.
 - Replace Top-level sessions started with Top-level sessions per hour.
 - Replace Token usage over time with Tokens processed per hour.
 - Replace Tokens by model and type with a matrix:
@@ -201,7 +215,7 @@ Add:
 - Machines not seen on target version during the previous 30 days;
 - Inactive installations for more than 24 hours;
 - Inactive installations for more than 48 hours;
-- Native metrics freshness by supported harness;
+- Native metric sample age for dashboard-classifiable harnesses;
 - a stale installations table with machine ID, last seen, harness, and observed version;
 - active installation distribution by agent version;
 - active installation distribution by harness and operating system.
@@ -240,9 +254,10 @@ Contract tests must verify:
 - the absence of a Time column from Observed client versions;
 - exclusion of `agent="selftest"` from every hook-derived adoption and health population;
 - UTC calendar-day bucketing and unique-key definitions for all three daily adoption panels;
+- a UTC dashboard timezone, a default range covering 30 complete UTC days, and partial-edge disclosure;
 - repository normalization across canonical, SSH, HTTPS, `.git`, case, whitespace, and trailing-slash variants;
 - the presence of the target-version variable and the 24-hour and 48-hour stale definitions;
-- fixed 30-day native-metric freshness queries across each supported harness namespace;
+- fixed 30-day native metric sample-age queries across the Codex and Claude Code namespaces;
 - selection of all stale-table fields from one latest event per `machine.id`, including missing-field display rules;
 - the 24-hour population for active-installation distributions;
 - zero and no-data failure-ratio states using deterministic metric fixtures;
