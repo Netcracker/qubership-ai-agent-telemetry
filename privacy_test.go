@@ -60,9 +60,13 @@ func TestPrivacyRawHooksExcludePrivateFieldsFromOutboxAndOTLP(t *testing.T) {
 			if err != nil {
 				t.Fatalf("detect: %v", err)
 			}
-			events = filterEventsByPolicy(events, telemetryPolicy{
-				RepoAllowList: []string{"github.com/netcracker/*"},
-			}, func(string) []string { return []string{privacyRemoteResolver("")} })
+			policy := telemetryPolicy{RepoAllowList: []string{"github.com/netcracker/*"}}
+			if tt.agent == "cursor" {
+				policy.RepoAllowList = nil
+			}
+			events = filterEventsByPolicy(events, policy, func(string) []string {
+				return []string{privacyRemoteResolver("")}
+			})
 			if len(events) != 1 {
 				t.Fatalf("policy retained %d events, want 1", len(events))
 			}

@@ -925,14 +925,17 @@ func TestDetectCursorFromTranscript(t *testing.T) {
 		"workspace_roots": []string{"/repo"},
 		"transcript_path": tp,
 	})
-	events, err := detect("cursor", stdin, func(string) string { return "git@host:o/r.git" }, time.Now().UTC())
+	events, err := detect("cursor", stdin, func(string) string {
+		t.Fatal("remote resolver must not run without operation-path evidence")
+		return ""
+	}, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("detect: %v", err)
 	}
 	if len(events) != 1 || events[0].Agent != "cursor" || skillName(t, events[0]) != "demo" {
 		t.Fatalf("events = %+v", events)
 	}
-	if events[0].RepoRemote != "git@host:o/r.git" {
+	if events[0].RepoRemote != "" {
 		t.Fatalf("remote = %q", events[0].RepoRemote)
 	}
 }
