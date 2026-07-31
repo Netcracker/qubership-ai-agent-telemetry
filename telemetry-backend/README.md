@@ -263,7 +263,9 @@ Repeat the process for **VictoriaMetrics**, use `https://<SITE_ADDRESS>:<HTTPS_P
 | Restart Grafana only | `docker compose restart grafana` |
 
 The default VictoriaMetrics limits accept 50,000 unique series per hour and 200,000 per day, and reserve 1 GiB of free
-disk. Size these values for the deployment before increasing them. Monitor `vm_hourly_series_limit_current_series`,
+disk. Storage growth depends on the active series count, sampling interval, and label churn; measure the daily change
+in `vm_data_size_bytes` during the pilot instead of assuming a fixed size per installation. Size the limits for the
+deployment before increasing them. Monitor `vm_hourly_series_limit_current_series`,
 `vm_daily_series_limit_current_series`, `vm_free_disk_space_bytes`, and `vm_data_size_bytes`. VictoriaMetrics drops new
 series after a cardinality limit is reached and stops accepting writes when free space falls below the configured
 reserve.
