@@ -353,7 +353,8 @@ done
 overview=native-agent-metrics-overview.json
 check_common "$overview" native-agent-metrics-overview victoriametrics
 check_titles "$overview" \
-  'Signal availability' 'Native metric sample age' 'Top-level sessions per hour' 'Tokens processed per hour' \
+  'Signal availability' 'Native metric sample age' \
+  'Average top-level sessions per hour' 'Average tokens processed per hour' \
   'Tokens by model and type' 'Observed client versions'
 
 overview_path=$dashboard_dir/$overview
@@ -378,9 +379,9 @@ jq -e '
     | .gridPos == {"h": 8, "w": 24, "x": 0, "y": 0}) and
   (.panels[] | select(.title == "Native metric sample age")
     | .gridPos == {"h": 7, "w": 12, "x": 0, "y": 8}) and
-  (.panels[] | select(.title == "Top-level sessions per hour")
+  (.panels[] | select(.title == "Average top-level sessions per hour")
     | .gridPos == {"h": 7, "w": 12, "x": 12, "y": 8}) and
-  (.panels[] | select(.title == "Tokens processed per hour")
+  (.panels[] | select(.title == "Average tokens processed per hour")
     | .gridPos == {"h": 8, "w": 24, "x": 0, "y": 15}) and
   (.panels[] | select(.title == "Tokens by model and type")
     | .gridPos == {"h": 8, "w": 12, "x": 0, "y": 23}) and
@@ -412,20 +413,24 @@ jq -e '
   fail "$overview native sample age must use the approved 30-day namespace queries"
 
 jq -e '
-  ["Top-level sessions per hour", "Tokens processed per hour"] as $titles
+  ["Average top-level sessions per hour", "Average tokens processed per hour"] as $titles
   | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
   | ($panels | length == 2)
     and ($panels | all(.[]; .type == "timeseries"))
     and ($panels | all(.[]; (.targets | length > 0)))
-    and ($panels | all(.[]; all(.targets[]; .interval == "1h" and (.expr | contains("[1h]")))))
+    and ($panels | all(.[]; all(.targets[];
+      .interval == "1h" and
+      (.expr | contains("[$__interval]")) and
+      (.expr | contains("* 3600000 / $__interval_ms")) and
+      ((.expr | contains("[1h]")) | not))))
     and ($panels | all(.[]; .fieldConfig.defaults.custom.showPoints == "always"))
     and ($panels | all(.[]; .fieldConfig.defaults.custom.pointSize == 5))
     and ($panels | all(.[]; .fieldConfig.defaults.custom.spanNulls == false))
 ' "$overview_path" >/dev/null ||
-  fail "$overview hourly panels must use visible points without spanning missing windows"
+  fail "$overview hourly-average panels must cover the complete query interval"
 
 jq -e '
-  .panels[] | select(.title == "Tokens processed per hour") |
+  .panels[] | select(.title == "Average tokens processed per hour") |
   .fieldConfig.defaults.unit == "locale" and .fieldConfig.defaults.decimals == 0
 ' "$overview_path" >/dev/null ||
   fail "$overview hourly tokens must render exact whole numbers"
@@ -463,8 +468,8 @@ jq -e '
 codex='codex-native-metrics.json'
 check_common "$codex" codex-native-metrics victoriametrics
 check_titles "$codex" \
-  'Sessions and turns per hour' 'Tool and MCP calls per hour' \
-  'Tool failure ratio per hour' 'Tokens processed per hour' \
+  'Average sessions and turns per hour' 'Average tool and MCP calls per hour' \
+  'Tool failure ratio per query interval' 'Average tokens processed per hour' \
   'Top tools' 'MCP servers and outcomes' \
   'Tokens by model and type' 'Turn latency' 'Tool latency' 'API latency' 'Skill injections'
 
@@ -474,21 +479,43 @@ codex_panel_count=$(jq '[.panels[] | select(.type != "text" and .type != "row")]
 
 jq -e '
   [
-    "Sessions and turns per hour",
-    "Tool and MCP calls per hour",
-    "Tool failure ratio per hour",
-    "Tokens processed per hour"
+    "Average sessions and turns per hour",
+    "Average tool and MCP calls per hour",
+    "Tool failure ratio per query interval",
+    "Average tokens processed per hour"
   ] as $titles
   | [.panels[] | select(.title as $title | $titles | index($title))] as $panels
   | ($panels | length == 4)
     and ($panels | all(.type == "timeseries"))
     and ($panels | all(.[]; (.targets | length > 0)))
-    and ($panels | all(.[]; all(.targets[]; .interval == "1h" and (.expr | contains("[1h]")))))
+    and ($panels | all(.[]; all(.targets[];
+      .interval == "1h" and
+      (.expr | contains("[$__interval]")) and
+      ((.expr | contains("[1h]")) | not))))
     and ($panels | all(.[]; .fieldConfig.defaults.custom.showPoints == "always"))
     and ($panels | all(.[]; .fieldConfig.defaults.custom.pointSize == 5))
     and ($panels | all(.[]; .fieldConfig.defaults.custom.spanNulls == false))
 ' "$codex_path" >/dev/null ||
-  fail "$codex activity panels must use visible points without spanning missing windows"
+  fail "$codex activity panels must cover the complete query interval"
+
+jq -e '
+  [
+    "Average sessions and turns per hour",
+    "Average tool and MCP calls per hour",
+    "Average tokens processed per hour"
+  ] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title)) | .targets[]]
+  | all(.expr | contains("* 3600000 / $__interval_ms"))
+' "$codex_path" >/dev/null ||
+  fail "$codex count panels must normalize each complete interval to an hourly average"
+
+jq -e '
+  .panels[] | select(.title == "Tool failure ratio per query interval") |
+  (.targets | length == 1) and
+  (.targets[0].expr | contains("[$__interval]")) and
+  ((.targets[0].expr | contains("* 3600000 / $__interval_ms")) | not)
+' "$codex_path" >/dev/null ||
+  fail "$codex failure ratio must use the complete query interval without count normalization"
 
 jq -e '
   .panels[] | select(.title == "Tokens by model and type") |
@@ -560,7 +587,7 @@ for title in 'Turn latency' 'Tool latency' 'API latency'; do
 done
 
 jq -e '
-  .panels[] | select(.title == "Tool failure ratio per hour") |
+  .panels[] | select(.title == "Tool failure ratio per query interval") |
   .fieldConfig.defaults.unit == "percentunit"
 ' "$codex_path" >/dev/null || fail "$codex failure ratio must use percentunit"
 
@@ -591,12 +618,12 @@ check_codex_legend() {
   ' "$codex_path" >/dev/null || fail "$codex panel '$title' must use legend '$legend' for $ref_id"
 }
 
-check_codex_target 'Sessions and turns per hour' A 'sum(increase(codex_thread_started_total{service_name="codex_cli_rs",session_source="cli"}[1h]))'
-check_codex_target 'Sessions and turns per hour' B 'sum(increase(codex_conversation_turn_count_total{service_name="codex_cli_rs"}[1h]))'
-check_codex_target 'Tool and MCP calls per hour' A 'sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[1h]))'
-check_codex_target 'Tool and MCP calls per hour' B 'sum(increase(codex_mcp_call_total{service_name="codex_cli_rs"}[1h]))'
-check_codex_target 'Tool failure ratio per hour' A '(sum(increase(codex_tool_call_total{service_name="codex_cli_rs",success="false"}[1h])) or (0 * sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[1h])))) / sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[1h]))'
-check_codex_target 'Tokens processed per hour' A 'sum by (token_type) (increase(codex_turn_token_usage_sum{service_name="codex_cli_rs",token_type!="total"}[1h]))'
+check_codex_target 'Average sessions and turns per hour' A 'sum(increase(codex_thread_started_total{service_name="codex_cli_rs",session_source="cli"}[$__interval])) * 3600000 / $__interval_ms'
+check_codex_target 'Average sessions and turns per hour' B 'sum(increase(codex_conversation_turn_count_total{service_name="codex_cli_rs"}[$__interval])) * 3600000 / $__interval_ms'
+check_codex_target 'Average tool and MCP calls per hour' A 'sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__interval])) * 3600000 / $__interval_ms'
+check_codex_target 'Average tool and MCP calls per hour' B 'sum(increase(codex_mcp_call_total{service_name="codex_cli_rs"}[$__interval])) * 3600000 / $__interval_ms'
+check_codex_target 'Tool failure ratio per query interval' A '(sum(increase(codex_tool_call_total{service_name="codex_cli_rs",success="false"}[$__interval])) or (0 * sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__interval])))) / sum(increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__interval]))'
+check_codex_target 'Average tokens processed per hour' A 'sum by (token_type) (increase(codex_turn_token_usage_sum{service_name="codex_cli_rs",token_type!="total"}[$__interval])) * 3600000 / $__interval_ms'
 check_codex_target 'Top tools' A 'topk(10, sum by (tool) (increase(codex_tool_call_total{service_name="codex_cli_rs"}[$__range])))'
 check_codex_target 'MCP servers and outcomes' A 'topk(10, sum by (server, status) (increase(codex_mcp_call_total{service_name="codex_cli_rs"}[$__range])))'
 check_codex_target 'Tokens by model and type' A 'sum by (model, token_type) (increase(codex_turn_token_usage_sum{service_name="codex_cli_rs",token_type!="total"}[$__range]))'
@@ -612,13 +639,13 @@ check_codex_target 'API latency' D 'histogram_quantile(0.95, sum by (le) (rate(c
 check_codex_target 'API latency' E 'histogram_quantile(0.50, sum by (le) (rate(codex_responses_api_inference_time_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
 check_codex_target 'API latency' F 'histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_inference_time_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
 
-check_codex_legend 'Sessions and turns per hour' A Sessions
-check_codex_legend 'Sessions and turns per hour' B Turns
-check_codex_legend 'Tool and MCP calls per hour' A 'Tool calls'
-check_codex_legend 'Tool and MCP calls per hour' B 'MCP calls'
+check_codex_legend 'Average sessions and turns per hour' A Sessions
+check_codex_legend 'Average sessions and turns per hour' B Turns
+check_codex_legend 'Average tool and MCP calls per hour' A 'Tool calls'
+check_codex_legend 'Average tool and MCP calls per hour' B 'MCP calls'
 check_codex_legend 'Top tools' A '{{tool}}'
 check_codex_legend 'MCP servers and outcomes' A '{{server}} · {{status}}'
-check_codex_legend 'Tokens processed per hour' A '{{token_type}}'
+check_codex_legend 'Average tokens processed per hour' A '{{token_type}}'
 check_codex_legend 'Turn latency' A p50
 check_codex_legend 'Turn latency' B p95
 check_codex_legend 'Tool latency' A p50

@@ -36,29 +36,29 @@
     {
       "id": 3,
       "type": "timeseries",
-      "title": "Top-level sessions per hour",
-      "description": "Each point shows top-level sessions observed during the trailing one-hour window. Claude Code agent-view sessions are excluded.",
+      "title": "Average top-level sessions per hour",
+      "description": "Each point covers the complete Grafana query interval and is normalized to an hourly average. At a one-hour interval, it is the exact count for that hour. Claude Code agent-view sessions are excluded.",
       "gridPos": {"h": 7, "w": 12, "x": 12, "y": 8},
       "datasource": {"type": "prometheus", "uid": "victoriametrics"},
       "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
       "targets": [
-        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_thread_started_total{service_name=\"codex_cli_rs\",session_source=\"cli\"}[1h]))", "legendFormat": "Codex", "interval": "1h"},
-        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(claude_code_session_count_total{service_name=~\"claude-code|claude-code-desktop\",start_type!=\"agents_view\"}[1h]))", "legendFormat": "Claude", "interval": "1h"}
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_thread_started_total{service_name=\"codex_cli_rs\",session_source=\"cli\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Codex", "interval": "1h"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(claude_code_session_count_total{service_name=~\"claude-code|claude-code-desktop\",start_type!=\"agents_view\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Claude", "interval": "1h"}
       ]
     },
     {
       "id": 4,
       "type": "timeseries",
-      "title": "Tokens processed per hour",
-      "description": "Each point shows tokens processed during the trailing one-hour window.",
+      "title": "Average tokens processed per hour",
+      "description": "Each point covers the complete Grafana query interval and is normalized to an hourly average. At a one-hour interval, it is the exact count for that hour.",
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 15},
       "datasource": {"type": "prometheus", "uid": "victoriametrics"},
       "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}, "overrides": []}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
       "targets": [
-        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (token_type) (increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[1h]))", "legendFormat": "Codex · {{token_type}}", "interval": "1h"},
-        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (type) (increase(claude_code_token_usage_tokens_total{service_name=~\"claude-code|claude-code-desktop\"}[1h]))", "legendFormat": "Claude · {{type}}", "interval": "1h"}
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (token_type) (increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Codex · {{token_type}}", "interval": "1h"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (type) (increase(claude_code_token_usage_tokens_total{service_name=~\"claude-code|claude-code-desktop\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Claude · {{type}}", "interval": "1h"}
       ]
     },
     {
