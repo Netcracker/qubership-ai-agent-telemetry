@@ -12,6 +12,10 @@ on:
 
 permissions: read-all
 
+env:
+  # renovate: datasource=docker depName=renovate/renovate versioning=docker
+  RENOVATE_VERSION: 43.280.4
+
 jobs:
   validate-renovate-config:
     name: Validate renovate.json
@@ -23,4 +27,28 @@ jobs:
           persist-credentials: false
 
       - name: Validate renovate.json
-        run: docker run --rm -v "$PWD":/work -w /work renovate/renovate:latest renovate-config-validator --strict --no-global renovate.json
+        run: docker run --rm -v "$PWD":/work -w /work "renovate/renovate:${RENOVATE_VERSION}" renovate-config-validator --strict --no-global renovate.json
+
+      - name: Resolve shared Renovate presets
+        env:
+          GITHUB_COM_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          log_file="$(mktemp)"
+          trap 'rm -f "$log_file"' EXIT
+          validation_filter='fromjson? | select(.err.validationError? or .msg == "Repository has invalid config")'
+
+          docker run --rm \
+            -e GITHUB_COM_TOKEN \
+            -e LOG_FORMAT=json \
+            -e LOG_LEVEL=warn \
+            -v "$PWD":/work \
+            -w /work \
+            "renovate/renovate:${RENOVATE_VERSION}" \
+            renovate --platform=local --dry-run=extract 2>&1 | tee "$log_file"
+
+          if jq -R -e "$validation_filter" "$log_file" >/dev/null; then
+            echo "::error::Renovate could not resolve the repository configuration"
+            jq -R -r "$validation_filter | .err.validationError // .msg" "$log_file"
+            exit 1
+          fi

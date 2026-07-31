@@ -8,10 +8,6 @@
     "github>Netcracker/renovate-config:annotated-versions",
     "github>Netcracker/renovate-config:grafana-plugins"
   ],
-  "dependencyDashboard": true,
-  "labels": [
-    "dependencies"
-  ],
   "timezone": "Europe/Saratov",
   "rangeStrategy": "bump",
   "postUpdateOptions": [
@@ -19,7 +15,7 @@
   ],
   "packageRules": [
     {
-      "description": "Group other Go module minor and patch updates",
+      "description": "Group other Go module minor and patch updates; exclusions mirror the shared go and netcracker-dependencies presets",
       "matchManagers": [
         "gomod"
       ],
@@ -42,7 +38,7 @@
       "groupName": "Go module minor and patch updates"
     },
     {
-      "description": "Group Docker Compose image minor and patch updates",
+      "description": "Group other Docker Compose image non-major updates; exclusions mirror the shared go and netcracker-dependencies presets",
       "matchManagers": [
         "docker-compose"
       ],
@@ -55,9 +51,12 @@
       ],
       "matchUpdateTypes": [
         "minor",
-        "patch"
+        "patch",
+        "pin",
+        "digest",
+        "pinDigest"
       ],
-      "groupName": "Docker Compose image minor and patch updates"
+      "groupName": "Docker Compose image non-major updates"
     }
   ]
 }
