@@ -5,6 +5,7 @@
     "github>Netcracker/renovate-config:github-actions",
     "github>Netcracker/renovate-config:go",
     "github>Netcracker/renovate-config:netcracker-dependencies",
+    "github>Netcracker/renovate-config:go-catch-all",
     "github>Netcracker/renovate-config:annotated-versions",
     "github>Netcracker/renovate-config:grafana-plugins"
   ],
@@ -14,29 +15,6 @@
     "gomodTidy"
   ],
   "packageRules": [
-    {
-      "description": "Group other Go module minor and patch updates; exclusions mirror the shared go and netcracker-dependencies presets",
-      "matchManagers": [
-        "gomod"
-      ],
-      "matchDatasources": [
-        "go"
-      ],
-      "matchPackageNames": [
-        "!k8s.io/**",
-        "!sigs.k8s.io/**",
-        "!github.com/openshift/**",
-        "!go.opentelemetry.io/**",
-        "!github.com/open-telemetry/**",
-        "!github.com/prometheus/**",
-        "!github.com/Netcracker/**"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch"
-      ],
-      "groupName": "Go module minor and patch updates"
-    },
     {
       "description": "Group other Docker Compose image non-major updates; exclusions mirror the shared go and netcracker-dependencies presets",
       "matchManagers": [
