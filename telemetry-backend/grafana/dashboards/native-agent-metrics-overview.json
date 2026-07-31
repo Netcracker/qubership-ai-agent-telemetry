@@ -22,15 +22,15 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Metrics freshness",
-      "description": "Seconds since the newest native metric received from each documented exporter.",
+      "title": "Native metric sample age",
+      "description": "Age in seconds of the newest client-provided sample timestamp during the previous 30 days. Client clock skew or replay can make this differ from time since server receipt.",
       "gridPos": {"h": 7, "w": 12, "x": 0, "y": 8},
       "datasource": {"type": "prometheus", "uid": "victoriametrics"},
       "fieldConfig": {"defaults": {"min": 0, "unit": "s", "overrides": []}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
       "targets": [
-        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(timestamp(codex_tool_call_total{service_name=\"codex_cli_rs\"}))", "legendFormat": "Codex"},
-        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(timestamp({__name__=~\"claude_code_.*\",service_name=~\"claude-code|claude-code-desktop\"}))", "legendFormat": "Claude"}
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(tlast_over_time({__name__=~\"codex_.*\",service_name=\"codex_cli_rs\"}[30d]))", "legendFormat": "Codex"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(tlast_over_time({__name__=~\"claude_code_.*\",service_name=~\"claude-code|claude-code-desktop\"}[30d]))", "legendFormat": "Claude"}
       ]
     },
     {

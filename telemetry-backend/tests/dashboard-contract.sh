@@ -126,7 +126,7 @@ check_numeric_stats "$health"
 check_titles "$health" \
   'OTLP coverage boundary' 'Machines not seen on target version' \
   'Inactive for more than 24 hours' 'Inactive for more than 48 hours' \
-  'Native metrics freshness' 'Stale installations' \
+  'Native metric sample age' 'Stale installations' \
   'Active installations by version' 'Active installations by harness and OS'
 
 health_path=$dashboard_dir/$health
@@ -157,9 +157,11 @@ jq -e '
   fail "$health must expose a labeled target_version with default v1.2.0"
 
 jq -e '
-  .panels[] | select(.title == "Native metrics freshness") |
+  .panels[] | select(.title == "Native metric sample age") |
   .datasource.type == "prometheus" and .datasource.uid == "victoriametrics" and
-  .description == "Seconds since the latest native metric sample for each documented exporter." and
+  (.description | contains("client-provided sample timestamp")) and
+  (.description | contains("previous 30 days")) and
+  (.description | contains("clock skew or replay")) and
   .fieldConfig.defaults.unit == "s" and
   .options.colorMode == "none" and
   (.targets | length == 2) and
@@ -167,12 +169,12 @@ jq -e '
     .datasource.type == "prometheus" and .datasource.uid == "victoriametrics") and
   any(.targets[];
     .legendFormat == "Codex" and
-    .expr == "time() - max(timestamp(codex_tool_call_total{service_name=\"codex_cli_rs\"}))") and
+    .expr == "time() - max(tlast_over_time({__name__=~\"codex_.*\",service_name=\"codex_cli_rs\"}[30d]))") and
   any(.targets[];
     .legendFormat == "Claude" and
-    .expr == "time() - max(timestamp(claude_code_session_count_total{service_name=~\"claude-code|claude-code-desktop\"}))")
+    .expr == "time() - max(tlast_over_time({__name__=~\"claude_code_.*\",service_name=~\"claude-code|claude-code-desktop\"}[30d]))")
 ' "$health_path" >/dev/null ||
-  fail "$health native freshness must use the approved neutral VictoriaMetrics queries"
+  fail "$health native sample age must use the approved 30-day namespace queries"
 
 jq -e '
   [
@@ -351,7 +353,7 @@ done
 overview=native-agent-metrics-overview.json
 check_common "$overview" native-agent-metrics-overview victoriametrics
 check_titles "$overview" \
-  'Signal availability' 'Metrics freshness' 'Top-level sessions per hour' 'Tokens processed per hour' \
+  'Signal availability' 'Native metric sample age' 'Top-level sessions per hour' 'Tokens processed per hour' \
   'Tokens by model and type' 'Observed client versions'
 
 overview_path=$dashboard_dir/$overview
@@ -374,7 +376,7 @@ jq -e '
 jq -e '
   (.panels[] | select(.title == "Signal availability")
     | .gridPos == {"h": 8, "w": 24, "x": 0, "y": 0}) and
-  (.panels[] | select(.title == "Metrics freshness")
+  (.panels[] | select(.title == "Native metric sample age")
     | .gridPos == {"h": 7, "w": 12, "x": 0, "y": 8}) and
   (.panels[] | select(.title == "Top-level sessions per hour")
     | .gridPos == {"h": 7, "w": 12, "x": 12, "y": 8}) and
@@ -392,6 +394,22 @@ jq -e '
   any(.panels[].targets[]?; .expr | contains("service_name=~\"claude-code|claude-code-desktop\"")) and
   all(.panels[].targets[]?; (.expr | contains("agent_harness")) | not)
 ' "$overview_path" >/dev/null || fail "$overview must classify Codex and Claude without agent_harness"
+
+jq -e '
+  .panels[] | select(.title == "Native metric sample age") |
+  (.description | contains("client-provided sample timestamp")) and
+  (.description | contains("previous 30 days")) and
+  (.description | contains("clock skew or replay")) and
+  .fieldConfig.defaults.unit == "s" and
+  (.targets | length == 2) and
+  any(.targets[];
+    .legendFormat == "Codex" and
+    .expr == "time() - max(tlast_over_time({__name__=~\"codex_.*\",service_name=\"codex_cli_rs\"}[30d]))") and
+  any(.targets[];
+    .legendFormat == "Claude" and
+    .expr == "time() - max(tlast_over_time({__name__=~\"claude_code_.*\",service_name=~\"claude-code|claude-code-desktop\"}[30d]))")
+' "$overview_path" >/dev/null ||
+  fail "$overview native sample age must use the approved 30-day namespace queries"
 
 jq -e '
   ["Top-level sessions per hour", "Tokens processed per hour"] as $titles
