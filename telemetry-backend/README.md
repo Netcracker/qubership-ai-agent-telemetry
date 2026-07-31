@@ -150,7 +150,7 @@ harnesses that might export OTLP metrics.
 | Harness | Hook events | Native metrics | Validation | APM |
 | --- | --- | --- | --- | --- |
 | Codex | Supported | Supported | Live pilot and backend fixture | Supported |
-| Claude Code | Supported | Supported | Backend fixture | Supported |
+| Claude Code | Supported | Supported | Live pilot and backend fixture | Supported |
 | Cursor | Supported | Not documented | Existing hook coverage | Supported |
 | Cline | Not supported | Supported | Backend fixture | Not supported |
 
@@ -159,9 +159,8 @@ It does not validate a client binary, configuration syntax, environment variable
 export behavior.
 
 `Live pilot` means that an actual client exported metrics to the deployed backend.
-The current pilot covers Codex CLI `0.146.0`, observed on July 30, 2026. Claude Code and Cline onboarding is
-documentation-derived until a version-pinned
-client integration test or recorded live pilot is available.
+The current pilots cover Codex CLI `0.146.0` and Claude Code `2.1.220`, observed on July 30, 2026. Cline onboarding is
+documentation-derived until a version-pinned client integration test or recorded live pilot is available.
 
 ### Native metrics and hook telemetry
 
@@ -169,90 +168,9 @@ Native exporters provide vendor counters and histograms. `ai-agent-telemetry` ho
 command, repository, and machine events. One signal does not replace the other: native metrics describe the vendor's
 runtime behavior, while hooks capture repository-aware activity.
 
-The released `ai-agent-telemetry` binary is sufficient for hook telemetry because it does not configure native
-exporters. Configure a native exporter separately only when you want its metrics.
-
-### Codex metrics-only
-
-Add the following block to the user-level `~/.codex/config.toml`. Replace both placeholders with the remote Caddy
-address and the ingest token.
-
-```toml
-[otel]
-environment = "prod"
-exporter = "none"
-trace_exporter = "none"
-log_user_prompt = false
-metrics_exporter = { otlp-http = { endpoint = "https://<SITE_ADDRESS>/v1/metrics", protocol = "binary", headers = { Authorization = "Bearer <INGEST_TOKEN>" } } }
-```
-
-If `~/.codex/config.toml` already contains an `[otel]` table, merge these settings into that table rather than adding
-a second table. Fully restart Codex, run a turn, then verify that `codex_thread_started_total` appears in the Codex
-dashboard or a VictoriaMetrics query.
-
-This configuration exports metrics without exporting Codex logs, traces, or user prompts. Codex does not expand
-environment variables in OTLP header values, so the token is plaintext in `config.toml`. Restrict the file to the
-user account and rotate the shared ingest token if the file is exposed.
-
-Limit the pilot to one Codex installation. Native Codex metrics do not include a stable producer identifier, so
-cumulative counters from installations with identical resource labels can collide in the same time series. Add a
-producer-identity design before enabling native metrics for additional installations.
-
-### Claude Code metrics-only
-
-Claude Code includes an anonymous installation-scoped `user.id` in every telemetry export. OAuth authentication can
-also include `user.email` plus organization and account attributes. This deployment has no Collector privacy
-processor, so do not configure this exporter unless the receiving telemetry data is acceptable under your privacy
-policy.
-
-Set these variables in the shell that starts Claude Code, replace the placeholders, and then start the client:
-
-```bash
-export CLAUDE_CODE_ENABLE_TELEMETRY=1
-export OTEL_METRICS_EXPORTER=otlp
-export OTEL_LOGS_EXPORTER=none
-export OTEL_TRACES_EXPORTER=none
-export OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=http/protobuf
-export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://<SITE_ADDRESS>/v1/metrics
-export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <INGEST_TOKEN>'
-export OTEL_METRICS_INCLUDE_SESSION_ID=false
-export OTEL_METRICS_INCLUDE_VERSION=true
-claude
-```
-
-`OTEL_METRICS_INCLUDE_SESSION_ID=false` avoids per-session high-cardinality labels. It reduces privacy exposure,
-storage cost, and query cardinality.
-
-The default metrics export interval is 60 seconds. Run `claude --debug` to expose export failures when the expected
-metrics do not arrive.
-
-### Cursor
-
-As of July 30, 2026, public Cursor documentation has no documented native OTLP metrics exporter. Use the existing
-hook telemetry for Cursor activity. It remains available in VictoriaLogs and can feed event-derived dashboard panels.
-
-### Cline
-
-Enable telemetry and the OTLP metrics exporter in the Cline dashboard's Remote Configuration. Set the metrics endpoint
-to `https://<SITE_ADDRESS>/v1/metrics`, use `http/protobuf`, and provide the ingest bearer header. Environment
-overrides take precedence over Remote Configuration, but Cline documents only `console` and `otlp` for its logs
-exporter. It does not document a `none` value, so an environment-only setup cannot guarantee metrics-only export.
-
-An administrator must disable logs in Remote Configuration before onboarding Cline.
-Start VS Code once with the following command and use the Developer Tools Console to verify the effective exporters.
-
-Verify the effective exporters: a metrics exporter must be present and a logs exporter must be absent.
-
-```bash
-TEL_DEBUG_DIAGNOSTICS=true code .
-```
-
-If a logs exporter appears, stop onboarding until Remote Configuration is corrected. Do not invent a native Cline
-metric name or a stable `service.name`; the backend fixture proves only backend compatibility.
-
-Cline is not an accepted `--harnesses` target or a first-class APM target.
-
-GitHub Copilot CLI is a documented native-OTLP client, but it remains outside this PR and the support matrix.
+The backend accepts, stores, and visualizes supported native OTLP metrics, but this release does not configure harness
+exporters. The `ai-agent-telemetry` lifecycle installer configures hook telemetry only. Follow
+[Native OTLP onboarding](native-otlp-onboarding.md) to opt in manually, verify delivery, or remove the configuration.
 
 ## Connect another Grafana through Caddy
 
