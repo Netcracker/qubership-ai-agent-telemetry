@@ -79,7 +79,7 @@
      "showLegend": false
     }
    },
-   "description": "UTC calendar-day count of unique machine.id installations that sent telemetry."
+   "description": "UTC calendar-day count of unique machine.id installations that sent telemetry. The default range contains complete UTC days; with a custom range, edge buckets may be partial."
   },
   {
    "id": 3,
@@ -132,7 +132,7 @@
      "showLegend": false
     }
    },
-   "description": "UTC calendar-day count of normalized repositories, excluding events with missing remotes."
+   "description": "UTC calendar-day count of normalized repositories, excluding events with missing remotes. The default range contains complete UTC days; with a custom range, edge buckets may be partial."
   },
   {
    "id": 4,
@@ -185,7 +185,7 @@
      "showLegend": false
     }
    },
-   "description": "UTC calendar-day count of unique (agent, session.id) sessions with observed telemetry."
+   "description": "UTC calendar-day count of unique (agent, session.id) sessions with observed telemetry. The default range contains complete UTC days; with a custom range, edge buckets may be partial."
   },
   {
    "id": 5,
@@ -1400,10 +1400,10 @@
   ]
  },
  "time": {
-  "from": "now-30d",
-  "to": "now"
+  "from": "now-30d/d",
+  "to": "now/d"
  },
- "timezone": "",
+ "timezone": "utc",
  "title": "Adoption overview",
  "uid": "ai-agent-telemetry-adoption",
  "version": 3

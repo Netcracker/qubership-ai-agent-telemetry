@@ -294,6 +294,23 @@ jq -e '
   fail "$adoption daily panels must use selftest-free UTC calendar days"
 
 jq -e '
+  (.timezone == "utc") and
+  (.time.from == "now-30d/d") and
+  (.time.to == "now/d") and
+  ([
+    "Active installations per day",
+    "Active repositories per day",
+    "Sessions observed per day"
+  ] as $titles
+  | [.panels[] | select(.title as $title | $titles | index($title))]
+  | all(.description |
+      contains("UTC") and
+      contains("custom range") and
+      contains("edge buckets may be partial")))
+' "$dashboard_dir/$adoption" >/dev/null ||
+  fail "$adoption must default to complete UTC days and disclose partial custom-range edges"
+
+jq -e '
   .panels[] | select(.title == "Active repositories per day") |
   .targets[0].expr as $expr |
   ($expr | contains("repo.remote:*")) and
