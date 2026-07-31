@@ -120,8 +120,8 @@ The overview compares the safe intersection of Codex and Claude Code signals.
 It contains:
 
 - native metric sample age by harness;
-- top-level sessions started per trailing hour;
-- tokens processed per trailing hour;
+- average top-level sessions per hour over the complete query interval;
+- average tokens processed per hour over the complete query interval;
 - token usage by harness, model, and source-native token type for the selected
   period;
 - observed client versions; and

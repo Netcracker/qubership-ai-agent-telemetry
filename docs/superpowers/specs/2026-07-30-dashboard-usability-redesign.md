@@ -20,7 +20,7 @@ The redesign covers these provisioned dashboards:
 
 - Prefer time series over header stats when the trend is more useful than the latest aggregate.
 - Name the aggregation window in the panel title and description.
-- Use fixed one-hour windows and a minimum one-hour query interval for hourly activity panels.
+- Use complete dynamic query windows with a minimum one-hour step and normalize count panels to an hourly average.
 - Display token counts as whole locale-formatted numbers with digit grouping.
 - Use matrices for two-dimensional token breakdowns.
 - Preserve zero as a valid measurement and distinguish it from missing telemetry.
@@ -37,8 +37,19 @@ inactive or active installation cohorts, target-version adoption, distributions,
 
 ### Hourly activity
 
-Each hourly point uses `increase(<counter>[1h])`. The query step is at least one hour. A point therefore represents the
-activity observed during the trailing hour, not an instantaneous per-second rate.
+Grafana calculates `$__interval` from the selected range and panel resolution. Every activity query sets a minimum
+one-hour step but uses the actual `$__interval` as its `increase()` window, so consecutive points cover the complete
+range without skipped intervals.
+
+Count panels use:
+
+```promql
+sum(increase(<counter>[$__interval])) * 3600000 / $__interval_ms
+```
+
+The result is the average count per hour during the query interval. At a one-hour step, it is the count observed during
+that hour. At a six-hour step, it is the six-hour increase divided by six, not the increase from only the final hour.
+Ratio panels use the same `$__interval` window for numerator and denominator without hourly normalization.
 
 ### Daily adoption activity
 
@@ -129,8 +140,8 @@ The dashboard answers: "Which native agent signals are available, and how much a
 - Keep Signal availability as a descriptive support matrix.
 - Replace Metrics freshness with Native metric sample age and disclose its client-timestamp semantics and fixed
   30-day lookback.
-- Replace Top-level sessions started with Top-level sessions per hour.
-- Replace Token usage over time with Tokens processed per hour.
+- Replace Top-level sessions started with Average top-level sessions per hour.
+- Replace Token usage over time with Average tokens processed per hour.
 - Replace Tokens by model and type with a matrix:
   - rows: `Harness · Model`;
   - columns: source-native token-type values;
@@ -153,15 +164,15 @@ The dashboard answers: "How is Codex being used, and are its tools, model calls,
 
 Replace the six aggregate stats and the redundant Tool and MCP activity panel with:
 
-- Sessions and turns per hour;
-- Tool and MCP calls per hour;
-- Tool failure ratio per hour;
-- Tokens processed per hour.
+- Average sessions and turns per hour;
+- Average tool and MCP calls per hour;
+- Tool failure ratio per query interval;
+- Average tokens processed per hour.
 
-The failure ratio uses a one-hour numerator and denominator. Its zero value must be derived from an existing total-call
-series rather than an unconditional `vector(0)`.
+The failure ratio uses the same dynamic query interval for its numerator and denominator. Its zero value must be
+derived from an existing total-call series rather than an unconditional `vector(0)`.
 
-| Total calls in the trailing hour | Failed calls in the trailing hour | Result |
+| Total calls in the query interval | Failed calls in the query interval | Result |
 | --- | --- | --- |
 | Greater than zero | Greater than zero | `failed / total` |
 | Greater than zero | Zero or absent failure series | `0%` |
@@ -249,7 +260,8 @@ Queries must remain compatible with the deployed VictoriaLogs version. The stale
 
 Contract tests must verify:
 
-- one-hour windows and minimum query intervals for hourly panels;
+- dynamic `$__interval` windows, hourly normalization for count panels, and a minimum one-hour step;
+- identical dynamic windows for failure-ratio numerator and denominator;
 - matrix transformations and exact-count number formatting;
 - the absence of a Time column from Observed client versions;
 - exclusion of `agent="selftest"` from every hook-derived adoption and health population;
