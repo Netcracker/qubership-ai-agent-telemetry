@@ -17,7 +17,7 @@ an exhaustive inventory of every agent harness with an OTLP exporter.
 | Harness | Hook events | Native metrics | Validation in this PR | APM |
 | --- | --- | --- | --- | --- |
 | Codex | Supported | Supported | Live pilot and backend fixture | Supported |
-| Claude Code | Supported | Supported | Backend fixture | Supported |
+| Claude Code | Supported | Supported | Live pilot and backend fixture | Supported |
 | Cursor | Supported | Not documented | Existing hook coverage | Supported |
 | Cline | Not supported | Supported | Backend fixture | Not supported |
 
@@ -31,9 +31,9 @@ binary, client configuration syntax, environment variable support, header
 encoding, or actual export behavior.
 
 `Live pilot` means that an actual client exported metrics to the deployed
-backend. The current pilot covers Codex CLI `0.146.0`, observed on July 30,
-2026. Claude Code and Cline onboarding remains documentation-derived until a
-version-pinned client integration test or recorded live pilot is added.
+backend. The pilots cover Codex CLI `0.146.0` and Claude Code `2.1.220`,
+observed on July 30, 2026. Cline onboarding remains documentation-derived
+until a version-pinned client integration test or recorded live pilot is added.
 
 ## Architecture
 
@@ -279,20 +279,27 @@ Source: [Microsoft APM target registry][apm-targets].
 
 ## Documentation changes
 
-The backend README gains:
+The backend README describes only backend operation:
 
-1. A support matrix that uses the capability definitions in this design.
-2. Metrics-only setup instructions for Codex and Claude Code.
-3. Conditional Cline setup instructions with an effective-configuration check.
-4. A Cursor note that points readers to existing hook-based telemetry.
-5. Privacy and identity caveats next to the affected client configuration.
-6. A statement that Cline is not an accepted `--harnesses` or APM target.
-7. An explanation of the difference between native metrics and the repository's
-   hook telemetry.
-8. Links to the native metrics overview and Codex deep-dive dashboards.
+1. The native-metrics support matrix and its validation levels.
+2. The difference between native metrics and hook telemetry.
+3. The explicit limitation that this PR does not configure harness exporters.
+4. Links to the native metrics overview and Codex deep-dive dashboards.
+5. A link to the separate native OTLP onboarding document.
+
+The separate onboarding document contains:
+
+1. Metrics-only setup instructions for Codex and Claude Code.
+2. Conditional Cline setup instructions with an effective-configuration check.
+3. A Cursor note that points readers to existing hook-based telemetry.
+4. Privacy and identity caveats next to the affected client configuration.
+5. A statement that Cline is not an accepted `--harnesses` or APM target.
+6. Verification steps for each configured harness.
 
 Examples use placeholders for the server address and ingest token. They do not
-enable prompts, logs, tool content, or traces.
+enable prompts, logs, tool content, or traces. The document states that users
+must configure native OTLP export manually. Automatic harness configuration is
+reserved for a follow-up installer change.
 
 ## Test design
 
@@ -360,6 +367,7 @@ configuration works against a specific client release.
 ## Non-goals
 
 - Adding a Collector privacy processor.
+- Configuring native OTLP exporters through the lifecycle installer.
 - Adding traces or native harness logs.
 - Renaming or copying vendor metrics into a common schema at ingestion.
 - Adding VictoriaMetrics recording rules.

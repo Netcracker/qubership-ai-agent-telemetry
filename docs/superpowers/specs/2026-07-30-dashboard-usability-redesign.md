@@ -96,6 +96,16 @@ native OTLP metrics do not expose a shared installation identifier.
 The health dashboard must state this limitation. It may show native-metric freshness by harness, but it must not label
 freshness or the presence of a harness-wide signal as the number or percentage of configured installations.
 
+Freshness is the age of the newest matching native metric sample received during the previous 30 days. The query uses
+the complete documented metric namespace for each harness rather than one representative metric:
+
+- Codex: `codex_.*` with `service_name="codex_cli_rs"`;
+- Claude Code: `claude_code_.*` with `service_name=~"claude-code|claude-code-desktop"`.
+
+The 30-day lookback is fixed and ignores the global Grafana time range. A harness with no matching sample during that
+window displays No data. The backend retention remains 365 days; the shorter freshness window is an operational
+default, not a storage limit.
+
 ## Native agent metrics overview
 
 The dashboard answers: "Which native agent signals are available, and how much activity did each harness produce?"
@@ -103,7 +113,8 @@ The dashboard answers: "Which native agent signals are available, and how much a
 ### Panels
 
 - Keep Signal availability as a descriptive support matrix.
-- Keep Metrics freshness and clarify that it reports the last received native signal for each harness.
+- Keep Metrics freshness and clarify that it reports the age of the last native signal received during the previous
+  30 days for each harness.
 - Replace Top-level sessions started with Top-level sessions per hour.
 - Replace Token usage over time with Tokens processed per hour.
 - Replace Tokens by model and type with a matrix:
@@ -231,6 +242,7 @@ Contract tests must verify:
 - UTC calendar-day bucketing and unique-key definitions for all three daily adoption panels;
 - repository normalization across canonical, SSH, HTTPS, `.git`, case, whitespace, and trailing-slash variants;
 - the presence of the target-version variable and the 24-hour and 48-hour stale definitions;
+- fixed 30-day native-metric freshness queries across each supported harness namespace;
 - selection of all stale-table fields from one latest event per `machine.id`, including missing-field display rules;
 - the 24-hour population for active-installation distributions;
 - zero and no-data failure-ratio states using deterministic metric fixtures;
