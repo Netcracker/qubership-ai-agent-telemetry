@@ -9,6 +9,9 @@ on:
     paths:
       - renovate.json
       - .github/workflows/renovate-config-lint.yaml
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
 
 permissions: read-all
 
