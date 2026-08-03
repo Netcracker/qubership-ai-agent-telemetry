@@ -13,17 +13,15 @@ on:
     - cron: "17 6 * * 1"
   workflow_dispatch: {}
 
-permissions:
-  contents: read
-
-env:
-  # renovate: datasource=docker depName=renovate/renovate versioning=docker
-  RENOVATE_VERSION: 43.280.4
-
 jobs:
   validate-renovate-config:
     name: Validate renovate.json
     runs-on: ubuntu-latest
+    container:
+      image: renovate/renovate:43.285.4@sha256:bd7d8f646bf9d22aea995eaad06ec26c3f4fd4efbc36826024f5653006c9e7b1
+      options: --user 0
+    permissions:
+      contents: read
     steps:
       - name: Checkout sources
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -31,25 +29,21 @@ jobs:
           persist-credentials: false
 
       - name: Validate renovate.json
-        run: docker run --rm -v "$PWD":/work -w /work "renovate/renovate:${RENOVATE_VERSION}" renovate-config-validator --strict --no-global renovate.json
+        run: renovate-config-validator --strict --no-global renovate.json
 
       - name: Resolve shared Renovate presets
+        shell: bash
         env:
           GITHUB_COM_TOKEN: ${{ github.token }}
+          LOG_FORMAT: json
+          LOG_LEVEL: warn
         run: |
           set -o pipefail
           log_file="$(mktemp)"
           trap 'rm -f "$log_file"' EXIT
           validation_filter='fromjson? | select(.err.validationError? or .msg == "Repository has invalid config")'
 
-          docker run --rm \
-            -e GITHUB_COM_TOKEN \
-            -e LOG_FORMAT=json \
-            -e LOG_LEVEL=warn \
-            -v "$PWD":/work \
-            -w /work \
-            "renovate/renovate:${RENOVATE_VERSION}" \
-            renovate --platform=local --dry-run=extract 2>&1 | tee "$log_file"
+          renovate --platform=local --dry-run=extract 2>&1 | tee "$log_file"
 
           if jq -R -e "$validation_filter" "$log_file" >/dev/null; then
             echo "::error::Renovate could not resolve the repository configuration"
