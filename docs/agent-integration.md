@@ -125,14 +125,20 @@ the tool response.
 
 ## Cursor
 
-**Hooks:** `afterAgentResponse` and `afterMCPExecution`.
+**Hooks:** `afterAgentResponse`, `subagentStop`, and `afterMCPExecution`.
 
 Like Codex, Cursor has no skill-activation event. The `afterAgentResponse` hook names
-the transcript in `transcript_path`. Each line is a message with a `message.content`
-array, and two content shapes count as a skill load:
+the parent transcript in `transcript_path`; the CLI also scans direct
+`subagents/*.jsonl` children as a fallback for Cursor versions that omit a subagent
+transcript path. `subagentStop.agent_transcript_path`, when present, is scanned directly.
+Each file has its own byte offset, so repeated hooks do not replay a skill and the same
+skill used by separate parent or subagent transcripts remains separate telemetry.
 
-- a `tool_use` entry named `Read` whose `input.path` matches a `skills/(<group>/)*<name>/SKILL.md`
-  path — an automatic skill load;
+Each line is a message with a `message.content` array, and two content shapes count as a
+skill load:
+
+- a `tool_use` entry named `Read` or `ReadFile` whose `input.path` matches a
+  `skills/(<group>/)*<name>/SKILL.md` path — an automatic skill load;
 - a `text` entry that contains a `<manually_attached_skills>` block, where each
   `Skill Name: <name>` line is a manually attached skill.
 
@@ -141,8 +147,10 @@ array, and two content shapes count as a skill load:
 ^Skill Name:\s*(\S+)
 ```
 
-Unlike Codex, the transcript carries no git data, so the repository remote is resolved
-from the hook's `workspace_roots`. The manual-block scan is gated on the block being
+Unlike Codex, the transcript carries no git data. The CLI uses operation paths in each
+transcript to resolve one unambiguous Git root within `workspace_roots`; otherwise it
+leaves repository identity empty. The repository allow policy still determines whether an
+unattributed event may be delivered. The manual-block scan is gated on the block being
 present, not bounded to it, so a stray `Skill Name:` line elsewhere in the same message
 would also match — the cost is a spurious name, never a missed turn.
 
@@ -164,6 +172,9 @@ outcome, so the CLI omits the server and records `unknown`. It never inspects `r
       { "command": "ai-agent-telemetry ingest --agent=cursor" }
     ],
     "afterMCPExecution": [
+      { "command": "ai-agent-telemetry ingest --agent=cursor" }
+    ],
+    "subagentStop": [
       { "command": "ai-agent-telemetry ingest --agent=cursor" }
     ]
   }

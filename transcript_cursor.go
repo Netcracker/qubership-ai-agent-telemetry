@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +36,9 @@ func scanCursorTranscriptEvidence(r io.Reader, startOffset int64) cursorTranscri
 	var pos int64
 	for {
 		line, err := br.ReadString('\n')
+		if err == io.EOF && len(line) > 0 && !strings.HasSuffix(line, "\n") {
+			break // wait for Cursor to finish the final JSONL record
+		}
 		if len(line) > 0 {
 			lineStart := pos
 			pos += int64(len(line))
@@ -80,15 +84,19 @@ func processCursorEvidenceLine(line string, result *cursorTranscriptScan, skills
 		switch c.Type {
 		case "tool_use":
 			if path, ok := cursorInputString(c.Input, "path"); ok {
-				if name, isSkill := skillNameInPath(path); c.Name == "Read" && isSkill {
-					addSkill(name)
+				if name, isSkill := skillNameInPath(path); isSkill {
+					if cursorSkillReadTool(c.Name) {
+						addSkill(name)
+					}
 				} else {
 					addPath(path)
 				}
 			}
 			for _, key := range cursorPathInputKeys[1:] {
 				if path, ok := cursorInputString(c.Input, key); ok {
-					addPath(path)
+					if _, isSkill := skillNameInPath(path); !isSkill {
+						addPath(path)
+					}
 				}
 			}
 		case "text":
@@ -100,6 +108,10 @@ func processCursorEvidenceLine(line string, result *cursorTranscriptScan, skills
 			}
 		}
 	}
+}
+
+func cursorSkillReadTool(name string) bool {
+	return name == "Read" || name == "ReadFile"
 }
 
 func cursorInputString(input map[string]json.RawMessage, key string) (string, bool) {
@@ -114,14 +126,15 @@ func cursorInputString(input map[string]json.RawMessage, key string) (string, bo
 	return value, true
 }
 
-func cursorEvidenceRepo(paths, workspaceRoots []string) string {
+func cursorEvidenceRepo(paths, workspaceRoots []string, remote remoteResolver) string {
 	roots := make([]string, 0, len(workspaceRoots))
 	for _, root := range workspaceRoots {
 		if root != "" {
 			roots = append(roots, filepath.Clean(root))
 		}
 	}
-	repositories := map[string]bool{}
+	repositories := make([]string, 0)
+	seenRepositories := map[string]bool{}
 	for _, candidate := range paths {
 		path, ok := cursorEvidencePath(candidate, roots)
 		if !ok {
@@ -135,15 +148,31 @@ func cursorEvidenceRepo(paths, workspaceRoots []string) string {
 		if root == "" || !cursorPathWithinAnyRoot(root, roots) {
 			continue
 		}
-		repositories[root] = true
+		if !seenRepositories[root] {
+			seenRepositories[root] = true
+			repositories = append(repositories, root)
+		}
 	}
-	if len(repositories) != 1 {
+	if len(repositories) == 1 {
+		return repositories[0]
+	}
+	if len(repositories) < 2 {
 		return ""
 	}
-	for root := range repositories {
-		return root
+
+	commonRemote := ""
+	for _, root := range repositories {
+		normalized := normalizeRawRemote(resolveRemote(remote, root))
+		if normalized == "" {
+			return ""
+		}
+		if commonRemote == "" {
+			commonRemote = normalized
+		} else if normalized != commonRemote {
+			return ""
+		}
 	}
-	return ""
+	return repositories[0]
 }
 
 func cursorEvidencePath(candidate string, workspaceRoots []string) (string, bool) {
@@ -211,6 +240,18 @@ func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteRes
 	if p.TranscriptPath == "" {
 		return nil
 	}
+	events := cursorTranscriptEventsForPath(p, offsets, remote, now)
+	for _, transcriptPath := range cursorDirectSubagentTranscriptPaths(p.TranscriptPath) {
+		child := p
+		child.TranscriptPath = transcriptPath
+		events = append(events, cursorTranscriptEventsForPath(child, offsets, remote, now)...)
+	}
+	return events
+}
+
+func cursorTranscriptEventsForPath(
+	p cursorPayload, offsets *OffsetStore, remote remoteResolver, now time.Time,
+) []TelemetryEvent {
 	f, err := os.Open(p.TranscriptPath)
 	if err != nil {
 		return nil
@@ -218,9 +259,15 @@ func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteRes
 	defer func() { _ = f.Close() }()
 
 	var offset int64
-	key := "cursor:" + p.SessionID
+	key := cursorTranscriptOffsetKey(p.SessionID, p.TranscriptPath)
 	useOffset := offsets != nil && p.SessionID != ""
 	if useOffset {
+		release, lockErr := offsets.lock(key)
+		if lockErr != nil {
+			return nil
+		}
+		defer release()
+
 		offset = offsets.Load(key)
 		if fi, serr := f.Stat(); serr == nil && offset > fi.Size() {
 			offset = 0 // file rotated or truncated since the last run
@@ -233,7 +280,7 @@ func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteRes
 		_ = offsets.Save(key, scan.End)
 	}
 
-	repoDir := cursorEvidenceRepo(scan.Paths, p.WorkspaceRoots)
+	repoDir := cursorEvidenceRepo(scan.Paths, p.WorkspaceRoots, remote)
 	rem := resolveRemote(remote, repoDir)
 	events := make([]TelemetryEvent, 0, len(scan.Skills))
 	for _, name := range scan.Skills {
@@ -243,6 +290,19 @@ func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteRes
 		}
 	}
 	return events
+}
+
+func cursorDirectSubagentTranscriptPaths(parentTranscriptPath string) []string {
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(parentTranscriptPath), "subagents", "*.jsonl"))
+	if err != nil {
+		return nil
+	}
+	return paths
+}
+
+func cursorTranscriptOffsetKey(sessionID, transcriptPath string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(transcriptPath)))
+	return fmt.Sprintf("cursor:%s:%x", sessionID, sum)
 }
 
 // cursorTranscriptEventsAuto wires cursorTranscriptEvents to the default offset

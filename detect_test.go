@@ -393,6 +393,41 @@ func TestDetectRoutesExistingSkill(t *testing.T) {
 	}
 }
 
+func TestDetectCursorSubagentStopTranscript(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	transcript := filepath.Join(t.TempDir(), "subagent.jsonl")
+	line := `{"message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/demo/SKILL.md"}}]}}`
+	if err := os.WriteFile(transcript, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdin, err := json.Marshal(map[string]any{
+		"hook_event_name":       "subagentStop",
+		"session_id":            "parent-session",
+		"workspace_roots":       []string{"/repo"},
+		"agent_transcript_path": transcript,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := detect("cursor", stdin, func(string) string { return "" }, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	if len(events) != 1 || skillName(t, events[0]) != "demo" {
+		t.Fatalf("events = %#v, want one demo skill", events)
+	}
+	events, err = detect("cursor", stdin, func(string) string { return "" }, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("second detect: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("second detect = %#v, want no replay", events)
+	}
+}
+
 func TestDetectRejectsUnsupportedTranscriptHooksWithoutAdvancingOffsets(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -525,6 +560,82 @@ func TestDetectCursorFromTranscript(t *testing.T) {
 	}
 	if events[0].RepoRemote != "" {
 		t.Fatalf("remote = %q", events[0].RepoRemote)
+	}
+}
+
+func TestDetectCursorDefersSubagentWithoutWorkspaceRoots(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+
+	aggregate := t.TempDir()
+	repo := filepath.Join(aggregate, "repo")
+	initCursorTestRepo(t, repo)
+	parent := filepath.Join(aggregate, "parent.jsonl")
+	child := filepath.Join(aggregate, "subagents", "worker.jsonl")
+	if err := os.MkdirAll(filepath.Dir(child), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(parent, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	childLine, err := json.Marshal(map[string]any{
+		"message": map[string]any{
+			"content": []map[string]any{
+				{"type": "tool_use", "name": "ReadFile", "input": map[string]any{
+					"path": "/home/user/.agents/skills/review/SKILL.md",
+				}},
+				{"type": "tool_use", "name": "ReadFile", "input": map[string]any{
+					"path": filepath.Join(repo, "src", "main.go"),
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(child, append(childLine, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stopPayload, err := json.Marshal(map[string]any{
+		"hook_event_name":      "subagentStop",
+		"session_id":           "c1",
+		"agent_transcript_path": child,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := detect("cursor", stopPayload, func(string) string {
+		t.Fatal("subagentStop without workspace roots must not resolve a remote")
+		return ""
+	}, fixedTime)
+	if err != nil {
+		t.Fatalf("detect subagentStop: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("subagentStop events = %#v, want none", events)
+	}
+
+	parentPayload, err := json.Marshal(map[string]any{
+		"hook_event_name": "afterAgentResponse",
+		"session_id":      "c1",
+		"workspace_roots": []string{aggregate},
+		"transcript_path": parent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err = detect("cursor", parentPayload, func(directory string) string {
+		if directory != repo {
+			t.Fatalf("remote resolved from %q, want %q", directory, repo)
+		}
+		return "git@github.com:Netcracker/repo.git"
+	}, fixedTime)
+	if err != nil {
+		t.Fatalf("detect afterAgentResponse: %v", err)
+	}
+	if len(events) != 1 || skillName(t, events[0]) != "review" || events[0].RepoDir != repo {
+		t.Fatalf("parent events = %#v, want attributed review skill", events)
 	}
 }
 
