@@ -48,7 +48,7 @@ service:
   pipelines:
     logs:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [otlphttp/victorialogs]
     metrics:
       receivers: [otlp]

@@ -278,7 +278,7 @@ jq -e '
     | ($expr | contains("format if (!agent:*) \"Unknown\" as agent")) and
       ($expr | contains("format if (!os.type:*) \"Unknown\" as os.type")))
 ' "$health_path" >/dev/null ||
-fail "$health active distributions must label missing dimensions as Unknown"
+  fail "$health active distributions must label missing dimensions as Unknown"
 
 # Native client versions use the OpenTelemetry resource label that both supported exporters emit.
 overview_path=$dashboard_dir/native-agent-metrics-overview.json

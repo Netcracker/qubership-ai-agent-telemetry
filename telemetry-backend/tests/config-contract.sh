@@ -35,6 +35,10 @@ metrics_pipeline=$(sed -n '/^    metrics:$/,/^    [a-z]/p' "$collector_config")
 printf '%s\n' "$metrics_pipeline" |
   grep -Fq 'processors: [memory_limiter, resource/privacy, attributes/privacy, deltatocumulative, batch]' ||
   fail 'metrics pipeline must limit memory, remove sensitive attributes, convert delta metrics, and batch them'
+logs_pipeline=$(sed -n '/^    logs:$/,/^    [a-z]/p' "$collector_config")
+printf '%s\n' "$logs_pipeline" |
+  grep -Fq 'processors: [memory_limiter, batch]' ||
+  fail 'logs pipeline must limit memory before batching events'
 grep -Fq 'max_streams: 100000' "$collector_config" ||
   fail 'delta-to-cumulative state must have a bounded stream count'
 grep -Fq 'limit_mib: 512' "$collector_config" ||
@@ -127,6 +131,8 @@ jq -e '.services.victoriametrics.command | index("-storage.maxDailySeries=200000
   fail 'VictoriaMetrics must bound daily series cardinality'
 jq -e '.services.victoriametrics.command | index("-storage.minFreeDiskSpaceBytes=1073741824") != null' "$rendered" >/dev/null ||
   fail 'VictoriaMetrics must reserve free disk space'
+jq -e '.services.victoriametrics.command | index("-selfScrapeInterval=30s") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must self-scrape operational metrics every 30 seconds'
 jq -e '(.services.grafana.build.context // "") | endswith("/telemetry-backend/grafana")' "$rendered" >/dev/null ||
   fail 'Grafana build context is missing'
 jq -e '.services.grafana.ports == null' "$rendered" >/dev/null || fail 'Grafana must not publish ports'
