@@ -598,8 +598,8 @@ func TestDetectCursorDefersSubagentWithoutWorkspaceRoots(t *testing.T) {
 	}
 
 	stopPayload, err := json.Marshal(map[string]any{
-		"hook_event_name":      "subagentStop",
-		"session_id":           "c1",
+		"hook_event_name":       "subagentStop",
+		"session_id":            "c1",
 		"agent_transcript_path": child,
 	})
 	if err != nil {
