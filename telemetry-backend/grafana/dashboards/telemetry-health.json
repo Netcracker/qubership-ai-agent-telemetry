@@ -95,7 +95,7 @@
       "title": "Active installations by version",
       "description": "Installations with hook activity during the trailing 24 hours, grouped by the latest observed version.",
       "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
-      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "locale", "decimals": 0}, "overrides": []},
+      "fieldConfig": {"defaults": {"displayName": "${__field.labels[\"service.version\"]}", "color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "locale", "decimals": 0}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
       "options": {"displayMode": "basic", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
       "targets": [
@@ -108,7 +108,7 @@
       "title": "Active installations by harness and OS",
       "description": "Installations with hook activity during the trailing 24 hours, grouped by the latest observed harness and operating system.",
       "datasource": {"type": "victoriametrics-logs-datasource", "uid": "victorialogs"},
-      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "locale", "decimals": 0}, "overrides": []},
+      "fieldConfig": {"defaults": {"displayName": "${__field.labels.agent} · ${__field.labels[\"os.type\"]}", "color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "locale", "decimals": 0}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
       "options": {"displayMode": "basic", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
       "targets": [

@@ -259,6 +259,19 @@ jq -e '
 
 jq -e '
   (.panels[] | select(.title == "Active installations by version")
+    | (.targets | length == 1) and
+      .targets[0].legendFormat == "{{service.version}}" and
+      .fieldConfig.defaults.displayName == "${__field.labels[\"service.version\"]}") and
+  (.panels[] | select(.title == "Active installations by harness and OS")
+    | (.targets | length == 1) and
+      .targets[0].legendFormat == "{{agent}} · {{os.type}}" and
+      .fieldConfig.defaults.displayName ==
+        "${__field.labels.agent} · ${__field.labels[\"os.type\"]}")
+' "$health_path" >/dev/null ||
+  fail "$health active distributions must preserve dataframe legends and set field display names"
+
+jq -e '
+  (.panels[] | select(.title == "Active installations by version")
     | .targets[0].expr | contains("format if (!service.version:*) \"Unknown\" as service.version")) and
   (.panels[] | select(.title == "Active installations by harness and OS")
     | .targets[0].expr as $expr
