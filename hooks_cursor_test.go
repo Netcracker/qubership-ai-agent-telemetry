@@ -41,6 +41,28 @@ func TestMergeCursorHookAddsCompleteManagedEventSet(t *testing.T) {
 	}
 }
 
+func TestMergeCursorHookAddsSubagentStop(t *testing.T) {
+	root := map[string]any{
+		"version": json.Number("1"),
+		"hooks": map[string]any{
+			"subagentStop": []any{map[string]any{"command": "user-hook"}},
+		},
+	}
+
+	if changed, err := mergeCursorHook(root); err != nil || !changed {
+		t.Fatalf("changed = %v, error = %v", changed, err)
+	}
+
+	got := root["hooks"].(map[string]any)["subagentStop"]
+	want := []any{
+		map[string]any{"command": "user-hook"},
+		canonicalCursorHook(),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("subagentStop = %#v, want %#v", got, want)
+	}
+}
+
 func TestInspectCursorHookRequiresCompleteManagedEventSet(t *testing.T) {
 	root := map[string]any{
 		"version": json.Number("1"),

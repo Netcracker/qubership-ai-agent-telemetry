@@ -32,6 +32,17 @@ func TestScanCursorTranscriptReadToolUse(t *testing.T) {
 	}
 }
 
+func TestScanCursorTranscriptReadFileSkillUse(t *testing.T) {
+	line := `{"role":"assistant","message":{"content":[` +
+		`{"type":"tool_use","name":"ReadFile","input":{"path":"/repo/.agents/skills/review/SKILL.md"}}` +
+		`]}}` + "\n"
+
+	skills, _ := scanCursorSkills(strings.NewReader(line), 0)
+	if len(skills) != 1 || skills[0] != "review" {
+		t.Fatalf("skills = %v, want [review]", skills)
+	}
+}
+
 func TestScanCursorTranscriptNestedSkillRead(t *testing.T) {
 	line := `{"role":"assistant","message":{"content":[` +
 		`{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/shipping/land-it/SKILL.md"}}` +
@@ -105,6 +116,7 @@ func TestScanCursorTranscriptParsesOperationPathFixture(t *testing.T) {
 func TestScanCursorTranscriptOnlyDetectsSkillsReadByReadTool(t *testing.T) {
 	line := `{"role":"assistant","message":{"content":[` +
 		`{"type":"tool_use","name":"ApplyPatch","input":{"path":"/aggregate/.cursor/skills/review/SKILL.md"}},` +
+		`{"type":"tool_use","name":"Write","input":{"file_path":"/aggregate/.agents/skills/format/SKILL.md"}},` +
 		`{"type":"tool_use","name":"Read","input":{"path":"/aggregate/.cursor/skills/validate/SKILL.md"}}` +
 		`]}}` + "\n"
 
@@ -112,8 +124,8 @@ func TestScanCursorTranscriptOnlyDetectsSkillsReadByReadTool(t *testing.T) {
 	if strings.Join(result.Skills, ",") != "validate" {
 		t.Fatalf("skills = %v, want [validate]", result.Skills)
 	}
-	if strings.Join(result.Paths, ",") != "/aggregate/.cursor/skills/review/SKILL.md" {
-		t.Fatalf("paths = %v, want non-Read skill path as operation evidence", result.Paths)
+	if len(result.Paths) != 0 {
+		t.Fatalf("paths = %v, want no skill-body paths as operation evidence", result.Paths)
 	}
 }
 
@@ -274,9 +286,16 @@ func TestCursorTranscriptEventsWithMultipleRepositoriesIsUnattributed(t *testing
 	stdin, _ := json.Marshal(map[string]any{
 		"session_id": "c1", "workspace_roots": []string{aggregate}, "transcript_path": transcript,
 	})
-	events := cursorTranscriptEvents(stdin, nil, func(string) string {
-		t.Fatal("remote resolver must not run for ambiguous repository evidence")
-		return ""
+	events := cursorTranscriptEvents(stdin, nil, func(directory string) string {
+		switch directory {
+		case repoA:
+			return "git@github.com:Netcracker/repo-a.git"
+		case repoB:
+			return "git@github.com:Netcracker/repo-b.git"
+		default:
+			t.Fatalf("remote resolved from %q, want one of the repositories", directory)
+			return ""
+		}
 	}, fixedTime)
 
 	if len(events) != 1 {
@@ -284,6 +303,62 @@ func TestCursorTranscriptEventsWithMultipleRepositoriesIsUnattributed(t *testing
 	}
 	if events[0].RepoDir != "" || events[0].RepoRemote != "" {
 		t.Fatalf("event repository = (%q, %q), want empty", events[0].RepoDir, events[0].RepoRemote)
+	}
+}
+
+func TestCursorTranscriptEventsGroupsRepositoriesWithSameNormalizedRemote(t *testing.T) {
+	aggregate := t.TempDir()
+	repoA := filepath.Join(aggregate, "repo-a")
+	repoB := filepath.Join(aggregate, "repo-b")
+	initCursorTestRepo(t, repoA)
+	initCursorTestRepo(t, repoB)
+
+	transcript := filepath.Join(aggregate, "session.jsonl")
+	line, err := json.Marshal(map[string]any{
+		"message": map[string]any{
+			"content": []map[string]any{
+				{"type": "tool_use", "name": "Read", "input": map[string]any{
+					"path": filepath.Join(aggregate, ".cursor", "skills", "review", "SKILL.md"),
+				}},
+				{"type": "tool_use", "name": "Read", "input": map[string]any{
+					"path": filepath.Join(repoA, "src", "a.go"),
+				}},
+				{"type": "tool_use", "name": "Read", "input": map[string]any{
+					"path": filepath.Join(repoB, "src", "b.go"),
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, append(line, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"session_id": "c1", "workspace_roots": []string{aggregate}, "transcript_path": transcript,
+	})
+
+	events := cursorTranscriptEvents(stdin, nil, func(directory string) string {
+		switch directory {
+		case repoA:
+			return "git@github.com:Netcracker/repo.git"
+		case repoB:
+			return "https://github.com/netcracker/repo.git"
+		default:
+			t.Fatalf("remote resolved from %q, want either repository", directory)
+			return ""
+		}
+	}, fixedTime)
+
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].RepoDir != repoA {
+		t.Fatalf("repo dir = %q, want %q", events[0].RepoDir, repoA)
+	}
+	if events[0].RepoRemote != "git@github.com:Netcracker/repo.git" {
+		t.Fatalf("repo remote = %q", events[0].RepoRemote)
 	}
 }
 
@@ -334,5 +409,181 @@ func TestCursorTranscriptEventsHonorsOffset(t *testing.T) {
 	third := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime)
 	if len(third) != 1 || skillName(t, third[0]) != "new" {
 		t.Fatalf("third pass = %v", third)
+	}
+}
+
+func TestCursorTranscriptEventsRetriesPartialFinalLine(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "t.jsonl")
+	line := `{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/review/SKILL.md"}}]}}` + "\n"
+	split := len(line) / 2
+	if err := os.WriteFile(tp, []byte(line[:split]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &OffsetStore{Dir: t.TempDir()}
+	stdin, _ := json.Marshal(map[string]any{"session_id": "c1", "workspace_roots": []string{"/repo"}, "transcript_path": tp})
+
+	if events := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime); len(events) != 0 {
+		t.Fatalf("partial line events = %#v, want none", events)
+	}
+	f, err := os.OpenFile(tp, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(line[split:]); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	events := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime)
+	if len(events) != 1 || skillName(t, events[0]) != "review" {
+		t.Fatalf("completed line events = %#v, want one review skill", events)
+	}
+}
+
+func TestCursorTranscriptEventsUsesIndependentOffsetsPerTranscript(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "parent.jsonl")
+	child := filepath.Join(dir, "child.jsonl")
+	for _, transcript := range []struct {
+		path  string
+		skill string
+	}{
+		{path: parent, skill: "skill-a"},
+		{path: child, skill: "skill-b"},
+	} {
+		line := `{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/` + transcript.skill + `/SKILL.md"}}]}}` + "\n"
+		if err := os.WriteFile(transcript.path, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store := &OffsetStore{Dir: t.TempDir()}
+	for _, path := range []string{parent, child} {
+		stdin, err := json.Marshal(map[string]any{
+			"session_id": "c1", "workspace_roots": []string{"/repo"}, "transcript_path": path,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime)
+		if len(events) != 1 {
+			t.Fatalf("events for %s = %v, want one", path, events)
+		}
+	}
+}
+
+func TestCursorTranscriptEventsScansDirectSubagentTranscripts(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "parent.jsonl")
+	subagents := filepath.Join(dir, "subagents")
+	child := filepath.Join(subagents, "worker.jsonl")
+	if err := os.MkdirAll(subagents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(parent, []byte(
+		`{"message":{"content":[{"type":"tool_use","name":"Subagent","input":{"description":"review"}}]}}`+"\n",
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(child, []byte(
+		`{"message":{"content":[{"type":"tool_use","name":"ReadFile","input":{"path":"/repo/.agents/skills/review/SKILL.md"}}]}}`+"\n",
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdin, err := json.Marshal(map[string]any{
+		"session_id": "c1", "workspace_roots": []string{"/repo"}, "transcript_path": parent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := cursorTranscriptEvents(stdin, &OffsetStore{Dir: t.TempDir()}, func(string) string { return "" }, fixedTime)
+	if len(events) != 1 || skillName(t, events[0]) != "review" {
+		t.Fatalf("events = %#v, want one review skill", events)
+	}
+}
+
+func TestCursorTranscriptEventsKeepsSameSkillFromSeparateTranscripts(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "parent.jsonl")
+	subagents := filepath.Join(dir, "subagents")
+	if err := os.MkdirAll(subagents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, transcript := range []string{
+		parent,
+		filepath.Join(subagents, "worker-a.jsonl"),
+		filepath.Join(subagents, "worker-b.jsonl"),
+	} {
+		line := `{"message":{"content":[{"type":"tool_use","name":"ReadFile","input":{"path":"/repo/.agents/skills/review/SKILL.md"}}]}}` + "\n"
+		if err := os.WriteFile(transcript, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stdin, err := json.Marshal(map[string]any{
+		"session_id": "c1", "workspace_roots": []string{"/repo"}, "transcript_path": parent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &OffsetStore{Dir: t.TempDir()}
+	events := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime)
+	if len(events) != 3 {
+		t.Fatalf("events = %#v, want three review skill events", events)
+	}
+	if replay := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime); len(replay) != 0 {
+		t.Fatalf("replay = %#v, want none", replay)
+	}
+}
+
+func TestCursorSubagentTranscriptInfersNestedRepository(t *testing.T) {
+	aggregate := t.TempDir()
+	repo := filepath.Join(aggregate, "repo-a")
+	initCursorTestRepo(t, repo)
+	parent := filepath.Join(aggregate, "parent.jsonl")
+	child := filepath.Join(aggregate, "subagents", "worker.jsonl")
+	if err := os.MkdirAll(filepath.Dir(child), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(parent, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(map[string]any{
+		"message": map[string]any{
+			"content": []map[string]any{
+				{"type": "tool_use", "name": "ReadFile", "input": map[string]any{
+					"path": filepath.Join(aggregate, ".agents", "skills", "review", "SKILL.md"),
+				}},
+				{"type": "tool_use", "name": "ReadFile", "input": map[string]any{
+					"path": filepath.Join(repo, "src", "main.go"),
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(child, append(line, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdin, err := json.Marshal(map[string]any{
+		"session_id": "c1", "workspace_roots": []string{aggregate}, "transcript_path": parent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := cursorTranscriptEvents(stdin, nil, func(directory string) string {
+		if directory != repo {
+			t.Fatalf("remote resolved from %q, want %q", directory, repo)
+		}
+		return "git@github.com:Netcracker/repo-a.git"
+	}, fixedTime)
+	if len(events) != 1 || events[0].RepoDir != repo || events[0].RepoRemote == "" {
+		t.Fatalf("events = %#v, want attributed child skill", events)
 	}
 }
