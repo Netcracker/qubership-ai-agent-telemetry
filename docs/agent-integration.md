@@ -55,9 +55,10 @@ Both transcripts are JSONL — one JSON object per line — and the CLI streams 
 line, so a large transcript never loads into memory at once. The parse is fail-safe: a
 missing file, an unreadable line, or an unexpected shape yields zero events, never an
 error that could fail the turn. Because the hook fires every turn while the transcript
-only grows, the CLI keeps a per-session byte offset (keyed `codex:<session>` or
-`cursor:<session>`) and parses only the bytes written since the last run; an offset past
-the end of the file means it rotated, so the CLI resets to zero. Within one parse, skill
+only grows, the CLI keeps a byte offset per Codex session (`codex:<session>`) and per
+Cursor transcript file (`cursor:<session>:<path-hash>`), then parses only the bytes written
+since the last run; an offset past the end of the file means it rotated, so the CLI resets
+to zero. Within one parse, skill
 names are deduplicated, so a skill read by several commands counts once. The exact match
 rule differs per agent — see each section below.
 

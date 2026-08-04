@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -91,6 +92,29 @@ func TestScanCursorTranscriptCollectsOperationPaths(t *testing.T) {
 	}
 	if strings.Join(result.Paths, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("paths = %v, want %v", result.Paths, want)
+	}
+}
+
+func TestScanCursorTranscriptBoundsOperationEvidence(t *testing.T) {
+	var lines strings.Builder
+	for i := 0; i <= maxCursorEvidencePaths; i++ {
+		line, err := json.Marshal(map[string]any{
+			"message": map[string]any{
+				"content": []map[string]any{
+					{"type": "tool_use", "name": "Read", "input": map[string]any{
+						"path": filepath.Join("/workspace/repo", fmt.Sprintf("file-%d.go", i)),
+					}},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines.Write(append(line, '\n'))
+	}
+	result := scanCursorTranscriptEvidence(strings.NewReader(lines.String()), 0)
+	if len(result.Paths) != maxCursorEvidencePaths || !result.PathsTruncated {
+		t.Fatalf("paths = %d, truncated = %v", len(result.Paths), result.PathsTruncated)
 	}
 }
 
@@ -409,6 +433,31 @@ func TestCursorTranscriptEventsHonorsOffset(t *testing.T) {
 	third := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime)
 	if len(third) != 1 || skillName(t, third[0]) != "new" {
 		t.Fatalf("third pass = %v", third)
+	}
+}
+
+func TestCursorTranscriptEventsMigratesLegacyParentOffset(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "parent.jsonl")
+	first := `{"message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/old/SKILL.md"}}]}}` + "\n"
+	second := `{"message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/new/SKILL.md"}}]}}` + "\n"
+	if err := os.WriteFile(parent, []byte(first+second), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &OffsetStore{Dir: t.TempDir()}
+	if err := store.Save("cursor:c1", int64(len(first))); err != nil {
+		t.Fatal(err)
+	}
+	stdin, _ := json.Marshal(map[string]any{
+		"session_id": "c1", "workspace_roots": []string{"/repo"}, "transcript_path": parent,
+	})
+
+	events := cursorTranscriptEvents(stdin, store, func(string) string { return "" }, fixedTime)
+	if len(events) != 1 || skillName(t, events[0]) != "new" {
+		t.Fatalf("events = %#v, want only new skill", events)
+	}
+	if got := store.Load(cursorTranscriptOffsetKey("c1", parent)); got != int64(len(first+second)) {
+		t.Fatalf("new offset = %d, want %d", got, len(first+second))
 	}
 }
 

@@ -270,3 +270,52 @@ func TestFilterEventsNormalizesRepoRemoteForTelemetry(t *testing.T) {
 		t.Fatalf("repo remote = %q", got[0].RepoRemote)
 	}
 }
+
+func TestSoleStarPolicyAllowsUnattributedEvents(t *testing.T) {
+	ev := testSkillEvent(t, "cursor", "s1", "", "", "skill", time.Now())
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{RepoAllowList: []string{"*"}}, nil)
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1", len(got))
+	}
+	if got[0].RepoRemote != "" {
+		t.Fatalf("repo remote = %q, want empty", got[0].RepoRemote)
+	}
+}
+
+func TestSoleStarPolicyNormalizesAndClearsRemotes(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "normalizes valid remote", raw: "git@github.com:Netcracker/Project.git", want: "github.com/netcracker/project"},
+		{name: "clears unsafe remote", raw: "/home/private/project.git", want: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ev, err := newSkillEvent("cursor", "s1", tt.raw, "", "skill", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{RepoAllowList: []string{"*"}}, nil)
+			if len(got) != 1 || got[0].RepoRemote != tt.want {
+				t.Fatalf("events = %#v, want remote %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMixedStarPolicyDoesNotAllowUnattributedEvents(t *testing.T) {
+	ev := testSkillEvent(t, "cursor", "s1", "", "", "skill", time.Now())
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, telemetryPolicy{
+		RepoAllowList: []string{"*", "github.com/Netcracker/*"},
+	}, nil)
+	if len(got) != 0 {
+		t.Fatalf("got %#v, want no events", got)
+	}
+}
+
+func TestSoleStarPolicyReportsAllScope(t *testing.T) {
+	if got := (telemetryPolicy{RepoAllowList: []string{"*"}}).repoScope(); got != "all" {
+		t.Fatalf("repo scope = %q, want all", got)
+	}
+}

@@ -22,10 +22,13 @@ var cursorPathInputKeys = []string{
 	"path", "file_path", "target_file", "target_directory", "working_directory", "cwd",
 }
 
+const maxCursorEvidencePaths = 256
+
 type cursorTranscriptScan struct {
-	Skills []string
-	Paths  []string
-	End    int64
+	Skills         []string
+	Paths          []string
+	PathsTruncated bool
+	End            int64
 }
 
 func scanCursorTranscriptEvidence(r io.Reader, startOffset int64) cursorTranscriptScan {
@@ -75,10 +78,15 @@ func processCursorEvidenceLine(line string, result *cursorTranscriptScan, skills
 		}
 	}
 	addPath := func(candidate string) {
-		if candidate != "" && !pathsSeen[candidate] {
-			pathsSeen[candidate] = true
-			result.Paths = append(result.Paths, candidate)
+		if candidate == "" || pathsSeen[candidate] {
+			return
 		}
+		if len(result.Paths) >= maxCursorEvidencePaths {
+			result.PathsTruncated = true
+			return
+		}
+		pathsSeen[candidate] = true
+		result.Paths = append(result.Paths, candidate)
 	}
 	for _, c := range env.Message.Content {
 		switch c.Type {
@@ -135,6 +143,7 @@ func cursorEvidenceRepo(paths, workspaceRoots []string, remote remoteResolver) s
 	}
 	repositories := make([]string, 0)
 	seenRepositories := map[string]bool{}
+	rootCache := map[string]string{}
 	for _, candidate := range paths {
 		path, ok := cursorEvidencePath(candidate, roots)
 		if !ok {
@@ -144,7 +153,19 @@ func cursorEvidenceRepo(paths, workspaceRoots []string, remote remoteResolver) s
 		if dir == "" {
 			continue
 		}
-		root := cursorGitRoot(dir)
+		root, cached := rootCache[dir]
+		if !cached {
+			for known := range seenRepositories {
+				if cursorPathWithinAnyRoot(dir, []string{known}) {
+					root = known
+					break
+				}
+			}
+			if root == "" {
+				root = cursorGitRoot(dir)
+			}
+			rootCache[dir] = root
+		}
 		if root == "" || !cursorPathWithinAnyRoot(root, roots) {
 			continue
 		}
@@ -240,17 +261,17 @@ func cursorTranscriptEvents(stdin []byte, offsets *OffsetStore, remote remoteRes
 	if p.TranscriptPath == "" {
 		return nil
 	}
-	events := cursorTranscriptEventsForPath(p, offsets, remote, now)
+	events := cursorTranscriptEventsForPath(p, offsets, remote, now, p.AgentTranscriptPath == "")
 	for _, transcriptPath := range cursorDirectSubagentTranscriptPaths(p.TranscriptPath) {
 		child := p
 		child.TranscriptPath = transcriptPath
-		events = append(events, cursorTranscriptEventsForPath(child, offsets, remote, now)...)
+		events = append(events, cursorTranscriptEventsForPath(child, offsets, remote, now, false)...)
 	}
 	return events
 }
 
 func cursorTranscriptEventsForPath(
-	p cursorPayload, offsets *OffsetStore, remote remoteResolver, now time.Time,
+	p cursorPayload, offsets *OffsetStore, remote remoteResolver, now time.Time, migrateLegacyParentOffset bool,
 ) []TelemetryEvent {
 	f, err := os.Open(p.TranscriptPath)
 	if err != nil {
@@ -268,7 +289,11 @@ func cursorTranscriptEventsForPath(
 		}
 		defer release()
 
-		offset = offsets.Load(key)
+		if migrateLegacyParentOffset && !offsets.exists(key) {
+			offset = offsets.Load("cursor:" + p.SessionID)
+		} else {
+			offset = offsets.Load(key)
+		}
 		if fi, serr := f.Stat(); serr == nil && offset > fi.Size() {
 			offset = 0 // file rotated or truncated since the last run
 		}
@@ -280,7 +305,10 @@ func cursorTranscriptEventsForPath(
 		_ = offsets.Save(key, scan.End)
 	}
 
-	repoDir := cursorEvidenceRepo(scan.Paths, p.WorkspaceRoots, remote)
+	repoDir := ""
+	if !scan.PathsTruncated {
+		repoDir = cursorEvidenceRepo(scan.Paths, p.WorkspaceRoots, remote)
+	}
 	rem := resolveRemote(remote, repoDir)
 	events := make([]TelemetryEvent, 0, len(scan.Skills))
 	for _, name := range scan.Skills {
