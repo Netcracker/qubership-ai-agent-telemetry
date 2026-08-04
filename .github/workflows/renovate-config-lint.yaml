@@ -97,20 +97,36 @@ jobs:
           rate_limit_filter='select((.msg // "") | test("Rate limit exceeded"))'
           warning_filter='select((.level // 0) >= 40 and (.level // 0) < 50 and (((.msg // "") | test("Rate limit exceeded")) | not))'
 
-          set +e
-          renovate --platform=local --dry-run=lookup > "$log_file" 2>&1
-          renovate_status="$?"
-          set -e
+          run_lookup() {
+            set +e
+            renovate --platform=local --dry-run=lookup > "$log_file" 2>&1
+            renovate_status="$?"
+            set -e
+          }
 
-          error_count="$(jq -R -s "$records_filter | map($error_filter) | length" "$log_file")"
-          lookup_failure_count="$(jq -R -s "$records_filter | map($lookup_failure_filter) | length" "$log_file")"
-          rate_limit_count="$(jq -R -s "$records_filter | map($rate_limit_filter) | length" "$log_file")"
-          warning_count="$(jq -R -s "$records_filter | map($warning_filter) | length" "$log_file")"
+          analyze_lookup() {
+            error_count="$(jq -R -s "$records_filter | map($error_filter) | length" "$log_file")"
+            lookup_failure_count="$(jq -R -s "$records_filter | map($lookup_failure_filter) | length" "$log_file")"
+            rate_limit_count="$(jq -R -s "$records_filter | map($rate_limit_filter) | length" "$log_file")"
+            warning_count="$(jq -R -s "$records_filter | map($warning_filter) | length" "$log_file")"
+          }
+
+          lookup_retry_count=0
+          run_lookup
+          analyze_lookup
+
+          if [[ "$renovate_status" -eq 0 && "$lookup_failure_count" -ne 0 && "$rate_limit_count" -eq 0 && "$error_count" -eq 0 ]]; then
+            lookup_retry_count=1
+            echo '::notice::Retrying dependency lookup after soft lookup failures'
+            run_lookup
+            analyze_lookup
+          fi
 
           {
             echo "### Local Renovate lookup"
             echo
             echo "- Exit code: $renovate_status"
+            echo "- Retries: $lookup_retry_count"
             echo "- Lookup failures: $lookup_failure_count"
             echo "- Rate-limit records: $rate_limit_count"
             echo "- Warning records: $warning_count"
@@ -154,6 +170,13 @@ jobs:
           fi
 
           if [[ -n "$failure_reason" ]]; then
+            stop_marker="$(openssl rand -hex 32)"
+            echo '::group::Renovate debug log'
+            echo "::stop-commands::$stop_marker"
+            tail -c 1000000 "$log_file"
+            echo
+            echo "::$stop_marker::"
+            echo '::endgroup::'
             echo "reason=$failure_reason" >> "$GITHUB_OUTPUT"
             echo "::error::Local Renovate dependency lookup failed"
             exit 1
@@ -189,10 +212,12 @@ jobs:
           dashboard_url=''
           reasons=()
 
-          # Hosted Mend uses app/renovate and the shared presets use Renovate's
-          # default title. Update both filters if either convention changes.
+          # The server-side author filter uses the raw renovate[bot] login,
+          # while the returned JSON uses app/renovate. The shared presets use
+          # Renovate's default title. Update all three values together.
           dashboard_issues_json="$(gh issue list \
             --state open \
+            --author 'renovate[bot]' \
             --limit 1000 \
             --json author,body,number,title,url)"
 
@@ -233,11 +258,6 @@ jobs:
               reasons+=("Local Renovate lookup job finished with: $LOOKUP_RESULT")
             fi
           fi
-
-          gh label create "$health_label" \
-            --color D73A4A \
-            --description 'Automated Renovate health incident' \
-            --force
 
           health_issues_json="$(gh issue list \
             --state open \
@@ -302,6 +322,10 @@ jobs:
           if [[ -n "$health_number" ]]; then
             gh issue comment "$health_number" --body-file "$report_file"
           else
+            gh label create "$health_label" \
+              --color D73A4A \
+              --description 'Automated Renovate health incident' \
+              --force
             gh issue create --title "$health_title" --label "$health_label" --body-file "$report_file"
           fi
 
