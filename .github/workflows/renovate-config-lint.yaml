@@ -57,7 +57,7 @@ jobs:
           trap 'rm -f "$log_file"' EXIT
           records_filter='split("\n") | map(fromjson?) | map(select(type == "object"))'
           rate_limit_filter='select((.msg // "") | test("Rate limit exceeded"))'
-          validation_filter='select(.err.validationError? or .msg == "Repository has invalid config")'
+          validation_filter='select(.msg == "Repository has invalid config" or ((.err | type) == "object" and .err.validationError?))'
 
           set +e
           renovate --platform=local --dry-run=extract 2>&1 | tee "$log_file"
@@ -77,7 +77,7 @@ jobs:
           if [[ "$validation_count" -ne 0 ]]; then
             echo 'reason=Renovate could not resolve the repository configuration' >> "$GITHUB_OUTPUT"
             echo "::error::Renovate could not resolve the repository configuration"
-            jq -R -s -r "$records_filter | map($validation_filter) | .[] | (.err.validationError // .msg)" "$log_file"
+            jq -R -s -r "$records_filter | map($validation_filter) | .[] | if (.err | type) == \"object\" then (.err.validationError // .msg) else .msg end" "$log_file"
             exit 1
           fi
 
@@ -118,7 +118,7 @@ jobs:
           cache_root="$(mktemp -d)"
           trap 'rm -f "$log_file" "$first_log_file"; rm -rf "$cache_root"' EXIT
           records_filter='split("\n") | map(fromjson?) | map(select(type == "object"))'
-          error_filter='select((.level // 0) >= 50 or .err.validationError? or .msg == "Repository has invalid config")'
+          error_filter='select((.level // 0) >= 50 or .msg == "Repository has invalid config" or ((.err | type) == "object" and .err.validationError?))'
           lookup_failure_filter='select((.msg // "") | startswith("Failed to look up"))'
           rate_limit_filter='select((.msg // "") | test("Rate limit exceeded"))'
           warning_filter='select((.level // 0) >= 40 and (.level // 0) < 50 and (((.msg // "") | test("Rate limit exceeded")) | not))'
@@ -187,12 +187,12 @@ jobs:
             if [[ "$warning_count" -ne 0 ]]; then
               echo
               echo "#### Warnings"
-              jq -R -s -r "$records_filter | map($warning_filter) | .[:20][] | \"- \" + ((.msg // .err.message // \"Renovate warning\") | tostring | gsub(\"[\\r\\n]+\"; \" \"))" "$log_file"
+              jq -R -s -r "$records_filter | map($warning_filter) | .[:20][] | \"- \" + ((.msg // (if (.err | type) == \"object\" then .err.message else null end) // \"Renovate warning\") | tostring | gsub(\"[\\r\\n]+\"; \" \"))" "$log_file"
             fi
             if [[ "$error_count" -ne 0 ]]; then
               echo
               echo "#### Errors"
-              jq -R -s -r "$records_filter | map($error_filter) | .[:20][] | \"- \" + ((.err.validationError // .msg // .err.message // \"Renovate error\") | tostring | gsub(\"[\\r\\n]+\"; \" \"))" "$log_file"
+              jq -R -s -r "$records_filter | map($error_filter) | .[:20][] | \"- \" + (((if (.err | type) == \"object\" then .err.validationError else null end) // .msg // (if (.err | type) == \"object\" then .err.message else null end) // \"Renovate error\") | tostring | gsub(\"[\\r\\n]+\"; \" \"))" "$log_file"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
