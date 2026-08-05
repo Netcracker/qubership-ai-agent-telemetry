@@ -4,10 +4,13 @@
 
 set -euo pipefail
 
-readonly PROJECT_NAME_DEFAULT=skills-telemetry-backend
-readonly BACKEND_ROOT_DEFAULT=/opt/skills-telemetry-backend
-readonly BACKUP_ROOT_DEFAULT=/opt/skills-telemetry-backups
-readonly LOCK_FILE_DEFAULT=/run/lock/skills-telemetry-backend-maintenance.lock
+readonly PROJECT_NAME_DEFAULT=ai-agent-telemetry-backend
+readonly BACKEND_ROOT_DEFAULT=/opt/ai-agent-telemetry-backend
+readonly BACKUP_ROOT_DEFAULT=/opt/ai-agent-telemetry-backups
+readonly LOCK_FILE_DEFAULT=/run/lock/ai-agent-telemetry-backend-maintenance.lock
+readonly LEGACY_PROJECT_NAME=skills-telemetry-backend
+readonly LEGACY_BACKEND_ROOT=/opt/skills-telemetry-backend
+readonly LEGACY_LOCK_FILE=/run/lock/skills-telemetry-backend-maintenance.lock
 HELPER_IMAGE='docker.io/library/alpine:3.20@sha256:'
 HELPER_IMAGE+='d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
 readonly HELPER_IMAGE
@@ -50,11 +53,26 @@ validate_test_path() {
 }
 
 maintenance_init() {
+  local identity_mode=${1:-ordinary}
   local test_mode=${TELEMETRY_MAINTENANCE_TEST_MODE:-} kill_at=${TELEMETRY_TEST_KILL_AT:-}
 
   umask 077
   : "$HELPER_IMAGE" "$JSON_IMAGE" "$TRANSACTION_LABEL" "$ROLE_LABEL" "$LARGE_BACKUP_BYTES"
-  if [ -n "$test_mode" ]; then
+  case "$identity_mode" in
+    ordinary) ;;
+    legacy-source)
+      if [ "${TELEMETRY_TEST_BACKEND_ROOT+x}" = x ] || [ "${TELEMETRY_TEST_BACKUP_ROOT+x}" = x ] ||
+        [ "${TELEMETRY_TEST_PROJECT_NAME+x}" = x ] || [ "${TELEMETRY_TEST_LOCK_FILE+x}" = x ]; then
+        maintenance_error '--legacy-source cannot be combined with test-mode identity overrides'
+        return 1
+      fi
+      ;;
+    *)
+      maintenance_error "unsupported maintenance identity mode: $identity_mode"
+      return 1
+      ;;
+  esac
+  if [ -n "$test_mode" ] && [ "$identity_mode" = ordinary ]; then
     [ "$test_mode" = 1 ] || {
       maintenance_error 'TELEMETRY_MAINTENANCE_TEST_MODE must be 1 when set'
       return 1
@@ -81,6 +99,17 @@ maintenance_init() {
       }
     fi
   else
+    if [ "$identity_mode" = legacy-source ]; then
+      BACKEND_ROOT=$LEGACY_BACKEND_ROOT
+      BACKUP_ROOT=$BACKUP_ROOT_DEFAULT
+      LOCK_FILE=$LEGACY_LOCK_FILE
+      PROJECT_NAME=$LEGACY_PROJECT_NAME
+    else
+      BACKEND_ROOT=$BACKEND_ROOT_DEFAULT
+      BACKUP_ROOT=$BACKUP_ROOT_DEFAULT
+      LOCK_FILE=$LOCK_FILE_DEFAULT
+      PROJECT_NAME=$PROJECT_NAME_DEFAULT
+    fi
     [ -z "$kill_at" ] && [ -z "${TELEMETRY_TEST_BACKUP_HELPER_DELAY_SECONDS:-}" ] || {
       maintenance_error 'test-only maintenance controls require TELEMETRY_MAINTENANCE_TEST_MODE=1'
       return 1
@@ -93,10 +122,6 @@ maintenance_init() {
       maintenance_error 'run maintenance commands as root'
       return 1
     }
-    BACKEND_ROOT=$BACKEND_ROOT_DEFAULT
-    BACKUP_ROOT=$BACKUP_ROOT_DEFAULT
-    LOCK_FILE=$LOCK_FILE_DEFAULT
-    PROJECT_NAME=$PROJECT_NAME_DEFAULT
   fi
 
   validate_project_name "$PROJECT_NAME" || return 1
@@ -399,7 +424,7 @@ pin_active_images() {
         return 1
       }
       if [ "$service" = grafana ]; then
-        digest="skills-telemetry-backend-grafana:${release_id}"
+        digest="${PROJECT_NAME}-grafana:${release_id}"
         docker tag "$running_image" "$digest" || {
           rm -f -- "$override_tmp"
           return 1
@@ -1383,7 +1408,7 @@ starts the exact Compose project, and runs the same strict 120-second health gat
 
 ```bash
 BACKUP_DIR=/path/to/pre-backup
-RELEASE_DIR=/opt/skills-telemetry-backend/restored-release
+RELEASE_DIR=/opt/ai-agent-telemetry-backend/restored-release
 cd "$BACKUP_DIR"
 sha256sum -c SHA256SUMS
 ./restore-backend.sh "$BACKUP_DIR" "$RELEASE_DIR"
@@ -1466,6 +1491,7 @@ capture_running_image_entries() {
 
 backup_main() {
   local target_label=manual leave_stopped=0 allow_large_backup=0
+  local identity_mode=ordinary legacy_source_seen=0
   local completed_dir backup_work_dir backup_parent transaction_id target_release previous_release volume_bytes total_bytes
   local logical_volume actual_volume archive_name ordinal failed=0 helper_id helper_status helper_delay=0
   local handoff=0 release_dir logical_volume_output previous_image_output previous_image_entry created_at compose_version
@@ -1489,6 +1515,15 @@ backup_main() {
         allow_large_backup=1
         shift
         ;;
+      --legacy-source)
+        [ "$legacy_source_seen" -eq 0 ] || {
+          maintenance_error '--legacy-source may be specified only once'
+          return 1
+        }
+        legacy_source_seen=1
+        identity_mode=legacy-source
+        shift
+        ;;
       *)
         maintenance_error "unknown option: $1"
         return 1
@@ -1497,7 +1532,7 @@ backup_main() {
   done
 
   validate_target_label "$target_label" || return 1
-  maintenance_init || return 1
+  maintenance_init "$identity_mode" || return 1
   if [ "${TELEMETRY_UPDATE_LOCK_HELD:-}" = 1 ]; then
     validate_inherited_maintenance_lock || return 1
   else

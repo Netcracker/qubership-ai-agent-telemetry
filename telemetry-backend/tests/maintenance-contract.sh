@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2030,SC2031 # Test cases deliberately isolate sourced scripts in subshells.
+# shellcheck disable=SC2030,SC2031,SC2153 # Tests isolate sourced scripts and inspect globals assigned by them.
 
 set -euo pipefail
 
@@ -21,6 +21,17 @@ run_fails() {
   if "$@"; then
     fail "command unexpectedly passed: $*"
   fi
+}
+
+assert_fails_with() {
+  local expected=$1 output
+  shift
+
+  if output=$("$@" 2>&1); then
+    fail "command unexpectedly passed: $*"
+  fi
+  [[ $output == *"$expected"* ]] ||
+    fail "command failed without the expected message '$expected': $output"
 }
 
 single_completed_backup() {
@@ -138,8 +149,8 @@ EOF
 
 run_backup_suite() {
   local sandbox backup_root restore_root project restore_project backup_dir event_log unsafe_event_log output
-  local restore_instructions
-  local -a source_volumes
+  local restore_instructions logical service image_record image_reference image_id extra manifest_checksum_count
+  local -a source_volumes manifest_images manifest_services
 
   export TELEMETRY_TEST_SKIP_REMOTE_PROBES=1 TELEMETRY_TEST_STABILITY_SECONDS=0
   sandbox=$(mktemp -d /tmp/telemetry-backup.XXXXXX)
@@ -204,6 +215,28 @@ EOF
     TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$event_log" \
     "$backup_script" --target-label contract
   backup_dir=$(single_completed_backup "$backup_root")
+  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
+    assert_event_before "VOLUME_MEASURE=${project}_${logical}" COMPOSE_DOWN "$event_log"
+    assert_event_before COMPOSE_DOWN "VOLUME_ARCHIVE=${project}_${logical}" "$event_log"
+    assert_event_before "VOLUME_ARCHIVE=${project}_${logical}" TRANSACTION_CLEAR "$event_log"
+  done
+  mapfile -t manifest_images < <(sed -n 's/^IMAGE=//p' "$backup_dir/manifest.txt")
+  [ "${#manifest_images[@]}" -eq 5 ] || fail 'backup manifest must contain exactly five image records'
+  manifest_services=()
+  for image_record in "${manifest_images[@]}"; do
+    IFS='|' read -r service image_reference image_id extra <<<"$image_record"
+    [ -n "$service" ] && [ -n "$image_reference" ] && [ -n "$image_id" ] && [ -z "${extra:-}" ] ||
+      fail "backup manifest contains an invalid image record: $image_record"
+    [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]] ||
+      fail "backup manifest contains a noncanonical image ID for $service"
+    manifest_services+=("$service")
+    assert_event_before "IMAGE_MANIFEST=$service" TRANSACTION_CLEAR "$event_log"
+  done
+  [ "$(printf '%s\n' "${manifest_services[@]}" | sort -u | tr '\n' ' ')" = \
+    'caddy collector grafana victorialogs victoriametrics ' ] ||
+    fail 'backup manifest image records must identify the five unique backend services'
+  manifest_checksum_count=$(sed -n '/[[:space:]]manifest[.]txt$/p' "$backup_dir/SHA256SUMS" | wc -l)
+  [ "$manifest_checksum_count" -eq 1 ] || fail 'SHA256SUMS must contain manifest.txt exactly once'
   unsafe_event_log=$sandbox/unsafe-events.log
   for unsafe_link in missing absolute multi-component; do
     rm -f "$sandbox/backend/latest"
@@ -393,8 +426,30 @@ EOF
 
 run_cli_suite() {
   local function_name sandbox active_before first_pid first_status lock_output missing_backup_root pin_output production_log
+  local override_name
 
   [ -x "$backup_script" ] || fail 'backup-backend.sh does not exist or is not executable'
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    [ "$PROJECT_NAME_DEFAULT" = ai-agent-telemetry-backend ]
+    [ "$BACKEND_ROOT_DEFAULT" = /opt/ai-agent-telemetry-backend ]
+    [ "$BACKUP_ROOT_DEFAULT" = /opt/ai-agent-telemetry-backups ]
+    [ "$LOCK_FILE_DEFAULT" = /run/lock/ai-agent-telemetry-backend-maintenance.lock ]
+  ) || fail 'ordinary maintenance identity defaults do not use ai-agent-telemetry-backend'
+
+  (
+    # This deliberately permits initialization to stop at the absent production Compose file. The identity values
+    # must already be fixed before any production filesystem validation occurs.
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    maintenance_init legacy-source >/dev/null 2>&1 || true
+    [ "$PROJECT_NAME" = skills-telemetry-backend ]
+    [ "$BACKEND_ROOT" = /opt/skills-telemetry-backend ]
+    [ "$BACKUP_ROOT" = /opt/ai-agent-telemetry-backups ]
+    [ "$LOCK_FILE" = /run/lock/skills-telemetry-backend-maintenance.lock ]
+  ) || fail '--legacy-source does not select the fixed legacy source and new backup destination'
 
   (
     # The test resolves the sibling script from its own location.
@@ -412,6 +467,17 @@ run_cli_suite() {
   mkdir -p "$sandbox/backend" "$sandbox/backups"
   : >"$sandbox/backend/docker-compose.yml"
   : >"$sandbox/backend/.env"
+
+  assert_fails_with '--legacy-source may be specified only once' \
+    "$backup_script" --legacy-source --legacy-source
+  assert_fails_with '--legacy-source is supported only by backup-backend.sh' \
+    "$update_script" --legacy-source
+  for override_name in TELEMETRY_TEST_BACKEND_ROOT TELEMETRY_TEST_BACKUP_ROOT TELEMETRY_TEST_PROJECT_NAME \
+    TELEMETRY_TEST_LOCK_FILE; do
+    assert_fails_with '--legacy-source cannot be combined with test-mode identity overrides' env \
+      TELEMETRY_MAINTENANCE_TEST_MODE=1 \
+      "$override_name=/tmp/arbitrary-identity" "$backup_script" --legacy-source
+  done
 
   (
     # The test resolves the sibling script from its own location.
@@ -504,7 +570,7 @@ run_cli_suite() {
       grep -F "    image: registry.example/$service@sha256:$service" \
         "$release_dir/.maintenance-compose.yml" >/dev/null || exit 1
     done
-    grep -F '    image: skills-telemetry-backend-grafana:ordered-release' \
+    grep -F '    image: ai-agent-telemetry-backend-grafana:ordered-release' \
       "$release_dir/.maintenance-compose.yml" >/dev/null || exit 1
   ) || fail 'image pinning associated Compose images by output position instead of service name'
 
@@ -1283,11 +1349,11 @@ if [ "$1" = image ] && [ "$2" = inspect ]; then
     victoriametrics/victoria-logs@sha256:vlogsfixture) document='[{"Id":"sha256:vlogs-local","RepoDigests":[]}]' ;;
     victoriametrics/victoria-metrics@sha256:vmetricsfixture) document='[{"Id":"sha256:vmetrics-local","RepoDigests":[]}]' ;;
     example/alertmanager@sha256:alertmanagerfixture) document='[{"Id":"sha256:alertmanager-local","RepoDigests":[]}]' ;;
-      skills-telemetry-backend-grafana:0123456789ab|skills-telemetry-backend-grafana:111111111111|\
-      skills-telemetry-backend-grafana:222222222222|skills-telemetry-backend-grafana:bbbbbbbbbbbb|\
-      skills-telemetry-backend-grafana:cccccccccccc|skills-telemetry-backend-grafana:dddddddddddd|\
-      skills-telemetry-backend-grafana:release-e3cad1a6f905017fd828|\
-      skills-telemetry-backend-grafana:release-777818d28a303a6bffed)
+      ai-agent-telemetry-backend-grafana:0123456789ab|ai-agent-telemetry-backend-grafana:111111111111|\
+      ai-agent-telemetry-backend-grafana:222222222222|ai-agent-telemetry-backend-grafana:bbbbbbbbbbbb|\
+      ai-agent-telemetry-backend-grafana:cccccccccccc|ai-agent-telemetry-backend-grafana:dddddddddddd|\
+      ai-agent-telemetry-backend-grafana:release-e3cad1a6f905017fd828|\
+      ai-agent-telemetry-backend-grafana:release-777818d28a303a6bffed)
       document='[{"Id":"sha256:grafana-local","RepoDigests":[]}]'
       ;;
     *)
@@ -1496,7 +1562,7 @@ run_resolution_suite() {
   grep -F 'image.alertmanager=example/alertmanager@sha256:alertmanagerfixture|sha256:alertmanager-local' \
     "$sandbox/backend/0123456789ab/.deployment-manifest" >/dev/null ||
     fail 'manifest lacks the pinned additional registry image'
-  grep -Fx 'image.grafana=skills-telemetry-backend-grafana:0123456789ab|sha256:grafana-local' \
+  grep -Fx 'image.grafana=ai-agent-telemetry-backend-grafana:0123456789ab|sha256:grafana-local' \
     "$sandbox/backend/0123456789ab/.deployment-manifest" >/dev/null ||
     fail 'manifest lacks the deployment-specific Grafana image'
   grep -F 'alertmanager:' "$sandbox/backend/0123456789ab/.maintenance-compose.yml" >/dev/null ||
@@ -1940,8 +2006,8 @@ wait_for_kill_checkpoint() {
 assert_event_before() {
   local first=$1 second=$2 event_log=$3 first_line second_line
 
-  first_line=$(grep -n -m1 -Fx "$first" "$event_log" | cut -d: -f1)
-  second_line=$(grep -n -m1 -Fx "$second" "$event_log" | cut -d: -f1)
+  first_line=$(grep -n -m1 -Fx "$first" "$event_log" | cut -d: -f1 || true)
+  second_line=$(grep -n -m1 -Fx "$second" "$event_log" | cut -d: -f1 || true)
   [ -n "$first_line" ] && [ -n "$second_line" ] && [ "$first_line" -lt "$second_line" ] ||
     fail "$first did not precede $second"
 }
@@ -2206,7 +2272,7 @@ run_retention_suite() {
   local completed_stop completed_candidate completed_state completed_tombstone
   local malicious_original malicious_quarantine malicious_claim malicious_state_name
   local claimed_stop claimed_candidate claimed_state deleting_stop deleting_candidate deleting_state deleting_tombstone
-  local corrupt_state unknown_claim
+  local corrupt_state corrupt_old unknown_claim
   local state_phase state_boundary unique_temp unique_quarantine unique_state_temp unique_claim unique_tombstone
 
   prepare_retention_fixture() {
@@ -2734,14 +2800,15 @@ PY
 
   corrupt_state=$sandbox/corrupt-state
   prepare_retention_fixture "$corrupt_state"
-  mkdir -p "$corrupt_state/backups/pre-corrupt-old-$(date -u -d '35 days ago' +%Y%m%d-%H%M%SZ)" \
+  corrupt_old=$corrupt_state/backups/pre-corrupt-old-$(date -u -d '35 days ago' +%Y%m%d-%H%M%SZ)
+  mkdir -p "$corrupt_old" \
     "$corrupt_state/backups/pre-corrupt-newer-$(date -u -d '34 days ago' +%Y%m%d-%H%M%SZ)" \
     "$corrupt_state/backups/pre-corrupt-newest-$(date -u -d '33 days ago' +%Y%m%d-%H%M%SZ)"
   printf '%s\n' '{not-json' >"$corrupt_state/backups/.retention-state-bad"
   chmod 600 "$corrupt_state/backups/.retention-state-bad"
   output=$(run_prune "$corrupt_state" 1 '' 2>&1)
   [[ $output == *'invalid retention state'* ]] || fail 'retention did not fail closed on corrupt claim state'
-  [ -d "$corrupt_state/backups/pre-corrupt-old-$(date -u -d '35 days ago' +%Y%m%d-%H%M%SZ)" ] ||
+  [ -d "$corrupt_old" ] ||
     fail 'retention pruned while corrupt claim state was present'
 
   unknown_claim=$sandbox/unknown-claim

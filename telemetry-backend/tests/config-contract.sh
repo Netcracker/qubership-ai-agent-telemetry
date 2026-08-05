@@ -17,11 +17,44 @@ overview_dashboard=$backend_dir/grafana/dashboards/native-agent-metrics-overview
 codex_dashboard=$backend_dir/grafana/dashboards/codex-native-metrics.json
 collector_config=$backend_dir/otel-collector-config.yaml
 fixture_stack=$backend_dir/tests/with-fixture-stack.sh
+repository_root=$(CDPATH='' cd -- "$backend_dir/.." && pwd)
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
+
+legacy_hits=$(git -C "$repository_root" grep -Il 'skills-telemetry-backend' -- . || true)
+printf '%s\n' "$legacy_hits" | while IFS= read -r legacy_path; do
+  [ -n "$legacy_path" ] || continue
+  case "$legacy_path" in
+    telemetry-backend/scripts/backup-backend.sh)
+      legacy_backup_lines=$(git -C "$repository_root" grep -nF 'skills-telemetry-backend' -- "$legacy_path" || true)
+      printf '%s\n' "$legacy_backup_lines" |
+        while IFS=: read -r matched_path line_number legacy_line; do
+          [ -n "$matched_path" ] || continue
+          printf '%s\n' "$legacy_line" | grep -Eq \
+            '^readonly [A-Z][A-Z0-9_]*=(skills-telemetry-backend|/opt/skills-telemetry-backend|/run/lock/skills-telemetry-backend-maintenance[.]lock)$' ||
+            fail "legacy backend identity occurs outside a fixed constant: $matched_path:$line_number"
+        done
+      legacy_backup_values=$(printf '%s\n' "$legacy_backup_lines" |
+        sed 's/^[^:]*:[0-9]*:readonly [A-Z][A-Z0-9_]*=//' | sort)
+      expected_legacy_backup_values=$(printf '%s\n' \
+        /opt/skills-telemetry-backend \
+        /run/lock/skills-telemetry-backend-maintenance.lock \
+        skills-telemetry-backend | sort)
+      [ "$legacy_backup_values" = "$expected_legacy_backup_values" ] ||
+        fail 'backup executable must define each fixed legacy identity constant exactly once'
+      ;;
+    telemetry-backend/tests/config-contract.sh|telemetry-backend/tests/maintenance-contract.sh|\
+      telemetry-backend/MIGRATE_LEGACY_BACKEND.md|\
+      docs/superpowers/plans/*|docs/superpowers/specs/*)
+      ;;
+    *)
+      fail "legacy backend identity remains outside its allowlist: $legacy_path"
+      ;;
+  esac
+done
 
 for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
   VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES VM_SELF_SCRAPE_INTERVAL; do

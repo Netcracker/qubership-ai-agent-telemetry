@@ -351,7 +351,7 @@ prepare_images() {
         update_error "unsupported build service configuration: $service"
         return 1
       }
-      effective_images[$service]="skills-telemetry-backend-grafana:$target_id"
+      effective_images[$service]="${PROJECT_NAME}-grafana:$target_id"
       continue
     fi
     [ -n "$image" ] || {
@@ -1794,6 +1794,10 @@ update_main() {
         ;;
       --allow-large-backup) allow_large_backup=1; shift ;;
       --prune-backups) prune_requested=1; shift ;;
+      --legacy-source)
+        update_error '--legacy-source is supported only by backup-backend.sh'
+        return 1
+        ;;
       *) update_error "unknown option: $1"; return 1 ;;
     esac
   done
