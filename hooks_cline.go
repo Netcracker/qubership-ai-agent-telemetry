@@ -26,6 +26,17 @@ func clineHookContent(goos string) []byte {
 	if goos == "windows" {
 		return []byte("# " + clineHookOwner + "\n" +
 			"& ai-agent-telemetry ingest --agent=cline *> $null\n" +
+			"exit 0\n")
+	}
+	return []byte("#!/bin/sh\n# " + clineHookOwner + "\n" +
+		"ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true\n" +
+		"exit 0\n")
+}
+
+func clinePreviousHookContent(goos string) []byte {
+	if goos == "windows" {
+		return []byte("# " + clineHookOwner + "\n" +
+			"& ai-agent-telemetry ingest --agent=cline *> $null\n" +
 			"[Console]::Out.WriteLine('{\"cancel\":false}')\n" +
 			"exit 0\n")
 	}
@@ -65,6 +76,12 @@ func installClineHook(home, goos string) (string, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return path, false, err
+	}
+	if bytes.Equal(data, clinePreviousHookContent(goos)) {
+		if err := writeFileAtomically(path, want, wantMode); err != nil {
+			return path, false, err
+		}
+		return path, true, nil
 	}
 	if !bytes.Equal(data, want) {
 		return path, false, fmt.Errorf("existing Cline hook is not managed by ai-agent-telemetry and was preserved: %s", path)
@@ -127,7 +144,7 @@ func inspectClineHook(path, goos string) (hookState, string) {
 	if err != nil {
 		return hookInvalid, err.Error()
 	}
-	if !bytes.Equal(data, clineHookContent(goos)) {
+	if !bytes.Equal(data, clineHookContent(goos)) && !bytes.Equal(data, clinePreviousHookContent(goos)) {
 		return hookInvalid, "hook is not managed by ai-agent-telemetry"
 	}
 	if info.Mode().Perm() != clineHookMode(goos) {
@@ -152,7 +169,7 @@ func removeClineHook(path, goos string, warnings io.Writer) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !bytes.Equal(data, clineHookContent(goos)) {
+	if !bytes.Equal(data, clineHookContent(goos)) && !bytes.Equal(data, clinePreviousHookContent(goos)) {
 		warnPreservedClineHook(warnings, path)
 		return false, nil
 	}

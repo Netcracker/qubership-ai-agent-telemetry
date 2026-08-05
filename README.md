@@ -236,7 +236,9 @@ ai-agent-telemetry hooks install --target=claude,codex
 Cline uses one global file hook for its VS Code and JetBrains extensions, compatible VS Code hosts such as Cursor,
 and Cline CLI. On macOS and Linux the installer manages `~/Documents/Cline/Hooks/PostToolUse`; on Windows it manages
 `~/Documents/Cline/Hooks/PostToolUse.ps1`. If an unrelated file or symbolic link already occupies that path, the
-installer reports a conflict and preserves it. Cline skill deployment maps internally to APM's `agent-skills` target.
+installer reports a conflict and preserves it. The hook exits successfully without writing to stdout, which avoids
+showing a telemetry response after every Cline tool call. Cline skill deployment maps internally to APM's
+`agent-skills` target.
 
 ### Optional setup skill
 

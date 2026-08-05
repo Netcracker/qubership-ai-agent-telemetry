@@ -146,10 +146,11 @@ or Cline's associated remote URLs. A single workspace root is used only to resol
 repository policy. With multiple roots, all non-empty roots must resolve to one normalized repository; ambiguous or
 unresolved attribution produces no event. Local paths are not serialized.
 
-The hook suppresses CLI output and returns `{"cancel":false}` on stdout. Telemetry errors therefore cannot corrupt
-Cline's hook response or block a turn. The installer creates the file only when the path is absent, repairs only its
-exact owned content and mode, rejects an unrelated file or symbolic link without changing it, and removes only exact
-owned content. Cline supports one file per hook type, so automatic composition with an unrelated `PostToolUse` hook is
+The hook suppresses CLI output, writes nothing to stdout, and exits with code `0`. Cline treats a successful empty
+response as `cancel=false`, so telemetry errors cannot corrupt the response or block a turn. Keeping stdout empty also
+prevents Cline from rendering the telemetry response after every tool call. The installer migrates the previous
+managed hook that printed `{"cancel":false}`, repairs only owned content and mode, and preserves an unrelated file or
+symbolic link. Cline supports one file per hook type, so automatic composition with an unrelated `PostToolUse` hook is
 outside the current implementation.
 
 On macOS and Linux the file is executable with mode `0755`. On Windows it is a PowerShell file. Selecting the `cline`

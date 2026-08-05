@@ -28,12 +28,12 @@ func TestInstallClineHookByPlatform(t *testing.T) {
 		{
 			goos:     "darwin",
 			mode:     0o755,
-			contains: []string{"#!/bin/sh", "ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true", `printf '%s\n' '{"cancel":false}'`},
+			contains: []string{"#!/bin/sh", "ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true", "exit 0"},
 		},
 		{
 			goos:     "windows",
 			mode:     0o600,
-			contains: []string{"& ai-agent-telemetry ingest --agent=cline *> $null", `[Console]::Out.WriteLine('{"cancel":false}')`, "exit 0"},
+			contains: []string{"& ai-agent-telemetry ingest --agent=cline *> $null", "exit 0"},
 		},
 	}
 	for _, tt := range tests {
@@ -54,6 +54,9 @@ func TestInstallClineHookByPlatform(t *testing.T) {
 				if !strings.Contains(string(data), fragment) {
 					t.Fatalf("hook does not contain %q:\n%s", fragment, data)
 				}
+			}
+			if strings.Contains(string(data), "cancel") {
+				t.Fatalf("hook writes a Cline response to stdout:\n%s", data)
 			}
 			info, err := os.Stat(path)
 			if err != nil {
@@ -93,7 +96,7 @@ func TestInstallClineHookRepairsOwnedMode(t *testing.T) {
 	}
 }
 
-func TestClinePOSIXHookFailsOpenWhenTelemetryCLIIsMissing(t *testing.T) {
+func TestClinePOSIXHookIsSilentAndFailsOpenWhenTelemetryCLIIsMissing(t *testing.T) {
 	home := t.TempDir()
 	path, _, err := installClineHook(home, "darwin")
 	if err != nil {
@@ -106,8 +109,58 @@ func TestClinePOSIXHookFailsOpenWhenTelemetryCLIIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hook failed: %v: %s", err, output)
 	}
-	if string(output) != "{\"cancel\":false}\n" {
-		t.Fatalf("output = %q", output)
+	if len(output) != 0 {
+		t.Fatalf("output = %q, want empty", output)
+	}
+}
+
+func TestInstallClineHookMigratesPreviousManagedContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		goos    string
+		content string
+	}{
+		{
+			name: "POSIX",
+			goos: "darwin",
+			content: "#!/bin/sh\n# Managed by ai-agent-telemetry. Do not edit.\n" +
+				"ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true\n" +
+				"printf '%s\\n' '{\"cancel\":false}'\nexit 0\n",
+		},
+		{
+			name: "Windows",
+			goos: "windows",
+			content: "# Managed by ai-agent-telemetry. Do not edit.\n" +
+				"& ai-agent-telemetry ingest --agent=cline *> $null\n" +
+				"[Console]::Out.WriteLine('{\"cancel\":false}')\nexit 0\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			path := clineHookPath(home, tt.goos)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tt.content), clineHookMode(tt.goos)); err != nil {
+				t.Fatal(err)
+			}
+
+			_, changed, err := installClineHook(home, tt.goos)
+			if err != nil || !changed {
+				t.Fatalf("migration changed = %v, err = %v", changed, err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(got), "cancel") {
+				t.Fatalf("migrated hook still writes stdout:\n%s", got)
+			}
+			if state, detail := inspectClineHook(path, tt.goos); state != hookInstalled || detail != "" {
+				t.Fatalf("status = %s, detail = %q", state, detail)
+			}
+		})
 	}
 }
 
@@ -174,6 +227,27 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 		}
 		if _, err := os.Lstat(path); !os.IsNotExist(err) {
 			t.Fatalf("owned hook remains: %v", err)
+		}
+	})
+
+	t.Run("previous managed version", func(t *testing.T) {
+		home := t.TempDir()
+		path := clineHookPath(home, "darwin")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		previous := []byte("#!/bin/sh\n# Managed by ai-agent-telemetry. Do not edit.\n" +
+			"ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true\n" +
+			"printf '%s\\n' '{\"cancel\":false}'\nexit 0\n")
+		if err := os.WriteFile(path, previous, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		changed, err := removeClineHook(path, "darwin", &bytes.Buffer{})
+		if err != nil || !changed {
+			t.Fatalf("changed = %v, err = %v", changed, err)
+		}
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("previous managed hook remains: %v", err)
 		}
 	})
 

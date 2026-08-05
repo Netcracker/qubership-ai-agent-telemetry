@@ -112,6 +112,9 @@ The CLI manages one user-level native file per harness on every supported operat
 | Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` | `Stop`, `PostToolUse`/`mcp__.*`, and the execution policy |
 | Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, `afterMCPExecution`, and numeric top-level `version` |
 
+The Cline hook exits successfully without writing to stdout. This keeps telemetry output out of the Cline tool-call
+display. Installing a newer CLI migrates the previous managed hook that printed `{"cancel":false}`.
+
 Normal installation registers all four harnesses; no separate hook command is required. For a custom
 target list, `configure` accepts `--hooks=all`, `--hooks=none`, or a comma-separated subset. The
 repair command uses `--target` instead:
