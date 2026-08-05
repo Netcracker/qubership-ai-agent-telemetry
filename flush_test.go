@@ -442,8 +442,62 @@ func TestFlushSendsAndClearsOnSuccess(t *testing.T) {
 	if sent != 3 {
 		t.Fatalf("sent = %d, want 3", sent)
 	}
-	if atomic.LoadInt32(&hits) == 0 {
-		t.Fatal("collector received no requests")
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("collector requests = %d, want 1 (batched export)", got)
+	}
+	files, _ := s.List()
+	if len(files) != 0 {
+		t.Fatalf("outbox not cleared: %d files remain", len(files))
+	}
+}
+
+func TestFlushBatchesMultipleEventsIntoOneOTLPRequest(t *testing.T) {
+	isolateConfigCache(t)
+	capture := newOTLPCapture(t)
+	defer capture.server.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	seed(t, s, 5)
+
+	sent, err := Flush(s, capture.server.URL, "", nil, 2*time.Second)
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if sent != 5 {
+		t.Fatalf("sent = %d, want 5", sent)
+	}
+	if got := len(capture.requests); got != 1 {
+		t.Fatalf("OTLP requests = %d, want 1 (batched export)", got)
+	}
+	if got := len(capturedRecords(capture.requests)); got != 5 {
+		t.Fatalf("log records = %d, want 5", got)
+	}
+	files, _ := s.List()
+	if len(files) != 0 {
+		t.Fatalf("outbox not cleared: %d files remain", len(files))
+	}
+}
+
+func TestFlushBatchesFullBufferIntoOneOTLPRequest(t *testing.T) {
+	isolateConfigCache(t)
+	capture := newOTLPCapture(t)
+	defer capture.server.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	seed(t, s, 100)
+
+	sent, err := Flush(s, capture.server.URL, "", nil, 2*time.Second)
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if sent != 100 {
+		t.Fatalf("sent = %d, want 100", sent)
+	}
+	if got := len(capture.requests); got != 1 {
+		t.Fatalf("OTLP requests = %d, want 1 (batched export)", got)
+	}
+	if got := len(capturedRecords(capture.requests)); got != 100 {
+		t.Fatalf("log records = %d, want 100", got)
 	}
 	files, _ := s.List()
 	if len(files) != 0 {
