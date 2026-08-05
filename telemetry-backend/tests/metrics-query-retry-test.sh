@@ -47,25 +47,6 @@ run_visibility() {
     sh "$script_dir/metrics-query-contract.sh"
 }
 
-if zero_padded_zero_output=$(run_visibility transient 3 00 2>&1); then
-  printf '%s\n' 'FAIL: zero-padded zero timeout was accepted' >&2
-  exit 1
-fi
-case "$zero_padded_zero_output" in
-  *'deadlines must be positive integer seconds'*) ;;
-  *) printf 'FAIL: zero-padded zero timeout diagnostic is unclear: %s\n' "$zero_padded_zero_output" >&2; exit 1 ;;
-esac
-
-if zero_padded_positive_output=$(run_visibility transient 0008 1 2>&1); then
-  printf '%s\n' 'FAIL: zero-padded positive timeout was accepted' >&2
-  exit 1
-fi
-case "$zero_padded_positive_output" in
-  *'deadlines must be positive integer seconds'*) ;;
-  *) printf 'FAIL: zero-padded positive timeout diagnostic is unclear: %s\n' \
-    "$zero_padded_positive_output" >&2; exit 1 ;;
-esac
-
 run_visibility transient 3
 grep -F -- '--connect-timeout' "$curl_log" >/dev/null || {
   printf '%s\n' 'FAIL: VictoriaMetrics queries lack a connection timeout' >&2
@@ -83,6 +64,24 @@ fi
 case "$malformed_output" in
   *'malformed successful response'*) ;;
   *) printf 'FAIL: malformed response diagnostic is unclear: %s\n' "$malformed_output" >&2; exit 1 ;;
+esac
+
+if zero_padded_zero_output=$(run_visibility transient 3 00 2>&1); then
+  printf '%s\n' 'FAIL: zero-padded VictoriaMetrics query timeout was accepted' >&2
+  exit 1
+fi
+case "$zero_padded_zero_output" in
+  *'deadlines must be positive integer seconds'*) ;;
+  *) printf 'FAIL: zero-padded-zero diagnostic is unclear: %s\n' "$zero_padded_zero_output" >&2; exit 1 ;;
+esac
+
+if zero_padded_positive_output=$(run_visibility transient 0008 1 2>&1); then
+  printf '%s\n' 'FAIL: zero-padded VictoriaMetrics query deadline was accepted' >&2
+  exit 1
+fi
+case "$zero_padded_positive_output" in
+  *'deadlines must be positive integer seconds'*) ;;
+  *) printf 'FAIL: zero-padded-positive diagnostic is unclear: %s\n' "$zero_padded_positive_output" >&2; exit 1 ;;
 esac
 
 start=$(date +%s)

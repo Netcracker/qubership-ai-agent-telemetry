@@ -40,8 +40,7 @@ is_positive_integer() {
 
 visibility_deadline_seconds=${TEST_VM_METRICS_DEADLINE_SECONDS:-30}
 visibility_curl_max_time=${TEST_VM_METRICS_CURL_MAX_TIME:-5}
-is_positive_integer "$visibility_deadline_seconds" &&
-  is_positive_integer "$visibility_curl_max_time" ||
+is_positive_integer "$visibility_deadline_seconds" && is_positive_integer "$visibility_curl_max_time" ||
   fail 'VictoriaMetrics query deadlines must be positive integer seconds'
 visibility_deadline=$(($(date +%s) + visibility_deadline_seconds))
 
