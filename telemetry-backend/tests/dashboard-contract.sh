@@ -593,11 +593,12 @@ jq -e '
 
 jq -e '
   .panels[] | select(.title == "API latency") |
-  (.targets | length == 6) and
+  (.targets | length == 9) and
   ([.targets[].legendFormat] | sort ==
-    ["Inference p50", "Inference p95", "TBT p50", "TBT p95", "TTFT p50", "TTFT p95"])
+    ["Inference mean", "Inference p50", "Inference p95", "TBT mean", "TBT p50", "TBT p95",
+     "TTFT mean", "TTFT p50", "TTFT p95"])
 ' "$codex_path" >/dev/null ||
-  fail "$codex API latency must expose p50 and p95 for TTFT, TBT, and inference"
+  fail "$codex API latency must expose mean, p50, and p95 for TTFT, TBT, and inference"
 
 jq -e '
   [.panels[] | select(.type != "text" and .type != "row") | .targets[]?] as $targets
@@ -636,8 +637,10 @@ for title in 'Turn latency' 'Tool latency' 'API latency'; do
   jq -e --arg title "$title" '
     .panels[] | select(.title == $title) |
     .fieldConfig.defaults.unit == "ms" and
-    (.description | contains("Histogram quantiles require enough observations in the selected rate interval."))
-  ' "$codex_path" >/dev/null || fail "$codex panel '$title' must use milliseconds and explain quantile requirements"
+    (.description | contains("120 seconds")) and
+    (.description | contains("mean"))
+  ' "$codex_path" >/dev/null ||
+    fail "$codex panel '$title' must disclose the quantile ceiling and the uncapped mean"
 done
 
 jq -e '
@@ -684,14 +687,19 @@ check_codex_target 'Tokens by model and type' A 'sum by (model, token_type) (inc
 check_codex_target 'Skill injections' A 'topk(15, sum by (skill, invoke_type, status) (increase(codex_skill_injected_total{service_name="codex_cli_rs"}[$__range])))'
 check_codex_target 'Turn latency' A 'histogram_quantile(0.50, sum by (le) (rate(codex_turn_e2e_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
 check_codex_target 'Turn latency' B 'histogram_quantile(0.95, sum by (le) (rate(codex_turn_e2e_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+check_codex_target 'Turn latency' C 'sum(rate(codex_turn_e2e_duration_ms_milliseconds_sum{service_name="codex_cli_rs"}[$__rate_interval])) / sum(rate(codex_turn_e2e_duration_ms_milliseconds_count{service_name="codex_cli_rs"}[$__rate_interval]))'
 check_codex_target 'Tool latency' A 'histogram_quantile(0.50, sum by (le) (rate(codex_tool_call_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
 check_codex_target 'Tool latency' B 'histogram_quantile(0.95, sum by (le) (rate(codex_tool_call_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+check_codex_target 'Tool latency' C 'sum(rate(codex_tool_call_duration_ms_milliseconds_sum{service_name="codex_cli_rs"}[$__rate_interval])) / sum(rate(codex_tool_call_duration_ms_milliseconds_count{service_name="codex_cli_rs"}[$__rate_interval]))'
 check_codex_target 'API latency' A 'histogram_quantile(0.50, sum by (le) (rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
 check_codex_target 'API latency' B 'histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
 check_codex_target 'API latency' C 'histogram_quantile(0.50, sum by (le) (rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
 check_codex_target 'API latency' D 'histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
 check_codex_target 'API latency' E 'histogram_quantile(0.50, sum by (le) (rate(codex_responses_api_inference_time_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
 check_codex_target 'API latency' F 'histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_inference_time_duration_ms_milliseconds_bucket{service_name="codex_cli_rs"}[$__rate_interval])))'
+check_codex_target 'API latency' G 'sum(rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_sum{service_name="codex_cli_rs"}[$__rate_interval])) / sum(rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_count{service_name="codex_cli_rs"}[$__rate_interval]))'
+check_codex_target 'API latency' H 'sum(rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_sum{service_name="codex_cli_rs"}[$__rate_interval])) / sum(rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_count{service_name="codex_cli_rs"}[$__rate_interval]))'
+check_codex_target 'API latency' I 'sum(rate(codex_responses_api_inference_time_duration_ms_milliseconds_sum{service_name="codex_cli_rs"}[$__rate_interval])) / sum(rate(codex_responses_api_inference_time_duration_ms_milliseconds_count{service_name="codex_cli_rs"}[$__rate_interval]))'
 
 check_codex_legend 'Average sessions and turns per hour' A Sessions
 check_codex_legend 'Average sessions and turns per hour' B Turns
@@ -702,14 +710,19 @@ check_codex_legend 'MCP servers and outcomes' A '{{server}} · {{status}}'
 check_codex_legend 'Average tokens processed per hour' A '{{token_type}}'
 check_codex_legend 'Turn latency' A p50
 check_codex_legend 'Turn latency' B p95
+check_codex_legend 'Turn latency' C Mean
 check_codex_legend 'Tool latency' A p50
 check_codex_legend 'Tool latency' B p95
+check_codex_legend 'Tool latency' C Mean
 check_codex_legend 'API latency' A 'TTFT p50'
 check_codex_legend 'API latency' B 'TTFT p95'
 check_codex_legend 'API latency' C 'TBT p50'
 check_codex_legend 'API latency' D 'TBT p95'
 check_codex_legend 'API latency' E 'Inference p50'
 check_codex_legend 'API latency' F 'Inference p95'
+check_codex_legend 'API latency' G 'TTFT mean'
+check_codex_legend 'API latency' H 'TBT mean'
+check_codex_legend 'API latency' I 'Inference mean'
 check_codex_legend 'Skill injections' A '{{skill}} · {{invoke_type}} · {{status}}'
 
 printf 'PASS: Grafana dashboard contract\n'
