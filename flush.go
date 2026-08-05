@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -23,6 +24,54 @@ var errLockBusy = errors.New("flush lock busy")
 const maxFlushErrors = 8
 
 type logExporterFactory func(context.Context, string, string, *tls.Config) (sdklog.Exporter, error)
+
+// batchingExporter accumulates Export calls and sends one inner.Export on
+// Shutdown. SimpleProcessor exports per Emit; this restores the
+// design's single OTLP batch per flush without BatchProcessor poll loops.
+type batchingExporter struct {
+	inner  sdklog.Exporter
+	mu     sync.Mutex
+	buffer []sdklog.Record
+}
+
+func newBatchingExporter(inner sdklog.Exporter) *batchingExporter {
+	return &batchingExporter{inner: inner}
+}
+
+func (b *batchingExporter) Export(_ context.Context, records []sdklog.Record) error {
+	if len(records) == 0 {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	// SimpleProcessor exports a pooled slice and clears it after Export returns;
+	// clone so buffered records survive until Shutdown.
+	for i := range records {
+		b.buffer = append(b.buffer, records[i].Clone())
+	}
+	return nil
+}
+
+func (b *batchingExporter) Shutdown(ctx context.Context) error {
+	flushErr := b.flush(ctx)
+	shutErr := b.inner.Shutdown(ctx)
+	return errors.Join(flushErr, shutErr)
+}
+
+func (b *batchingExporter) ForceFlush(ctx context.Context) error {
+	return b.flush(ctx)
+}
+
+func (b *batchingExporter) flush(ctx context.Context) error {
+	b.mu.Lock()
+	records := b.buffer
+	b.buffer = nil
+	b.mu.Unlock()
+	if len(records) == 0 {
+		return nil
+	}
+	return b.inner.Export(ctx, records)
+}
 
 type deliveryResolver struct {
 	Endpoint func() (string, error)
@@ -195,11 +244,12 @@ func deliverEvents(
 	if exporterFactory == nil {
 		exporterFactory = newOTLPLogExporter
 	}
-	exp, err := exporterFactory(ctx, endpoint, token, tlsConfig)
+	inner, err := exporterFactory(ctx, endpoint, token, tlsConfig)
 	if err != nil {
 		recordLastDeliveryError(s, err)
 		return 0, err
 	}
+	exp := newBatchingExporter(inner)
 	res := resource.NewSchemaless(resourceAttrs(version, runtime.GOOS, resolveMachineID())...)
 	provider := sdklog.NewLoggerProvider(
 		sdklog.WithProcessor(sdklog.NewSimpleProcessor(exp)),
@@ -233,22 +283,21 @@ func deliverEvents(
 		sentNames = append(sentNames, n)
 	}
 
-	// Shutdown flushes the exporter; export errors surface through the handler.
+	// Shutdown flushes the exporter; the batching decorator exports once here.
 	shutdownErr := provider.Shutdown(ctx)
-	if strict {
-		retainedIssues.add(exportIssues.err())
-		if shutdownErr != nil {
-			retainedIssues.add(fmt.Errorf("shut down exporter: %w", shutdownErr))
-		}
-		if exportIssues.err() != nil || shutdownErr != nil {
+	deliveryErr := exportIssues.err()
+	if shutdownErr != nil {
+		deliveryErr = errors.Join(deliveryErr, fmt.Errorf("shut down exporter: %w", shutdownErr))
+	}
+	if deliveryErr != nil {
+		if strict {
+			retainedIssues.add(deliveryErr)
 			err := retainedIssues.err()
 			recordLastDeliveryError(s, err)
 			return 0, err
 		}
-	} else if exportIssues.err() != nil {
-		err := exportIssues.err()
-		recordLastDeliveryError(s, err)
-		return 0, err
+		recordLastDeliveryError(s, deliveryErr)
+		return 0, deliveryErr
 	}
 
 	if remove == nil {
