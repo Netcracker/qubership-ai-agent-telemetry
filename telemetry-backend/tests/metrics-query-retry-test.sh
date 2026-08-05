@@ -47,20 +47,24 @@ run_visibility() {
     sh "$script_dir/metrics-query-contract.sh"
 }
 
-assert_invalid_timeout() {
-  deadline=$1 max_time=$2 invalid_value=$3
-  if output=$(run_visibility transient "$deadline" "$max_time" 2>&1); then
-    printf 'FAIL: non-canonical timeout %s was accepted\n' "$invalid_value" >&2
-    exit 1
-  fi
-  case "$output" in
-    *'positive integer seconds'*) ;;
-    *) printf 'FAIL: timeout diagnostic is unclear for %s: %s\n' "$invalid_value" "$output" >&2; exit 1 ;;
-  esac
-}
+if zero_padded_zero_output=$(run_visibility transient 3 00 2>&1); then
+  printf '%s\n' 'FAIL: zero-padded zero timeout was accepted' >&2
+  exit 1
+fi
+case "$zero_padded_zero_output" in
+  *'deadlines must be positive integer seconds'*) ;;
+  *) printf 'FAIL: zero-padded zero timeout diagnostic is unclear: %s\n' "$zero_padded_zero_output" >&2; exit 1 ;;
+esac
 
-assert_invalid_timeout 3 0008 0008
-assert_invalid_timeout 00 1 00
+if zero_padded_positive_output=$(run_visibility transient 0008 1 2>&1); then
+  printf '%s\n' 'FAIL: zero-padded positive timeout was accepted' >&2
+  exit 1
+fi
+case "$zero_padded_positive_output" in
+  *'deadlines must be positive integer seconds'*) ;;
+  *) printf 'FAIL: zero-padded positive timeout diagnostic is unclear: %s\n' \
+    "$zero_padded_positive_output" >&2; exit 1 ;;
+esac
 
 run_visibility transient 3
 grep -F -- '--connect-timeout' "$curl_log" >/dev/null || {

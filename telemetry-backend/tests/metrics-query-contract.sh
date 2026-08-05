@@ -31,13 +31,18 @@ assert_metric_value() {
   [ "$actual" = "$expected" ] || fail "$name=$actual, want $expected"
 }
 
+is_positive_integer() {
+  case "$1" in
+    ''|*[!0-9]*|0*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 visibility_deadline_seconds=${TEST_VM_METRICS_DEADLINE_SECONDS:-30}
 visibility_curl_max_time=${TEST_VM_METRICS_CURL_MAX_TIME:-5}
-for timeout in "$visibility_deadline_seconds" "$visibility_curl_max_time"; do
-  case "$timeout" in
-    ''|0*|*[!0-9]*) fail 'VictoriaMetrics query deadlines must be positive integer seconds' ;;
-  esac
-done
+is_positive_integer "$visibility_deadline_seconds" &&
+  is_positive_integer "$visibility_curl_max_time" ||
+  fail 'VictoriaMetrics query deadlines must be positive integer seconds'
 visibility_deadline=$(($(date +%s) + visibility_deadline_seconds))
 
 assert_metric_visible() {
