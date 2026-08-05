@@ -57,17 +57,46 @@ The release must contain exactly these assets:
 
 ```text
 SHA256SUMS
+ai-agent-telemetry-backend.tar.gz
 ai-agent-telemetry-darwin-amd64
 ai-agent-telemetry-darwin-arm64
 ai-agent-telemetry-linux-amd64
 ai-agent-telemetry-linux-arm64
 ai-agent-telemetry-windows-amd64.exe
 ai-agent-telemetry-windows-arm64.exe
+backup-backend.sh
 install.ps1
 install.sh
+update-backend.sh
 ```
 
 `SHA256SUMS` must include one entry for every asset above except itself. The workflow verifies this before upload.
+
+`ai-agent-telemetry-backend.tar.gz` contains the deployable backend files at the archive root, including Compose, Caddy, Collector, Grafana, dashboards, and maintenance scripts. It has no repository-name or `telemetry-backend/` wrapper directory.
+
+## Backend updater bootstrap
+
+Download and verify both standalone maintenance scripts before running an update. Run these commands as `root` on the backend host:
+
+```bash
+release_url=https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download
+curl -fsSLO "$release_url/update-backend.sh"
+curl -fsSLO "$release_url/backup-backend.sh"
+curl -fsSLO "$release_url/SHA256SUMS"
+awk '$2 == "update-backend.sh" || $2 == "backup-backend.sh"' SHA256SUMS | sha256sum -c -
+chmod 0755 update-backend.sh backup-backend.sh
+./update-backend.sh --ref latest
+```
+
+Pass a release tag, branch name, or full commit SHA to `--ref` when you do not want the latest release. The updater resolves branch names and commit references through the GitHub API before downloading an immutable source archive:
+
+```bash
+./update-backend.sh --ref v1.2.0
+./update-backend.sh --ref main
+./update-backend.sh --ref <full-commit-sha>
+```
+
+The updater stages downloads and images before downtime, creates a self-contained backup under `/opt/skills-telemetry-backups`, activates the target through the `latest` symlink, checks backend health, and restores the previous release if activation fails.
 
 ## Smoke checks
 
