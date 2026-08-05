@@ -37,6 +37,24 @@ validate_target_label() {
   }
 }
 
+resolve_active_backend_dir() {
+  local backend_root=$1 active_link release_id release_dir
+
+  active_link=$backend_root/latest
+  [ -L "$active_link" ] || {
+    maintenance_error "active release link is missing: $active_link"
+    return 1
+  }
+  release_id=$(readlink -- "$active_link") || return 1
+  validate_target_label "$release_id" || return 1
+  release_dir=$backend_root/$release_id
+  [ -d "$release_dir" ] && [ ! -L "$release_dir" ] || {
+    maintenance_error "active release directory is missing or unsafe: $release_dir"
+    return 1
+  }
+  printf '%s\n' "$release_dir"
+}
+
 validate_test_path() {
   local name=$1 candidate=$2
 
@@ -50,6 +68,17 @@ validate_test_path() {
       return 1
       ;;
   esac
+}
+
+validate_production_runtime() {
+  [ "${BASH_VERSINFO[0]}" -ge 4 ] || {
+    maintenance_error 'Bash 4 or newer is required'
+    return 1
+  }
+  [ "${EUID}" -eq 0 ] || {
+    maintenance_error 'run maintenance commands as root'
+    return 1
+  }
 }
 
 maintenance_init() {
@@ -114,20 +143,18 @@ maintenance_init() {
       maintenance_error 'test-only maintenance controls require TELEMETRY_MAINTENANCE_TEST_MODE=1'
       return 1
     }
-    [ "${BASH_VERSINFO[0]}" -ge 4 ] || {
-      maintenance_error 'Bash 4 or newer is required'
-      return 1
-    }
-    [ "${EUID}" -eq 0 ] || {
-      maintenance_error 'run maintenance commands as root'
-      return 1
-    }
+    validate_production_runtime || return 1
   fi
 
   validate_project_name "$PROJECT_NAME" || return 1
-  COMPOSE_FILE=$BACKEND_ROOT/docker-compose.yml
-  ENV_FILE=$BACKEND_ROOT/.env
-  GENERATED_OVERRIDE_FILE=$BACKEND_ROOT/.maintenance-compose.yml
+  MAINTENANCE_IDENTITY_MODE=$identity_mode
+  CURRENT_BACKEND_DIR=$BACKEND_ROOT
+  if [ "$identity_mode" = legacy-source ]; then
+    CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
+  fi
+  COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
+  ENV_FILE=$CURRENT_BACKEND_DIR/.env
+  GENERATED_OVERRIDE_FILE=$CURRENT_BACKEND_DIR/.maintenance-compose.yml
   TRANSACTION_FILE=$BACKEND_ROOT/.maintenance-transaction
   TEST_COMMAND_LOG=
   if [ -n "$test_mode" ]; then
@@ -1568,17 +1595,28 @@ backup_main() {
   else
     recover_transaction || return 1
     transaction_id="backup-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM"
-    [ -L "$BACKEND_ROOT/latest" ] || {
-      maintenance_error "active release link is missing: $BACKEND_ROOT/latest"
-      return 1
-    }
-    previous_release=$(readlink -- "$BACKEND_ROOT/latest") || return 1
-    validate_target_label "$previous_release" || return 1
-    release_dir=$BACKEND_ROOT/$previous_release
-    [ -d "$release_dir" ] && [ ! -L "$release_dir" ] || {
-      maintenance_error "active release directory is missing or unsafe: $release_dir"
-      return 1
-    }
+    if [ "$MAINTENANCE_IDENTITY_MODE" = legacy-source ]; then
+      release_dir=$CURRENT_BACKEND_DIR
+      previous_release=$(basename -- "$release_dir") || return 1
+      validate_target_label "$previous_release" || return 1
+      [ "$release_dir" = "$BACKEND_ROOT/$previous_release" ] &&
+        [ "$(resolve_active_backend_dir "$BACKEND_ROOT")" = "$release_dir" ] || {
+        maintenance_error "active release directory is missing or unsafe: $release_dir"
+        return 1
+      }
+    else
+      [ -L "$BACKEND_ROOT/latest" ] || {
+        maintenance_error "active release link is missing: $BACKEND_ROOT/latest"
+        return 1
+      }
+      previous_release=$(readlink -- "$BACKEND_ROOT/latest") || return 1
+      validate_target_label "$previous_release" || return 1
+      release_dir=$BACKEND_ROOT/$previous_release
+      [ -d "$release_dir" ] && [ ! -L "$release_dir" ] || {
+        maintenance_error "active release directory is missing or unsafe: $release_dir"
+        return 1
+      }
+    fi
   fi
   mkdir -p -- "$BACKUP_ROOT" || return 1
   pin_active_images "$release_dir" || return 1

@@ -426,7 +426,7 @@ EOF
 
 run_cli_suite() {
   local function_name sandbox active_before first_pid first_status lock_output missing_backup_root pin_output production_log
-  local override_name
+  local override_name legacy_sandbox legacy_root legacy_release
 
   [ -x "$backup_script" ] || fail 'backup-backend.sh does not exist or is not executable'
 
@@ -439,23 +439,54 @@ run_cli_suite() {
     [ "$LOCK_FILE_DEFAULT" = /run/lock/ai-agent-telemetry-backend-maintenance.lock ]
   ) || fail 'ordinary maintenance identity defaults do not use ai-agent-telemetry-backend'
 
+  legacy_sandbox=$(mktemp -d /tmp/telemetry-legacy-source.XXXXXX)
+  trap 'rm -rf "${legacy_sandbox:-}" "${sandbox:-}"' EXIT HUP INT TERM
+  legacy_root=$legacy_sandbox/skills-telemetry-backend
+  legacy_release=$legacy_root/release-legacy
+  mkdir -p "$legacy_release"
+  : >"$legacy_release/docker-compose.yml"
+  : >"$legacy_release/.env"
+  ln -s release-legacy "$legacy_root/latest"
   (
-    # This deliberately permits initialization to stop at the absent production Compose file. The identity values
-    # must already be fixed before any production filesystem validation occurs.
     # shellcheck disable=SC1090,SC1091
     TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    maintenance_init legacy-source >/dev/null 2>&1 || true
+    [ "$(resolve_active_backend_dir "$legacy_root")" = "$legacy_release" ] || exit 1
+    rm -f "$legacy_root/latest"
+    ln -s ../release-legacy "$legacy_root/latest"
+    run_fails resolve_active_backend_dir "$legacy_root"
+    rm -f "$legacy_root/latest"
+    ln -s release-legacy "$legacy_root/latest"
+  ) || fail 'active backend resolution accepted an unsafe latest link or missed its immutable release'
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    # shellcheck disable=SC2329 # maintenance_init invokes these fixed-root boundary overrides.
+    validate_production_runtime() { return 0; }
+    # shellcheck disable=SC2329 # maintenance_init invokes these fixed-root boundary overrides.
+    resolve_active_backend_dir() {
+      [ "$1" = /opt/skills-telemetry-backend ] || return 1
+      command readlink "$legacy_root/latest" >/dev/null || return 1
+      printf '%s\n' "$legacy_release"
+    }
+    maintenance_init legacy-source
     [ "$PROJECT_NAME" = skills-telemetry-backend ]
     [ "$BACKEND_ROOT" = /opt/skills-telemetry-backend ]
     [ "$BACKUP_ROOT" = /opt/ai-agent-telemetry-backups ]
     [ "$LOCK_FILE" = /run/lock/skills-telemetry-backend-maintenance.lock ]
+    [ "$CURRENT_BACKEND_DIR" = "$legacy_release" ]
+    [ "$COMPOSE_FILE" = "$legacy_release/docker-compose.yml" ]
+    [ "$ENV_FILE" = "$legacy_release/.env" ]
+    [ "$GENERATED_OVERRIDE_FILE" = "$legacy_release/.maintenance-compose.yml" ]
+    [ "$TRANSACTION_FILE" = /opt/skills-telemetry-backend/.maintenance-transaction ]
   ) || fail '--legacy-source does not select the fixed legacy source and new backup destination'
 
   (
     # The test resolves the sibling script from its own location.
     # shellcheck disable=SC1090,SC1091
     TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    for function_name in maintenance_init compose write_transaction read_transaction clear_transaction \
+    for function_name in maintenance_init resolve_active_backend_dir compose write_transaction read_transaction \
+      clear_transaction \
       cleanup_transaction_helpers pin_active_images metric_sample_is_fresh strict_health_gate recover_transaction \
       backup_main; do
       declare -F "$function_name" >/dev/null || exit 1
@@ -463,7 +494,7 @@ run_cli_suite() {
   ) || fail 'backup-backend.sh must expose the shared maintenance functions when sourced'
 
   sandbox=$(mktemp -d /tmp/telemetry-maintenance.XXXXXX)
-  trap 'rm -rf "${sandbox:-}"' EXIT HUP INT TERM
+  trap 'rm -rf "${legacy_sandbox:-}" "${sandbox:-}"' EXIT HUP INT TERM
   mkdir -p "$sandbox/backend" "$sandbox/backups"
   : >"$sandbox/backend/docker-compose.yml"
   : >"$sandbox/backend/.env"
