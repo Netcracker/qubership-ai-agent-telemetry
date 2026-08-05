@@ -125,6 +125,42 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
 Confirm that update refreshes all selected components and that `update --cli-only` refreshes only the managed CLI. On
 Windows, also verify direct update handoff and full uninstall through the temporary `install.ps1` bootstrap.
 
+### Cline hook
+
+For a release that adds or changes Cline support, verify the installed hook on macOS or Linux:
+
+```sh
+ai-agent-telemetry status --verbose
+hook="$HOME/Documents/Cline/Hooks/PostToolUse"
+test -x "$hook"
+probe_dir=$(mktemp -d)
+printf '%s\n' '{"hookName":"PostToolUse","postToolUse":{"toolName":"read_file","parameters":{},"result":"","success":true,"executionTimeMs":1}}' \
+  | "$hook" >"$probe_dir/stdout" 2>"$probe_dir/stderr"
+test ! -s "$probe_dir/stdout"
+test ! -s "$probe_dir/stderr"
+rm "$probe_dir/stdout" "$probe_dir/stderr"
+rmdir "$probe_dir"
+```
+
+On Windows PowerShell:
+
+```powershell
+ai-agent-telemetry status --verbose
+$hook = Join-Path $HOME 'Documents\Cline\Hooks\PostToolUse.ps1'
+if (-not (Test-Path $hook -PathType Leaf)) { throw "Cline hook is missing: $hook" }
+$output = [IO.Path]::GetTempFileName()
+$payload = '{"hookName":"PostToolUse","postToolUse":{"toolName":"read_file","parameters":{},"result":"","success":true,"executionTimeMs":1}}'
+$payload | & $hook *> $output
+if ((Get-Item $output).Length -ne 0) { throw "Cline hook wrote output: $output" }
+Remove-Item $output
+```
+
+Confirm that `status --verbose` reports the Cline hook as `installed`. The unsupported `read_file` payload sends no
+event; it checks only registration, execution, and silent output. Then
+invoke a temporary skill once from the Cline VS Code Extension or Cline CLI. Confirm that the collector contains one
+`skill_executed` record with `agent=cline` and the temporary `skill.name`, and that `status --verbose` reports no
+buffered events or delivery error. Remove the temporary skill after the check.
+
 ## Breaking-change checks
 
 Release validation must reject removed update-check, self-update, force-update, force, skip-config, `bootstrap.sh`,

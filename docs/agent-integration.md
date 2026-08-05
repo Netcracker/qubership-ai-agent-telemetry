@@ -22,9 +22,8 @@ unchanged. Each hook calls the CLI by its bare name,
 and POSIX `sh`. The Codex policy file allows only the hook and two diagnostic commands to access
 the machine configuration and collector outside its sandbox.
 
-The CLI reads the agent's payload on stdin, routes it by the harness and its documented event discriminator, queues
-valid events to an
-on-disk outbox, and flushes opportunistically over OTLP/HTTPS. It always exits 0, so it never
+The CLI reads the agent's payload on stdin and routes it by the harness and its documented event discriminator. It
+queues valid events to an on-disk outbox and flushes opportunistically over OTLP/HTTPS. It always exits 0, so it never
 fails an agent turn. For its internals, see [the ai-agent-telemetry CLI](cli.md).
 
 After installation, follow the README's [verification, restart, and trust steps](../README.md#installation).
@@ -131,14 +130,14 @@ the tool response.
 
 **Hook:** the global `PostToolUse` file.
 
-The same global file covers Cline's VS Code Extension, JetBrains plugin, extension hosted by compatible VS Code
-products such as Cursor, and Cline CLI. This is Cline support; native Cursor sessions continue to use
+The same global file covers Cline's VS Code Extension, JetBrains plugin, Cline extensions running in compatible VS
+Code hosts such as Cursor, and Cline CLI. Native Cursor sessions continue to use
 `~/.cursor/hooks.json` and the Cursor adapter.
 
 Cline exposes successful skill execution directly in the hook payload. The VS Code and JetBrains extensions use
 `hookName=PostToolUse`, tool `use_skill`, and parameter `skill_name`. Cline CLI uses the compatibility envelope
-`hookName=tool_result`, tool `skills`, and parameter `skill`. The adapter also accepts `skillName`, matching Cline's
-own compatibility extraction. It requires `success=true` and emits exactly one `skill_executed` event.
+`hookName=tool_result`, tool `skills`, and parameter `skill`. The adapter also accepts Cline's compatibility parameter
+`skillName`. It requires `success=true` and emits exactly one `skill_executed` event.
 
 The adapter decodes only `taskId`, `workspaceRoots`, the tool name, the three supported skill parameter names, and
 success. It does not decode or send the user ID, model, tool result, arguments, workspace metadata, branch, commit,
@@ -146,16 +145,21 @@ or Cline's associated remote URLs. A single workspace root is used only to resol
 repository policy. With multiple roots, all non-empty roots must resolve to one normalized repository; ambiguous or
 unresolved attribution produces no event. Local paths are not serialized.
 
-The hook suppresses CLI output, writes nothing to stdout, and exits with code `0`. Cline treats a successful empty
-response as `cancel=false`, so telemetry errors cannot corrupt the response or block a turn. Keeping stdout empty also
-prevents Cline from rendering the telemetry response after every tool call. The installer migrates the previous
-managed hook that printed `{"cancel":false}`, repairs only owned content and mode, and preserves an unrelated file or
-symbolic link. Cline supports one file per hook type, so automatic composition with an unrelated `PostToolUse` hook is
-outside the current implementation.
+The hook discards stdout and stderr and exits with code `0`. Cline treats a successful empty response as
+`cancel=false`, so telemetry errors cannot corrupt the response or block a turn. Empty output removes the telemetry
+response text that Cline previously showed after every tool call. It does not remove Cline's own
+`Hook: PostToolUse` status card: Cline creates the `hook_status` message before starting the hook process. Cline 4.1.4
+has no separate setting to hide that card while keeping hooks enabled.
+
+The installer migrates the previous managed hook that printed `{"cancel":false}`, repairs only owned content and
+mode, and preserves an unrelated file or symbolic link. Cline supports one file per hook type, so automatic
+composition with an unrelated `PostToolUse` hook is outside the current implementation.
 
 On macOS and Linux the file is executable with mode `0755`. On Windows it is a PowerShell file. Selecting the `cline`
 lifecycle harness deploys shared skills through APM's `agent-skills` target because APM has no native Cline target and
 Cline discovers `.agents/skills`.
+
+[ADR 0007](adr/0007-cline-harness-support.md) records why Cline was added and why the integration uses this hook.
 
 ## Cursor
 

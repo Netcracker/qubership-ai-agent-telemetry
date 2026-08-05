@@ -6,7 +6,7 @@ registers machine-wide hooks.
 
 This compatibility package contains native APM hook assets for Claude Code, Codex, and Cursor. Cline is supported by
 the machine-wide lifecycle installer, which manages Cline's single global file hook and deploys skills through the
-APM `agent-skills` target; this package does not define a duplicate Cline hook.
+APM `agent-skills` target. This package does not define a duplicate Cline hook.
 
 ## How it works
 

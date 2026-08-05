@@ -4,20 +4,18 @@ This package delivers the optional setup, testing, troubleshooting, repair, and 
 `ai-agent-telemetry` CLI. The unified lifecycle handles the managed CLI, components, configuration, and native global
 hooks. This package teaches an agent how to verify and diagnose that installation.
 
-Install this package when you want the agent to check telemetry on request. It
-does not install telemetry hooks itself.
+Install this package when you want the agent to check telemetry on request. It does not install telemetry hooks.
 
-Supported agents: Claude Code, Cline, Codex, and Cursor. An OpenCode adapter is
-follow-up work.
+The skill supports Claude Code, Cline, Codex, and Cursor. OpenCode support is planned.
 
 ## Install
 
 Install the APM CLI first ([uv](https://docs.astral.sh/uv/):
 `uv tool install apm-cli`), then add the package one of two ways.
 
-Via the APM command. `--target` is required — without it APM cannot pick a harness and
-the install fails. Use `claude`, `codex`, or `cursor` for the corresponding native APM target. Use `agent-skills` for
-Cline because Cline discovers `.agents/skills` and APM has no native `cline` target. The example targets Claude Code:
+When you use the APM command, `--target` is required. Use `claude`, `codex`, or `cursor` for the corresponding native
+APM target. Use `agent-skills` for Cline because Cline discovers `.agents/skills` and APM has no native `cline` target.
+This example targets Claude Code:
 
 ```sh
 apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure --target claude
@@ -38,9 +36,8 @@ Then install for your agent:
 apm install --target claude
 ```
 
-`apm install` deploys the skill and the skill trigger. On Claude Code that is
-enough. Codex and other agents that read `AGENTS.md` additionally need
-`apm compile --target codex` to register the trigger.
+`apm install` deploys the skill and its trigger. Claude Code needs no other step. Codex and other agents that read
+`AGENTS.md` also need `apm compile --target codex` to register the trigger.
 
 Restart your agent and ask it to "test AI agent telemetry." The bundled skill
 checks configuration, native hooks, collector delivery, and a real harness
@@ -48,10 +45,9 @@ event without reading the telemetry token.
 
 ## How it works
 
-Native CLI-managed hooks collect the event subset supported by each harness:
-skill executions on Claude Code, Cline, Codex, and Cursor; command invocations on
-Claude Code; and MCP tool executions on Claude Code, Codex, and Cursor. The diagnostic skill checks
-the installation and uses its own invocation as a real skill event.
+Native CLI-managed hooks collect the event subset that each harness exposes. All four harnesses report skill
+executions. Claude Code also reports command invocations. Claude Code, Codex, and Cursor report MCP tool executions.
+The diagnostic skill checks the installation and uses its own invocation as a real skill event.
 
 The default `install` lifecycle puts the binary on `PATH`, installs every component, saves machine configuration, and
 registers all supported hooks. The skill diagnoses and repairs any gaps reported by the CLI. `ingest` writes
