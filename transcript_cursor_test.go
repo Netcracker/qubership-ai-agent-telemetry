@@ -330,6 +330,34 @@ func TestCursorTranscriptEventsWithMultipleRepositoriesIsUnattributed(t *testing
 	}
 }
 
+func TestCursorEvidenceRepoDistinguishesNestedRepositoriesInEitherOrder(t *testing.T) {
+	outer := t.TempDir()
+	nested := filepath.Join(outer, "nested")
+	initCursorTestRepo(t, outer)
+	initCursorTestRepo(t, nested)
+	outerPath := filepath.Join(outer, "src", "outer.go")
+	nestedPath := filepath.Join(nested, "src", "nested.go")
+
+	for _, paths := range [][]string{
+		{outerPath, nestedPath},
+		{nestedPath, outerPath},
+	} {
+		if got := cursorEvidenceRepo(paths, []string{outer}, func(directory string) string {
+			switch directory {
+			case outer:
+				return "git@github.com:Netcracker/outer.git"
+			case nested:
+				return "git@github.com:Netcracker/nested.git"
+			default:
+				t.Fatalf("remote resolved from %q", directory)
+				return ""
+			}
+		}); got != "" {
+			t.Fatalf("paths %v resolved to %q, want unattributed", paths, got)
+		}
+	}
+}
+
 func TestCursorTranscriptEventsGroupsRepositoriesWithSameNormalizedRemote(t *testing.T) {
 	aggregate := t.TempDir()
 	repoA := filepath.Join(aggregate, "repo-a")
