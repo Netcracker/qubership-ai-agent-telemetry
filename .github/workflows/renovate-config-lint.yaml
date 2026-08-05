@@ -55,25 +55,29 @@ jobs:
           set -o pipefail
           log_file="$(mktemp)"
           trap 'rm -f "$log_file"' EXIT
-          rate_limit_filter='fromjson? | select((.msg // "") | test("Rate limit exceeded"))'
-          validation_filter='fromjson? | select(.err.validationError? or .msg == "Repository has invalid config")'
+          records_filter='split("\n") | map(fromjson?) | map(select(type == "object"))'
+          rate_limit_filter='select((.msg // "") | test("Rate limit exceeded"))'
+          validation_filter='select(.err.validationError? or .msg == "Repository has invalid config")'
 
           set +e
           renovate --platform=local --dry-run=extract 2>&1 | tee "$log_file"
           renovate_status="${PIPESTATUS[0]}"
           set -e
 
-          if jq -R -e "$rate_limit_filter" "$log_file" >/dev/null; then
+          rate_limit_count="$(jq -R -s "$records_filter | map($rate_limit_filter) | length" "$log_file")"
+          validation_count="$(jq -R -s "$records_filter | map($validation_filter) | length" "$log_file")"
+
+          if [[ "$rate_limit_count" -ne 0 ]]; then
             echo 'reason=GitHub API rate limit prevented shared preset resolution' >> "$GITHUB_OUTPUT"
             echo "::error::GitHub API rate limit hit; preset resolution could not be verified"
-            jq -R -r "$rate_limit_filter | .msg" "$log_file"
+            jq -R -s -r "$records_filter | map($rate_limit_filter) | .[] | .msg" "$log_file"
             exit 1
           fi
 
-          if jq -R -e "$validation_filter" "$log_file" >/dev/null; then
+          if [[ "$validation_count" -ne 0 ]]; then
             echo 'reason=Renovate could not resolve the repository configuration' >> "$GITHUB_OUTPUT"
             echo "::error::Renovate could not resolve the repository configuration"
-            jq -R -r "$validation_filter | .err.validationError // .msg" "$log_file"
+            jq -R -s -r "$records_filter | map($validation_filter) | .[] | (.err.validationError // .msg)" "$log_file"
             exit 1
           fi
 
