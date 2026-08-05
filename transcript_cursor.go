@@ -155,15 +155,7 @@ func cursorEvidenceRepo(paths, workspaceRoots []string, remote remoteResolver) s
 		}
 		root, cached := rootCache[dir]
 		if !cached {
-			for known := range seenRepositories {
-				if cursorPathWithinAnyRoot(dir, []string{known}) {
-					root = known
-					break
-				}
-			}
-			if root == "" {
-				root = cursorGitRoot(dir)
-			}
+			root = cursorGitRoot(dir)
 			rootCache[dir] = root
 		}
 		if root == "" || !cursorPathWithinAnyRoot(root, roots) {
