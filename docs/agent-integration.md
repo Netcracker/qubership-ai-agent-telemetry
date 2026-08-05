@@ -10,17 +10,20 @@ The CLI registers one global harness-specific hook in each native user configura
 | Harness | Global file |
 | --- | --- |
 | Claude Code | `~/.claude/settings.json` |
+| Cline on macOS and Linux | `~/Documents/Cline/Hooks/PostToolUse` |
+| Cline on Windows | `~/Documents/Cline/Hooks/PostToolUse.ps1` |
 | Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` |
 | Cursor | `~/.cursor/hooks.json` |
 
-The default lifecycle install puts the binary on `PATH` and registers all three hooks, even when a harness is not
+The default lifecycle install puts the binary on `PATH` and registers all four harnesses, even when a harness is not
 installed yet. Use `--harnesses` to select a subset, or `--skip telemetry` to leave telemetry configuration and hooks
 unchanged. Each hook calls the CLI by its bare name,
 `ai-agent-telemetry ingest --agent=<name>`, which works across Git Bash, PowerShell, `cmd.exe`,
 and POSIX `sh`. The Codex policy file allows only the hook and two diagnostic commands to access
 the machine configuration and collector outside its sandbox.
 
-The CLI reads the agent's payload on stdin, routes it by `hook_event_name`, queues valid events to an
+The CLI reads the agent's payload on stdin, routes it by the harness and its documented event discriminator, queues
+valid events to an
 on-disk outbox, and flushes opportunistically over OTLP/HTTPS. It always exits 0, so it never
 fails an agent turn. For its internals, see [the ai-agent-telemetry CLI](cli.md).
 
@@ -40,6 +43,7 @@ hook, managed CLI, or component change.
 | Claude Code | `PostToolUseFailure`, matcher `mcp__.*` | `mcp_tool_executed` | Server and tool names, `failed`, optional duration |
 | Codex | `Stop`, no matcher | `skill_executed` | Zero or more transcript-derived skill names |
 | Codex | `PostToolUse`, matcher `mcp__.*` | `mcp_tool_executed` | Server and tool names, `unknown` outcome |
+| Cline | `PostToolUse` or `tool_result`, tool `use_skill` or `skills` | `skill_executed` | `skill.name` |
 | Cursor | `afterAgentResponse` | `skill_executed` | Zero or more transcript-derived skill names |
 | Cursor | `afterMCPExecution` | `mcp_tool_executed` | Tool name, `unknown` outcome, optional duration; no server name |
 
@@ -122,6 +126,35 @@ regardless of the offset. See the [Codex spec] for the full record.
 `PostToolUse` reports MCP names as `mcp__<server>__<tool>`. The CLI records the server and tool names with outcome
 `unknown`; Codex does not expose a separate documented failure event or duration for this signal. It never inspects
 the tool response.
+
+## Cline
+
+**Hook:** the global `PostToolUse` file.
+
+The same global file covers Cline's VS Code Extension, JetBrains plugin, extension hosted by compatible VS Code
+products such as Cursor, and Cline CLI. This is Cline support; native Cursor sessions continue to use
+`~/.cursor/hooks.json` and the Cursor adapter.
+
+Cline exposes successful skill execution directly in the hook payload. The VS Code and JetBrains extensions use
+`hookName=PostToolUse`, tool `use_skill`, and parameter `skill_name`. Cline CLI uses the compatibility envelope
+`hookName=tool_result`, tool `skills`, and parameter `skill`. The adapter also accepts `skillName`, matching Cline's
+own compatibility extraction. It requires `success=true` and emits exactly one `skill_executed` event.
+
+The adapter decodes only `taskId`, `workspaceRoots`, the tool name, the three supported skill parameter names, and
+success. It does not decode or send the user ID, model, tool result, arguments, workspace metadata, branch, commit,
+or Cline's associated remote URLs. A single workspace root is used only to resolve the Git remote under the normal
+repository policy. With multiple roots, all non-empty roots must resolve to one normalized repository; ambiguous or
+unresolved attribution produces no event. Local paths are not serialized.
+
+The hook suppresses CLI output and returns `{"cancel":false}` on stdout. Telemetry errors therefore cannot corrupt
+Cline's hook response or block a turn. The installer creates the file only when the path is absent, repairs only its
+exact owned content and mode, rejects an unrelated file or symbolic link without changing it, and removes only exact
+owned content. Cline supports one file per hook type, so automatic composition with an unrelated `PostToolUse` hook is
+outside the current implementation.
+
+On macOS and Linux the file is executable with mode `0755`. On Windows it is a PowerShell file. Selecting the `cline`
+lifecycle harness deploys shared skills through APM's `agent-skills` target because APM has no native Cline target and
+Cline discovers `.agents/skills`.
 
 ## Cursor
 

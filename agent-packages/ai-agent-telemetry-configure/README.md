@@ -7,7 +7,7 @@ hooks. This package teaches an agent how to verify and diagnose that installatio
 Install this package when you want the agent to check telemetry on request. It
 does not install telemetry hooks itself.
 
-Supported agents: Codex, Claude Code, and Cursor. An OpenCode adapter is
+Supported agents: Claude Code, Cline, Codex, and Cursor. An OpenCode adapter is
 follow-up work.
 
 ## Install
@@ -16,8 +16,8 @@ Install the APM CLI first ([uv](https://docs.astral.sh/uv/):
 `uv tool install apm-cli`), then add the package one of two ways.
 
 Via the APM command. `--target` is required — without it APM cannot pick a harness and
-the install fails. It is one of `claude`, `codex`, `cursor`, or `all`; the example
-targets Claude Code:
+the install fails. Use `claude`, `codex`, or `cursor` for the corresponding native APM target. Use `agent-skills` for
+Cline because Cline discovers `.agents/skills` and APM has no native `cline` target. The example targets Claude Code:
 
 ```sh
 apm install --dev Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure --target claude
@@ -49,8 +49,8 @@ event without reading the telemetry token.
 ## How it works
 
 Native CLI-managed hooks collect the event subset supported by each harness:
-skill executions on Claude Code, Codex, and Cursor; command invocations on
-Claude Code; and MCP tool executions on all three. The diagnostic skill checks
+skill executions on Claude Code, Cline, Codex, and Cursor; command invocations on
+Claude Code; and MCP tool executions on Claude Code, Codex, and Cursor. The diagnostic skill checks
 the installation and uses its own invocation as a real skill event.
 
 The default `install` lifecycle puts the binary on `PATH`, installs every component, saves machine configuration, and

@@ -18,12 +18,12 @@ powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 
 ```
 
 The default selection installs the managed CLI, APM and `qubership-global-essentials`, AI agent telemetry, and global
-Git hooks. It targets Claude Code, Codex, and Cursor.
+Git hooks. It targets Claude Code, Cline, Codex, and Cursor.
 
 ## Select components and harnesses
 
-Components are `apm`, `telemetry`, and `git-hooks`. Harnesses are `claude`, `codex`, and `cursor`. `all` is the default
-for both selections. Use lowercase, double-dash options in every shell.
+Components are `apm`, `telemetry`, and `git-hooks`. Harnesses are `claude`, `cline`, `codex`, and `cursor`. `all` is
+the default for both selections. Use lowercase, double-dash options in every shell.
 
 ```sh
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh \
@@ -42,6 +42,10 @@ powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 
 ai-agent-telemetry install --skip git-hooks
 ai-agent-telemetry install --components telemetry --harnesses codex
 ```
+
+The lifecycle keeps harness selection separate from APM deployment targets. Selecting `cline` installs the global
+Cline file hook and deploys skills through APM's `agent-skills` target. Cline has no native APM target. The same global
+hook covers the Cline VS Code and JetBrains extensions, compatible VS Code hosts, and Cline CLI.
 
 Install and update accept `--force-git-hooks` to replace an unrelated global `core.hooksPath`. They also accept
 `--non-interactive`, which disables prerequisite and telemetry prompts.

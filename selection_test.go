@@ -53,9 +53,9 @@ func TestNormalizeLifecycleHarnesses(t *testing.T) {
 		want    []hookTarget
 		wantErr string
 	}{
-		{name: "default", want: []hookTarget{hookClaude, hookCodex, hookCursor}},
-		{name: "normalizes and sorts", values: []string{"CURSOR", "claude", "Cursor"}, want: []hookTarget{hookClaude, hookCursor}},
-		{name: "all", values: []string{"All"}, want: []hookTarget{hookClaude, hookCodex, hookCursor}},
+		{name: "default", want: []hookTarget{hookClaude, hookCline, hookCodex, hookCursor}},
+		{name: "normalizes and sorts", values: []string{"CURSOR", "cline", "Cline"}, want: []hookTarget{hookCline, hookCursor}},
+		{name: "all", values: []string{"All"}, want: []hookTarget{hookClaude, hookCline, hookCodex, hookCursor}},
 		{name: "invalid", values: []string{"windsurf"}, wantErr: `unknown harness "windsurf"`},
 		{name: "all mixed", values: []string{"all", "codex"}, wantErr: `harness "all" must be used alone`},
 	}

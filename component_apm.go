@@ -239,9 +239,18 @@ func containsAPMMarketplace(output, name string) bool {
 }
 
 func joinAPMTargets(targets []hookTarget) string {
-	values := make([]string, len(targets))
-	for index, target := range targets {
-		values[index] = string(target)
+	values := make([]string, 0, len(targets))
+	seen := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		value := string(target)
+		if target == hookCline {
+			value = "agent-skills"
+		}
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		values = append(values, value)
 	}
 	return strings.Join(values, ",")
 }

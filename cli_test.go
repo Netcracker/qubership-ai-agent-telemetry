@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -79,7 +81,7 @@ func TestLifecycleEnumFlagsDescribeAcceptedValues(t *testing.T) {
 	}
 	for _, want := range []string{
 		"all, apm, telemetry, git-hooks",
-		"all, claude, codex, cursor",
+		"all, claude, cline, codex, cursor",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("help = %q, want %q", out.String(), want)
@@ -95,7 +97,7 @@ func TestUnknownLifecycleEnumListsAcceptedValues(t *testing.T) {
 		{[]string{"install", "--components", "bogus"},
 			"valid components: all, apm, telemetry, git-hooks"},
 		{[]string{"install", "--harnesses", "bogus"},
-			"valid harnesses: all, claude, codex, cursor"},
+			"valid harnesses: all, claude, cline, codex, cursor"},
 	} {
 		var errOut bytes.Buffer
 		code := execute(tt.args, appDeps{ErrOut: &errOut, Home: t.TempDir})
@@ -616,6 +618,57 @@ func TestCobraIngestUsesRawArgumentsAndRemainsFailOpen(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cacheHome, pkgName)); !os.IsNotExist(err) {
 		t.Fatalf("outbox was opened for rejected arguments: %v", err)
+	}
+}
+
+func TestCobraIngestAcceptsClineHook(t *testing.T) {
+	cacheHome := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AI_AGENT_TELEMETRY_ENDPOINT", "")
+	t.Setenv(envRepoAllow, "github.com/Netcracker/*")
+	t.Setenv(envTelemetryDisabled, "")
+	repoRoot := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "--quiet", repoRoot},
+		{"-C", repoRoot, "remote", "add", "origin", "git@github.com:Netcracker/cline-ingest-test.git"},
+	} {
+		if output, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	if got := gitRemote(repoRoot); got != "git@github.com:Netcracker/cline-ingest-test.git" {
+		t.Fatalf("gitRemote(%q) = %q", repoRoot, got)
+	}
+	payloadBytes, err := json.Marshal(map[string]any{
+		"hookName":       "PostToolUse",
+		"taskId":         "cline-session",
+		"workspaceRoots": []string{repoRoot},
+		"postToolUse": map[string]any{
+			"toolName": "use_skill", "parameters": map[string]any{"skill_name": "cline-hook-probe"}, "success": true,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := execute([]string{"ingest", "--agent=cline"}, appDeps{
+		In: bytes.NewReader(payloadBytes), Out: &out, ErrOut: &errOut, Home: t.TempDir,
+	})
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, errOut.String())
+	}
+	outbox := &Outbox{Dir: filepath.Join(cacheHome, pkgName, "outbox")}
+	files, err := outbox.List()
+	if err != nil || len(files) != 1 {
+		t.Fatalf("outbox files = %v, err = %v; want one", files, err)
+	}
+	event, err := outbox.Read(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Agent != "cline" || skillName(t, event) != "cline-hook-probe" {
+		t.Fatalf("event = %#v", event)
 	}
 }
 

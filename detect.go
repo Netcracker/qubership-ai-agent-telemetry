@@ -43,11 +43,97 @@ func detect(agent string, stdin []byte, remote remoteResolver, now time.Time) ([
 		return claudeAdapter(stdin, remote, now)
 	case "codex":
 		return codexAdapter(stdin, now)
+	case "cline":
+		return clineAdapter(stdin, remote, now)
 	case "cursor":
 		return cursorAdapter(stdin, remote, now)
 	default:
 		return nil, fmt.Errorf("no detector for agent %q", agent)
 	}
+}
+
+// clinePayload is the allowlist for Cline's VS Code, JetBrains, and CLI file
+// hooks. Fields such as userId, model, workspaceInfo, result, and arbitrary
+// tool parameters are never decoded.
+type clinePayload struct {
+	HookName       string   `json:"hookName"`
+	TaskID         string   `json:"taskId"`
+	WorkspaceRoots []string `json:"workspaceRoots"`
+	PostToolUse    struct {
+		ToolName   string `json:"toolName"`
+		Success    bool   `json:"success"`
+		Parameters struct {
+			Skill      string `json:"skill"`
+			SkillName  string `json:"skill_name"`
+			SkillCamel string `json:"skillName"`
+		} `json:"parameters"`
+	} `json:"postToolUse"`
+}
+
+func clineAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
+	var p clinePayload
+	if len(stdin) == 0 || json.Unmarshal(stdin, &p) != nil {
+		return nil, nil
+	}
+	if p.HookName != "PostToolUse" && p.HookName != "tool_result" {
+		return nil, nil
+	}
+	if !p.PostToolUse.Success || p.PostToolUse.ToolName != "skills" && p.PostToolUse.ToolName != "use_skill" {
+		return nil, nil
+	}
+
+	skill := firstNonEmpty(p.PostToolUse.Parameters.Skill, p.PostToolUse.Parameters.SkillName,
+		p.PostToolUse.Parameters.SkillCamel)
+	if !validIdentifier(p.TaskID, sessionIdentifier) || !validIdentifier(skill, nameIdentifier) {
+		return nil, nil
+	}
+	repoDir, repoRemote, attributable := clineRepository(p.WorkspaceRoots, remote)
+	if !attributable {
+		return nil, nil
+	}
+	ev, err := newSkillEvent("cline", p.TaskID, repoRemote, repoDir, skill, now)
+	if err != nil {
+		return nil, nil
+	}
+	return []TelemetryEvent{ev}, nil
+}
+
+func clineRepository(roots []string, remote remoteResolver) (string, string, bool) {
+	nonEmpty := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if root != "" {
+			nonEmpty = append(nonEmpty, root)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return "", "", true
+	}
+	if len(nonEmpty) == 1 {
+		return nonEmpty[0], resolveRemote(remote, nonEmpty[0]), true
+	}
+
+	type resolvedRepository struct {
+		root string
+		raw  string
+	}
+	unique := make(map[string]resolvedRepository)
+	for _, root := range nonEmpty {
+		raw := resolveRemote(remote, root)
+		normalized := normalizeRawRemote(raw)
+		if normalized == "" {
+			continue
+		}
+		if _, exists := unique[normalized]; !exists {
+			unique[normalized] = resolvedRepository{root: root, raw: raw}
+		}
+	}
+	if len(unique) != 1 {
+		return "", "", false
+	}
+	for _, repository := range unique {
+		return repository.root, repository.raw, true
+	}
+	return "", "", false
 }
 
 type codexPayload struct {
