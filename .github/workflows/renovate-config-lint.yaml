@@ -137,15 +137,21 @@ jobs:
 
           lookup_attempt_count=0
           lookup_retry_count=0
+          initial_lookup_failure_count=0
+          retry_succeeded=false
           run_lookup
           analyze_lookup
 
           if [[ "$renovate_status" -eq 0 && "$lookup_failure_count" -ne 0 && "$rate_limit_count" -eq 0 && "$error_count" -eq 0 ]]; then
             lookup_retry_count=1
+            initial_lookup_failure_count="$lookup_failure_count"
             cp "$log_file" "$first_log_file"
             echo '::notice::Retrying dependency lookup after soft lookup failures'
             run_lookup
             analyze_lookup
+            if [[ "$renovate_status" -eq 0 && "$lookup_failure_count" -eq 0 && "$rate_limit_count" -eq 0 && "$error_count" -eq 0 ]]; then
+              retry_succeeded=true
+            fi
           fi
 
           {
@@ -153,6 +159,7 @@ jobs:
             echo
             echo "- Exit code: $renovate_status"
             echo "- Retries: $lookup_retry_count"
+            echo "- Retry recovered: $retry_succeeded"
             echo "- Lookup failures: $lookup_failure_count"
             echo "- Rate-limit records: $rate_limit_count"
             echo "- Warning records: $warning_count"
@@ -186,7 +193,15 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           failure_reason=''
-          if [[ "$rate_limit_count" -ne 0 ]]; then
+          failure_log_file="$log_file"
+          if [[ "$lookup_retry_count" -ne 0 && "$retry_succeeded" != true ]]; then
+            dependency_word='dependencies'
+            if [[ "$initial_lookup_failure_count" -eq 1 ]]; then
+              dependency_word='dependency'
+            fi
+            failure_reason="Renovate failed to look up $initial_lookup_failure_count $dependency_word"
+            failure_log_file="$first_log_file"
+          elif [[ "$rate_limit_count" -ne 0 ]]; then
             failure_reason='GitHub API rate limit prevented dependency lookup'
           elif [[ "$lookup_failure_count" -ne 0 ]]; then
             dependency_word='dependencies'
@@ -204,7 +219,7 @@ jobs:
             stop_marker="$(openssl rand -hex 32)"
             echo '::group::Renovate debug log'
             echo "::stop-commands::$stop_marker"
-            tail -c 1000000 "$log_file"
+            tail -c 1000000 "$failure_log_file"
             echo
             echo "::$stop_marker::"
             echo '::endgroup::'
@@ -223,7 +238,6 @@ jobs:
     concurrency:
       group: renovate-health-${{ github.repository }}
       cancel-in-progress: false
-      queue: max
     permissions:
       contents: read
       issues: write
