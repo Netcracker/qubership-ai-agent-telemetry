@@ -44,6 +44,7 @@ password_hash=$(docker run --rm caddy:2 caddy hash-password --plaintext "$dashbo
   printf '%s\n' 'GRAFANA_ADMIN_PASSWORD=fixture-admin-password'
   printf '%s\n' 'VL_RETENTION=30d'
   printf '%s\n' 'VM_RETENTION=30d'
+  printf '%s\n' 'VM_SELF_SCRAPE_INTERVAL=5s'
   printf 'HTTP_PORT=%s\n' "$http_port"
   printf 'HTTPS_PORT=%s\n' "$https_port"
 } >"$env_file"

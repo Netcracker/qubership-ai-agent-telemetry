@@ -13,7 +13,11 @@ fail() {
 
 query_metric() {
   query=$1
-  curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
+  request_timeout=${2:-5}
+  connect_timeout=2
+  [ "$request_timeout" -ge "$connect_timeout" ] || connect_timeout=$request_timeout
+  curl --fail --silent --show-error --connect-timeout "$connect_timeout" --max-time "$request_timeout" \
+    --cacert "$TEST_CA_CERT" \
     --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
     --get --data-urlencode "query=$query" \
     "$TEST_BASE_URL/prometheus/api/v1/query"
@@ -26,6 +30,57 @@ assert_metric_value() {
   actual=$(query_metric "$query" | jq -r '.data.result[0].value[1] // empty')
   [ "$actual" = "$expected" ] || fail "$name=$actual, want $expected"
 }
+
+visibility_deadline_seconds=${TEST_VM_METRICS_DEADLINE_SECONDS:-30}
+visibility_curl_max_time=${TEST_VM_METRICS_CURL_MAX_TIME:-5}
+for timeout in "$visibility_deadline_seconds" "$visibility_curl_max_time"; do
+  case "$timeout" in
+    ''|0*|*[!0-9]*) fail 'VictoriaMetrics query deadlines must be positive integer seconds' ;;
+  esac
+done
+visibility_deadline=$(($(date +%s) + visibility_deadline_seconds))
+
+assert_metric_visible() {
+  metric=$1
+  response=
+  result_count=
+  now=
+  remaining=
+  request_timeout=
+  while :; do
+    now=$(date +%s)
+    remaining=$((visibility_deadline - now))
+    [ "$remaining" -gt 0 ] ||
+      fail "$metric did not become queryable within the shared ${visibility_deadline_seconds}-second deadline"
+    request_timeout=$visibility_curl_max_time
+    [ "$request_timeout" -le "$remaining" ] || request_timeout=$remaining
+    if response=$(query_metric "$metric" "$request_timeout"); then
+      if ! result_count=$(printf '%s' "$response" | jq -er '
+        if .status == "success" and (.data | type) == "object" and (.data.result | type) == "array"
+        then .data.result | length
+        else error("invalid Prometheus response")
+        end
+      ' 2>/dev/null); then
+        fail "$metric returned a malformed successful response"
+      fi
+      [ "$result_count" -eq 0 ] || return 0
+    fi
+    now=$(date +%s)
+    [ "$now" -lt "$visibility_deadline" ] ||
+      fail "$metric did not become queryable within the shared ${visibility_deadline_seconds}-second deadline"
+    sleep 1
+  done
+}
+
+for metric in \
+  vm_hourly_series_limit_current_series \
+  vm_daily_series_limit_current_series \
+  vm_free_disk_space_bytes \
+  vm_data_size_bytes; do
+  assert_metric_visible "$metric"
+done
+
+[ "${TEST_METRICS_VISIBILITY_ONLY:-}" != 1 ] || exit 0
 
 assert_metric_value codex_sessions 2 \
   'codex_thread_started_total{service_name="codex_cli_rs",session_source="cli",model="fixture-codex"}'

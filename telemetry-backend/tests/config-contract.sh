@@ -24,7 +24,7 @@ fail() {
 }
 
 for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
-  VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES; do
+  VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES VM_SELF_SCRAPE_INTERVAL; do
   grep -q "^$name=" "$env_file" || fail "$name is missing from .env.example"
 done
 if grep -q '^GRAFANA_ADMIN_USER=' "$env_file"; then
@@ -133,6 +133,8 @@ jq -e '.services.victoriametrics.command | index("-storage.minFreeDiskSpaceBytes
   fail 'VictoriaMetrics must reserve free disk space'
 jq -e '.services.victoriametrics.command | index("-selfScrapeInterval=30s") != null' "$rendered" >/dev/null ||
   fail 'VictoriaMetrics must self-scrape operational metrics every 30 seconds'
+grep -Fq "'VM_SELF_SCRAPE_INTERVAL=5s'" "$fixture_stack" ||
+  fail 'backend fixture must use a five-second VictoriaMetrics self-scrape interval'
 jq -e '(.services.grafana.build.context // "") | endswith("/telemetry-backend/grafana")' "$rendered" >/dev/null ||
   fail 'Grafana build context is missing'
 jq -e '.services.grafana.ports == null' "$rendered" >/dev/null || fail 'Grafana must not publish ports'
@@ -200,7 +202,7 @@ for line in \
   grep -Fqx "$line" "$native_onboarding" ||
     fail "native OTLP onboarding guide is missing exact safety contract: $line"
 done
-sed '/^VL_RETENTION=/d; /^VM_RETENTION=/d' "$env_file" >"$legacy_env"
+sed '/^VL_RETENTION=/d; /^VM_RETENTION=/d; /^VM_SELF_SCRAPE_INTERVAL=/d' "$env_file" >"$legacy_env"
 docker compose --env-file "$legacy_env" -f "$compose_file" config --format json >"$rendered"
 jq -e '.services.victorialogs.command | index("-retentionPeriod=365d") != null' "$rendered" >/dev/null ||
   fail 'VictoriaLogs must default to 365d when a legacy environment omits VL_RETENTION'
@@ -211,7 +213,8 @@ printf '%s\n' \
   'VM_RETENTION=7d' \
   'VM_MAX_HOURLY_SERIES=12345' \
   'VM_MAX_DAILY_SERIES=54321' \
-  'VM_MIN_FREE_DISK_SPACE_BYTES=268435456' >>"$legacy_env"
+  'VM_MIN_FREE_DISK_SPACE_BYTES=268435456' \
+  'VM_SELF_SCRAPE_INTERVAL=5s' >>"$legacy_env"
 docker compose --env-file "$legacy_env" -f "$compose_file" config --format json >"$rendered"
 jq -e '.services.victorialogs.command | index("-retentionPeriod=14d") != null' "$rendered" >/dev/null ||
   fail 'VictoriaLogs must honor an explicit VL_RETENTION override'
@@ -223,4 +226,6 @@ jq -e '.services.victoriametrics.command | index("-storage.maxDailySeries=54321"
   fail 'VictoriaMetrics must honor an explicit daily series override'
 jq -e '.services.victoriametrics.command | index("-storage.minFreeDiskSpaceBytes=268435456") != null' "$rendered" >/dev/null ||
   fail 'VictoriaMetrics must honor an explicit free-disk override'
+jq -e '.services.victoriametrics.command | index("-selfScrapeInterval=5s") != null' "$rendered" >/dev/null ||
+  fail 'VictoriaMetrics must honor an explicit self-scrape interval override'
 printf 'PASS: backend configuration contract\n'

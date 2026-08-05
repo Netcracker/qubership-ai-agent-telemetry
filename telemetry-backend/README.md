@@ -56,6 +56,7 @@ Set every value in `.env`:
 | `VM_MAX_HOURLY_SERIES` | Maximum unique metric series accepted during one hour. |
 | `VM_MAX_DAILY_SERIES` | Maximum unique metric series accepted during one day. |
 | `VM_MIN_FREE_DISK_SPACE_BYTES` | Free space VictoriaMetrics reserves before rejecting new writes. |
+| `VM_SELF_SCRAPE_INTERVAL` | Interval for collecting VictoriaMetrics operational metrics. Keep `30s` in production. |
 | `HTTP_PORT`, `HTTPS_PORT` | Published Caddy ports. Keep `80` and `443` on a public server. |
 
 Do not put the plaintext dashboard password in `.env`. `GRAFANA_ADMIN_PASSWORD` initializes a new `grafana-data`
@@ -268,7 +269,9 @@ in `vm_data_size_bytes` during the pilot instead of assuming a fixed size per in
 deployment before increasing them. Monitor `vm_hourly_series_limit_current_series`,
 `vm_daily_series_limit_current_series`, `vm_free_disk_space_bytes`, and `vm_data_size_bytes`. VictoriaMetrics drops new
 series after a cardinality limit is reached and stops accepting writes when free space falls below the configured
-reserve.
+reserve. `VM_SELF_SCRAPE_INTERVAL` controls how often VictoriaMetrics records these operational metrics. Keep the `30s`
+default in production because shorter intervals increase the number of stored samples; the backend fixture uses `5s`
+only to keep its bounded readiness check fast.
 
 Before a release, update the `Target version` default in `grafana/dashboards/telemetry-health.json` to the release being
 rolled out. The textbox remains editable at dashboard runtime for staged adoption checks.

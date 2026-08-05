@@ -32,5 +32,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify backend configuration
+        run: sh telemetry-backend/tests/config-contract.sh
+
+      - name: Verify VictoriaMetrics query retry bounds
+        run: sh telemetry-backend/tests/metrics-query-retry-test.sh
+
       - name: Run backend smoke test
         run: sh telemetry-backend/tests/smoke.sh
