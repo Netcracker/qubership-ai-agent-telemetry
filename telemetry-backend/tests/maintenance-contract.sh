@@ -107,6 +107,28 @@ assert_no_registry_event_after() {
   [ "$seen" -eq 1 ] || fail "command log lacks marker: $marker"
 }
 
+assert_task_resources_absent() {
+  local project=$1 transaction_id output
+  shift
+
+  output=$(docker ps -aq --filter "label=com.docker.compose.project=$project") ||
+    fail "cannot audit task containers for project $project"
+  [ -z "$output" ] || fail "task cleanup retained containers for project $project"
+  output=$(docker volume ls -q --filter "label=com.docker.compose.project=$project") ||
+    fail "cannot audit task volumes for project $project"
+  [ -z "$output" ] || fail "task cleanup retained volumes for project $project"
+  output=$(docker network ls -q --filter "label=com.docker.compose.project=$project") ||
+    fail "cannot audit task networks for project $project"
+  [ -z "$output" ] || fail "task cleanup retained networks for project $project"
+  for transaction_id in "$@"; do
+    [ -n "$transaction_id" ] || continue
+    output=$(docker ps -aq \
+      --filter "label=io.qubership.ai-agent-telemetry.maintenance.transaction=$transaction_id") ||
+      fail "cannot audit task helpers for transaction $transaction_id"
+    [ -z "$output" ] || fail "task cleanup retained helpers for transaction $transaction_id"
+  done
+}
+
 cleanup_backup_sandbox() {
   local root=$1 project=$2 restore_project=$3
   local -a sandbox_volumes restore_volumes
@@ -2000,7 +2022,11 @@ run_resolution_suite() {
 
 cleanup_manual_identity_migration_sandbox() {
   local sandbox=${1:-} legacy_project=${2:-} new_project=${3:-} project
-  local -a containers volumes networks
+  local -a containers volumes networks transaction_ids
+
+  if [ -n "$sandbox" ] && [ -f "$sandbox/migration.trace" ]; then
+    mapfile -t transaction_ids < <(sed -n 's/^HELPERS_ABSENT=//p' "$sandbox/migration.trace" | sort -u)
+  fi
 
   for project in "$legacy_project" "$new_project"; do
     [ -n "$project" ] || continue
@@ -2010,6 +2036,7 @@ cleanup_manual_identity_migration_sandbox() {
     [ "${#volumes[@]}" -eq 0 ] || docker volume rm "${volumes[@]}" >/dev/null 2>&1 || true
     mapfile -t networks < <(docker network ls -q --filter "label=com.docker.compose.project=$project")
     [ "${#networks[@]}" -eq 0 ] || docker network rm "${networks[@]}" >/dev/null 2>&1 || true
+    assert_task_resources_absent "$project" "${transaction_ids[@]}"
   done
   case "$sandbox" in
     /tmp/telemetry-manual-migration.*) rm -rf "$sandbox" ;;
@@ -2335,15 +2362,19 @@ EOF
 
 cleanup_real_activation_sandbox() {
   local sandbox=${1:-} project=${2:-} original_alpine_id=${3:-} previous_release=${4:-} target_release=${5:-}
-  local -a containers volumes networks
+  local -a containers volumes networks transaction_ids
 
   [ -n "$project" ] || return 0
+  if [ -n "$sandbox" ] && [ -f "$sandbox/commands.log" ]; then
+    mapfile -t transaction_ids < <(sed -n 's/^HELPERS_ABSENT=//p' "$sandbox/commands.log" | sort -u)
+  fi
   mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=$project")
   [ "${#containers[@]}" -eq 0 ] || docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
   mapfile -t volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
   [ "${#volumes[@]}" -eq 0 ] || docker volume rm "${volumes[@]}" >/dev/null 2>&1 || true
   mapfile -t networks < <(docker network ls -q --filter "label=com.docker.compose.project=$project")
   [ "${#networks[@]}" -eq 0 ] || docker network rm "${networks[@]}" >/dev/null 2>&1 || true
+  assert_task_resources_absent "$project" "${transaction_ids[@]}"
   [ -z "$original_alpine_id" ] || docker tag "$original_alpine_id" alpine:3.20 >/dev/null 2>&1 || true
   docker image rm "task5-mutable:$project" "skills-telemetry-backend-grafana:$previous_release" \
     "skills-telemetry-backend-grafana:$target_release" "alpine:task5-original-$project" >/dev/null 2>&1 || true
@@ -2625,7 +2656,7 @@ assert_event_before() {
 cleanup_recovery_sandbox() {
   local sandbox=${1:-} project=${2:-} transaction_id=${3:-}
   local unrelated_container=${4:-} same_transaction_other_role=${5:-} role
-  local -a containers volumes
+  local -a containers volumes networks
 
   [ -z "${maintenance_pid:-}" ] || kill -KILL "$maintenance_pid" >/dev/null 2>&1 || true
   [ -z "$unrelated_container" ] || docker rm -f "$unrelated_container" >/dev/null 2>&1 || true
@@ -2644,6 +2675,9 @@ cleanup_recovery_sandbox() {
     [ "${#containers[@]}" -eq 0 ] || docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
     mapfile -t volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
     [ "${#volumes[@]}" -eq 0 ] || docker volume rm "${volumes[@]}" >/dev/null 2>&1 || true
+    mapfile -t networks < <(docker network ls -q --filter "label=com.docker.compose.project=$project")
+    [ "${#networks[@]}" -eq 0 ] || docker network rm "${networks[@]}" >/dev/null 2>&1 || true
+    assert_task_resources_absent "$project" "$transaction_id"
   fi
   [ -z "$sandbox" ] || rm -rf "$sandbox"
 }
@@ -2654,7 +2688,7 @@ run_recovery_suite() {
   local unrelated_container
   local same_transaction_other_role
   local maintenance_pid phase expected_active service
-  local -a transaction_entries
+  local -a transaction_entries task_transaction_ids
 
   docker info >/dev/null 2>&1 || fail 'recovery contract requires a running local Docker daemon'
   alpine_digest='docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
@@ -2752,6 +2786,7 @@ EOF
   checkpoint_child_output=$sandbox/backup-crash.out
   wait_for_kill_checkpoint backup-helper-running "$maintenance_pid" "$event_log"
   transaction_id=$(sed -n 's/^TRANSACTION_ID=//p' "$backend_root/.maintenance-transaction")
+  task_transaction_ids+=("$transaction_id")
   helper_id=$(single_container_for_transaction "$transaction_id")
   unrelated_container=$(docker run -d --label \
     'io.qubership.ai-agent-telemetry.maintenance.transaction=unrelated-recovery' --label \
@@ -2811,6 +2846,7 @@ EOF
       --env-file "$backend_root/$previous_release/.env" -f "$backend_root/$previous_release/docker-compose.yml" \
       -f "$backend_root/$previous_release/.maintenance-compose.yml" up -d --no-build --pull never >/dev/null
     transaction_id="recovery-$phase"
+    task_transaction_ids+=("$transaction_id")
     transaction_entries=("FORMAT_VERSION=1" "TRANSACTION_ID=$transaction_id" 'OPERATION=update' \
       'PHASE=activation-prepared' "PREVIOUS_RELEASE=$previous_release" "TARGET_RELEASE=$target_release" \
       "BACKUP_PATH=$backup_root/pre-fixture")
@@ -2859,6 +2895,7 @@ EOF
   done
 
   cleanup_recovery_sandbox "$sandbox" "$project" "$transaction_id" '' ''
+  assert_task_resources_absent "$project" "${task_transaction_ids[@]}"
   trap - EXIT HUP INT TERM
   printf '%s\n' 'PASS: maintenance recovery contract'
 }
