@@ -496,7 +496,7 @@ EOF
   assert_services_running "$project" "$sandbox/backend"
   for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
     assert_event_before "VOLUME_MEASURE=${project}_${logical}" COMPOSE_DOWN "$event_log"
-    assert_event_before COMPOSE_DOWN "VOLUME_ARCHIVE=${project}_${logical}" "$event_log"
+    assert_event_before COMPOSE_STOPPED "VOLUME_ARCHIVE=${project}_${logical}" "$event_log"
     assert_event_before "VOLUME_ARCHIVE=${project}_${logical}" TRANSACTION_CLEAR "$event_log"
   done
   cleanup_backup_sandbox "$sandbox" "$project" "$restore_project"
@@ -579,6 +579,24 @@ run_cli_suite() {
   mkdir -p "$sandbox/backend" "$sandbox/backups"
   : >"$sandbox/backend/docker-compose.yml"
   : >"$sandbox/backend/.env"
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT=$sandbox/backend
+    export TELEMETRY_TEST_COMMAND_LOG=$sandbox/measure-events.log
+    maintenance_init
+    # shellcheck disable=SC2329 # measure_volume_bytes reaches Docker through this boundary double.
+    docker() {
+      printf '%s\n' "$*" >"$sandbox/measure-command"
+      printf '%s\n' 123
+    }
+    [ "$(measure_volume_bytes fixture-volume measure-contract 0)" = 123 ] || exit 1
+    measure_command=$(<"$sandbox/measure-command")
+    [[ $measure_command == *'type=volume,src=fixture-volume,dst=/source,readonly'* ]] || exit 1
+    [[ $measure_command == *'du -sb /source | cut -f1'* ]] || exit 1
+    grep -Fx 'VOLUME_MEASURE=fixture-volume' "$TELEMETRY_TEST_COMMAND_LOG" >/dev/null
+  ) || fail 'volume measurement helper is not read-only and size-only'
 
   assert_fails_with '--legacy-source may be specified only once' \
     "$backup_script" --legacy-source --legacy-source
@@ -801,8 +819,8 @@ run_cli_suite() {
     ) || fail "backup_main recovery ignored a helper $recovery_failure failure"
   done
 
-  for preoffline_failure in pin-inspect pin-sync capture-inspect capture-missing-id archive-grep-error archive-read-error \
-    archive-env-match; do
+  for preoffline_failure in pin-inspect pin-sync capture-inspect capture-missing-id capacity archive-grep-error \
+    archive-read-error archive-env-match; do
     (
       # shellcheck disable=SC1090,SC1091
       TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
@@ -866,7 +884,7 @@ run_cli_suite() {
       # shellcheck disable=SC2329 # backup_main invokes this bounded Docker discovery double.
       measure_volume_bytes() { printf '%s\n' 0; }
       # shellcheck disable=SC2329 # backup_main invokes this bounded capacity double.
-      check_backup_capacity() { return 0; }
+      check_backup_capacity() { [ "$preoffline_failure" != capacity ]; }
       # shellcheck disable=SC2329 # backup_main invokes this bounded health double.
       strict_health_gate() { return 0; }
       # shellcheck disable=SC2329 # backup_main reaches Docker through the sourced production functions.

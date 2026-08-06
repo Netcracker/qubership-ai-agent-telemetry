@@ -1510,12 +1510,14 @@ EOF
 }
 
 measure_volume_bytes() {
-  local volume_name=$1 transaction_id=$2 ordinal=$3
+  local volume_name=$1 transaction_id=$2 ordinal=$3 volume_bytes
 
-  docker run --rm --name "skills-telemetry-backup-${transaction_id}-measure-${ordinal}" \
+  volume_bytes=$(docker run --rm --name "skills-telemetry-backup-${transaction_id}-measure-${ordinal}" \
     --label "$TRANSACTION_LABEL=$transaction_id" --label "$ROLE_LABEL=backup" \
     --mount "type=volume,src=$volume_name,dst=/source,readonly" "$HELPER_IMAGE" \
-    sh -eu -c 'du -sb /source | cut -f1'
+    sh -eu -c 'du -sb /source | cut -f1') || return 1
+  record_test_event "VOLUME_MEASURE=$volume_name" || return 1
+  printf '%s\n' "$volume_bytes"
 }
 
 check_backup_capacity() {
@@ -1837,7 +1839,9 @@ backup_main() {
   if ! compose "$release_dir" down; then
     failed=1
   else
+    record_test_event COMPOSE_STOPPED || failed=1
     for ordinal in "${!logical_volumes[@]}"; do
+      [ "$failed" -eq 0 ] || break
       actual_volume=${actual_volumes[ordinal]}
       archive_name="${actual_volume}.tar.gz"
       if [ "${TELEMETRY_MAINTENANCE_TEST_MODE:-}" = 1 ] &&
@@ -1869,6 +1873,10 @@ backup_main() {
       docker rm "$helper_id" >/dev/null 2>&1 || failed=1
       [ "$failed" -eq 0 ] || break
       tar -tzf "$backup_work_dir/volumes/$archive_name" >/dev/null || {
+        failed=1
+        break
+      }
+      record_test_event "VOLUME_ARCHIVE=$actual_volume" || {
         failed=1
         break
       }
