@@ -96,7 +96,7 @@ Pass a release tag, branch name, or full commit SHA to `--ref` when you do not w
 ./update-backend.sh --ref <full-commit-sha>
 ```
 
-The updater stages downloads and images before downtime, creates a self-contained backup under `/opt/skills-telemetry-backups`, activates the target through the `latest` symlink, checks backend health, and restores the previous release if activation fails.
+The updater stages downloads and images before downtime, creates a self-contained backup under `/opt/ai-agent-telemetry-backups`, activates the target through the `latest` symlink, checks backend health, and restores the previous release if activation fails.
 
 ## Smoke checks
 

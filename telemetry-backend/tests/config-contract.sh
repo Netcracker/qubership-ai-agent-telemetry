@@ -18,6 +18,7 @@ codex_dashboard=$backend_dir/grafana/dashboards/codex-native-metrics.json
 collector_config=$backend_dir/otel-collector-config.yaml
 fixture_stack=$backend_dir/tests/with-fixture-stack.sh
 repository_root=$(CDPATH='' cd -- "$backend_dir/.." && pwd)
+release_guide=$repository_root/docs/release.md
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -62,6 +63,10 @@ printf '%s\n' "$legacy_hits" | while IFS= read -r legacy_path; do
       ;;
   esac
 done
+
+if grep -Fq '/opt/skills-telemetry-backups' "$release_guide"; then
+  fail 'release guide must use the ordinary backend backup root'
+fi
 
 for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
   VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES VM_SELF_SCRAPE_INTERVAL; do
