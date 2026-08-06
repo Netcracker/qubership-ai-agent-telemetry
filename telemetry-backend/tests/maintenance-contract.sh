@@ -69,6 +69,14 @@ assert_services_running() {
     fail 'backup did not restart every service'
 }
 
+assert_services_stopped() {
+  local project=$1
+  local -a containers
+
+  mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.project=$project")
+  [ "${#containers[@]}" -eq 0 ] || fail 'backup intentionally left backend services running'
+}
+
 assert_container_image_ids() {
   local project=$1 manifest=$2 service expected_id container
   local -a containers
@@ -172,6 +180,7 @@ cleanup_restore_project() {
 
 run_backup_suite() {
   local sandbox backup_root restore_root mismatch_root project restore_project backup_dir event_log unsafe_event_log output
+  local legacy_event_log down_lie_event_log docker_wrapper_dir real_docker
   local restore_instructions logical service image_record image_reference image_id extra manifest_checksum_count
   local invalid_backup invalid_release invalid_case original_image_record previous_caddy_id
   local -a source_volumes manifest_images manifest_services
@@ -355,6 +364,107 @@ EOF
     "$(grep -n '^COMPOSE_DOWN$' "$event_log" | head -n 1 | cut -d: -f1)" ] ||
     fail 'preliminary checksums did not precede compose down'
 
+  : >"$unsafe_event_log"
+  assert_fails_with '--leave-stopped is available only for an updater handoff or --legacy-source' env \
+    TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
+    TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project" \
+    TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$unsafe_event_log" \
+    "$backup_script" --target-label unsafe-leave-stopped --leave-stopped
+  [ ! -s "$unsafe_event_log" ] || fail 'unsafe standalone --leave-stopped reached Docker-backed backup work'
+
+  legacy_event_log=$sandbox/legacy-events.log
+  (
+    # Exercise the production legacy branch against the real Docker fixture while retaining test-safe paths.
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    eval "$(declare -f maintenance_init | sed '1s/maintenance_init/original_maintenance_init/')"
+    # shellcheck disable=SC2329 # backup_main invokes this boundary override through the sourced script.
+    maintenance_init() {
+      [ "${1:-}" = legacy-source ] || return 1
+      original_maintenance_init ordinary || return 1
+      export MAINTENANCE_IDENTITY_MODE=legacy-source
+      CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
+      COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
+      ENV_FILE=$CURRENT_BACKEND_DIR/.env
+      GENERATED_OVERRIDE_FILE=$CURRENT_BACKEND_DIR/.maintenance-compose.yml
+    }
+    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend"
+    export TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project"
+    export TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$legacy_event_log"
+    backup_main --legacy-source --target-label legacy-cutover --leave-stopped
+  ) || fail 'supervised legacy backup did not complete successfully'
+  assert_services_stopped "$project"
+  [ ! -f "$sandbox/backend/.maintenance-transaction" ] ||
+    fail 'successful supervised legacy backup retained its durable transaction'
+  mapfile -t legacy_backups < <(compgen -G "$backup_root/pre-legacy-cutover-*" || true)
+  [ "${#legacy_backups[@]}" -eq 1 ] && [[ ${legacy_backups[0]} != *.incomplete ]] ||
+    fail 'supervised legacy backup did not publish exactly one completed backup'
+  (cd "${legacy_backups[0]}" && sha256sum -c SHA256SUMS >/dev/null) ||
+    fail 'supervised legacy backup checksums do not verify'
+  [ "$(sed -n 's/^IMAGE=//p' "${legacy_backups[0]}/manifest.txt" | wc -l)" -eq 5 ] ||
+    fail 'supervised legacy backup did not preserve five image identities'
+  assert_event_before BACKUP_PUBLISHED TRANSACTION_CLEAR "$legacy_event_log"
+
+  docker compose --project-name "$project" --project-directory "$sandbox/backend/previous" \
+    --env-file "$sandbox/backend/previous/.env" -f "$sandbox/backend/previous/docker-compose.yml" \
+    -f "$sandbox/backend/previous/.maintenance-compose.yml" up -d --no-build --pull never
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    eval "$(declare -f maintenance_init | sed '1s/maintenance_init/original_maintenance_init/')"
+    # shellcheck disable=SC2329 # backup_main invokes this boundary override through the sourced script.
+    maintenance_init() {
+      [ "${1:-}" = legacy-source ] || return 1
+      original_maintenance_init ordinary || return 1
+      export MAINTENANCE_IDENTITY_MODE=legacy-source
+      CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
+      COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
+      ENV_FILE=$CURRENT_BACKEND_DIR/.env
+      GENERATED_OVERRIDE_FILE=$CURRENT_BACKEND_DIR/.maintenance-compose.yml
+    }
+    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend"
+    export TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project"
+    export TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_FAIL_BACKUP_HELPER=1
+    run_fails backup_main --legacy-source --target-label legacy-cutover-failure --leave-stopped
+  ) || fail 'failed supervised legacy backup did not report failure'
+  assert_services_running "$project" "$sandbox/backend/previous"
+  [ ! -f "$sandbox/backend/.maintenance-transaction" ] ||
+    fail 'failed supervised legacy backup retained its durable transaction after recovery'
+
+  down_lie_event_log=$sandbox/down-lie-events.log
+  docker_wrapper_dir=$sandbox/down-lie-bin
+  real_docker=$(command -v docker)
+  mkdir -p "$docker_wrapper_dir"
+  cat >"$docker_wrapper_dir/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" = compose ]; then
+  prefix=()
+  for argument in "$@"; do
+    if [ "$argument" = down ]; then
+      "$TELEMETRY_REAL_DOCKER" "${prefix[@]}" stop collector grafana victorialogs victoriametrics >/dev/null
+      "$TELEMETRY_REAL_DOCKER" "${prefix[@]}" rm -f collector grafana victorialogs victoriametrics >/dev/null
+      exit 0
+    fi
+    prefix+=("$argument")
+  done
+fi
+exec "$TELEMETRY_REAL_DOCKER" "$@"
+EOF
+  chmod 700 "$docker_wrapper_dir/docker"
+  run_fails env PATH="$docker_wrapper_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
+    TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
+    TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project" \
+    TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$down_lie_event_log" \
+    "$backup_script" --target-label incomplete-compose-down
+  if grep -F 'VOLUME_ARCHIVE=' "$down_lie_event_log" >/dev/null; then
+    fail 'backup archived a volume after Compose left a declared service container behind'
+  fi
+  assert_services_running "$project" "$sandbox/backend/previous"
+  [ ! -f "$sandbox/backend/.maintenance-transaction" ] ||
+    fail 'incomplete Compose shutdown retained its durable transaction after recovery'
+
   (
     # shellcheck disable=SC1090,SC2030,SC2031
     TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
@@ -389,10 +499,16 @@ EOF
       entries+=("TARGET_IMAGE_${service^^}=$(fixture_image_id next-release "$service")")
     done
     write_transaction "${entries[@]}"
+    exec {handoff_fd}>"$LOCK_FILE"
+    flock -n "$handoff_fd"
+    export TELEMETRY_UPDATE_LOCK_HELD=1 TELEMETRY_UPDATE_LOCK_FD=$handoff_fd
+    export TELEMETRY_UPDATE_TRANSACTION_ID=updater-transaction
+    export TELEMETRY_UPDATE_PREVIOUS_RELEASE=previous-release
     backup_main --target-label handoff --leave-stopped --allow-large-backup
     [ "$(read_transaction TRANSACTION_ID)" = updater-transaction ] || exit 1
     [ "$(read_transaction PHASE)" = activation-prepared ] || exit 1
     [ "$(read_transaction PREVIOUS_IMAGE_CADDY)" = "$previous_caddy_id" ] || exit 1
+    exec {handoff_fd}>&-
   ) || fail 'validated update handoff did not preserve its transaction'
   docker compose --project-name "$project" --project-directory "$sandbox/backend" --env-file "$sandbox/backend/.env" \
     -f "$sandbox/backend/docker-compose.yml" up -d --no-build --pull never
@@ -533,10 +649,18 @@ run_cli_suite() {
     TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
     [ "$(resolve_active_backend_dir "$legacy_root")" = "$legacy_release" ] || exit 1
     rm -f "$legacy_root/latest"
-    ln -s ../release-legacy "$legacy_root/latest"
-    run_fails resolve_active_backend_dir "$legacy_root"
+    ln -s release-legacy/ "$legacy_root/latest"
+    [ "$(resolve_active_backend_dir "$legacy_root")" = "$legacy_release" ] || exit 1
+    for unsafe_target in "$legacy_release" ./release-legacy ../release-legacy nested/release-legacy release-legacy//; do
+      rm -f "$legacy_root/latest"
+      ln -s "$unsafe_target" "$legacy_root/latest"
+      run_fails resolve_active_backend_dir "$legacy_root"
+    done
+    mkdir -p "$legacy_root/release-target"
+    ln -s release-target "$legacy_root/release-link"
     rm -f "$legacy_root/latest"
-    ln -s release-legacy "$legacy_root/latest"
+    ln -s release-link "$legacy_root/latest"
+    run_fails resolve_active_backend_dir "$legacy_root"
   ) || fail 'active backend resolution accepted an unsafe latest link or missed its immutable release'
 
   (
@@ -2974,6 +3098,64 @@ PY
   printf '%s\n' 'PASS: maintenance retention contract'
 }
 
+run_runbook_suite() {
+  local runbook=$backend_dir/MIGRATE_LEGACY_BACKEND.md required forbidden service
+
+  [ -f "$runbook" ] || fail 'manual identity migration runbook is missing'
+  for required in \
+    'LEGACY_PROJECT=skills-telemetry-backend' \
+    'NEW_PROJECT=ai-agent-telemetry-backend' \
+    'LEGACY_ROOT=/opt/skills-telemetry-backend' \
+    'NEW_ROOT=/opt/ai-agent-telemetry-backend' \
+    'BACKUP_ROOT=/opt/ai-agent-telemetry-backups' \
+    'RELEASE_TAG=<release-tag>' \
+    'sha256sum -c SHA256SUMS' \
+    'ai-agent-telemetry-backend.tar.gz: OK' \
+    'backup-backend.sh: OK' \
+    'checksum-verified backup asset' \
+    '--legacy-source' \
+    '--target-label identity-migration --leave-stopped' \
+    "com.docker.compose.project=\$NEW_PROJECT" \
+    "com.docker.compose.volume=\$logical" \
+    'find /expected -exec stat' \
+    'find /actual -exec stat' \
+    "strict_health_gate \"\$NEW_RELEASE\"" \
+    'docker inspect --format {{.Image}}' \
+    'backup-backend.sh --target-label pre-late-fallback' \
+    'docker volume rm'; do
+    grep -F -- "$required" "$runbook" >/dev/null ||
+      fail "manual identity migration runbook lacks required contract: $required"
+  done
+  for service in caddy collector grafana victorialogs victoriametrics; do
+    grep -F -- "IMAGE=$service|" "$runbook" >/dev/null ||
+      fail "manual identity migration fallback omits manifest image identity: $service"
+  done
+  for required in \
+    'An operator must remain present' \
+    'At most one Compose project may run' \
+    'Verify the result:' \
+    'Inspect an interrupted migration' \
+    'legacy source tree, volumes, backup, and image identities' \
+    'Keep the legacy source tree' \
+    'Remove the legacy deployment later'; do
+    grep -F -- "$required" "$runbook" >/dev/null ||
+      fail "manual identity migration runbook lacks required safety statement: $required"
+  done
+  for forbidden in \
+    'migrate-backend.sh' \
+    '.migration-marker' \
+    '.migration-tombstone' \
+    '.migration-cleanup-state' \
+    'automatic legacy deletion' \
+    'signed backup asset' \
+    'legacy release, containers, and volumes'; do
+    if grep -F -- "$forbidden" "$runbook" >/dev/null; then
+      fail "manual identity migration runbook includes forbidden automation: $forbidden"
+    fi
+  done
+  printf '%s\n' 'PASS: manual identity migration runbook contract'
+}
+
 case "${1:-}" in
   cli)
     run_cli_suite
@@ -2996,7 +3178,10 @@ case "${1:-}" in
   retention)
     run_retention_suite
     ;;
+  runbook)
+    run_runbook_suite
+    ;;
   *)
-    fail 'usage: maintenance-contract.sh <activation|activation-real|backup|cli|recovery|resolution|retention>'
+    fail 'usage: maintenance-contract.sh <activation|activation-real|backup|cli|recovery|resolution|retention|runbook>'
     ;;
 esac

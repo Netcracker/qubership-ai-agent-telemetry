@@ -46,6 +46,9 @@ resolve_active_backend_dir() {
     return 1
   }
   release_id=$(readlink -- "$active_link") || return 1
+  case "$release_id" in
+    */) release_id=${release_id%/} ;;
+  esac
   validate_target_label "$release_id" || return 1
   release_dir=$backend_root/$release_id
   [ -d "$release_dir" ] && [ ! -L "$release_dir" ] || {
@@ -1558,6 +1561,23 @@ restart_original_stack() {
   compose "$release_dir" up -d --no-build --pull never && strict_health_gate "$release_dir"
 }
 
+assert_backend_service_containers_absent() {
+  local service container_output
+
+  for service in caddy collector grafana victorialogs victoriametrics; do
+    container_output=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service") || {
+      maintenance_error "cannot verify the stopped backend service: $service"
+      return 1
+    }
+    [ -z "$container_output" ] || {
+      maintenance_error "Compose left a backend service container after shutdown: $service"
+      return 1
+    }
+  done
+  record_test_event BACKEND_CONTAINERS_ABSENT
+}
+
 capture_running_image_entries() {
   local service container image_id container_output
   local -a containers
@@ -1643,7 +1663,8 @@ backup_main() {
   local identity_mode=ordinary legacy_source_seen=0
   local completed_dir backup_work_dir backup_parent transaction_id target_release previous_release volume_bytes total_bytes
   local logical_volume actual_volume archive_name ordinal failed=0 helper_id helper_status helper_delay=0
-  local handoff=0 release_dir logical_volume_output image_output image_record service reference image_id extra
+  local handoff=0 supervised_legacy=0 release_dir logical_volume_output image_output image_record service reference
+  local image_id extra
   local created_at compose_version
   local -a logical_volumes actual_volumes image_records previous_image_entries
 
@@ -1701,20 +1722,42 @@ backup_main() {
     sleep "$TELEMETRY_TEST_HOLD_LOCK_SECONDS"
   fi
   if [ "$leave_stopped" -eq 1 ]; then
-    [ "$(read_transaction OPERATION 2>/dev/null || true)" = update ] &&
-      [ "$(read_transaction PHASE 2>/dev/null || true)" = backup-offline ] || {
-      maintenance_error '--leave-stopped requires an update transaction in backup-offline phase'
-      return 1
-    }
-    transaction_id=$(read_transaction TRANSACTION_ID 2>/dev/null || true)
-    target_release=$(read_transaction TARGET_RELEASE 2>/dev/null || true)
-    previous_release=$(read_transaction PREVIOUS_RELEASE 2>/dev/null || true)
-    [ -n "$transaction_id" ] && validate_target_label "$target_release" && [ -n "$previous_release" ] || {
-      maintenance_error '--leave-stopped requires a complete updater-owned transaction'
-      return 1
-    }
-    handoff=1
-    release_dir=$BACKEND_ROOT/$previous_release
+    if [ "$MAINTENANCE_IDENTITY_MODE" = legacy-source ]; then
+      [ "${TELEMETRY_UPDATE_LOCK_HELD:-}" != 1 ] || {
+        maintenance_error '--legacy-source cannot use an updater-owned maintenance lock'
+        return 1
+      }
+      recover_transaction || return 1
+      supervised_legacy=1
+      transaction_id="backup-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM"
+      release_dir=$CURRENT_BACKEND_DIR
+      previous_release=$(basename -- "$release_dir") || return 1
+      validate_target_label "$previous_release" || return 1
+      [ "$release_dir" = "$BACKEND_ROOT/$previous_release" ] &&
+        [ "$(resolve_active_backend_dir "$BACKEND_ROOT")" = "$release_dir" ] || {
+        maintenance_error "active release directory is missing or unsafe: $release_dir"
+        return 1
+      }
+    else
+      [ "${TELEMETRY_UPDATE_LOCK_HELD:-}" = 1 ] || {
+        maintenance_error '--leave-stopped is available only for an updater handoff or --legacy-source'
+        return 1
+      }
+      [ "$(read_transaction OPERATION 2>/dev/null || true)" = update ] &&
+        [ "$(read_transaction PHASE 2>/dev/null || true)" = backup-offline ] || {
+        maintenance_error '--leave-stopped requires an update transaction in backup-offline phase'
+        return 1
+      }
+      transaction_id=$(read_transaction TRANSACTION_ID 2>/dev/null || true)
+      target_release=$(read_transaction TARGET_RELEASE 2>/dev/null || true)
+      previous_release=$(read_transaction PREVIOUS_RELEASE 2>/dev/null || true)
+      [ -n "$transaction_id" ] && validate_target_label "$target_release" && [ -n "$previous_release" ] || {
+        maintenance_error '--leave-stopped requires a complete updater-owned transaction'
+        return 1
+      }
+      handoff=1
+      release_dir=$BACKEND_ROOT/$previous_release
+    fi
   else
     recover_transaction || return 1
     transaction_id="backup-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM"
@@ -1838,6 +1881,8 @@ backup_main() {
   fi
   if ! compose "$release_dir" down; then
     failed=1
+  elif ! assert_backend_service_containers_absent; then
+    failed=1
   else
     record_test_event COMPOSE_STOPPED || failed=1
     for ordinal in "${!logical_volumes[@]}"; do
@@ -1897,6 +1942,8 @@ backup_main() {
   if [ "$failed" -eq 0 ]; then
     if ! mv -T -- "$backup_work_dir" "$completed_dir" || ! sync -f "$BACKUP_ROOT"; then
       failed=1
+    else
+      record_test_event BACKUP_PUBLISHED || failed=1
     fi
   fi
   if [ "$failed" -ne 0 ]; then
@@ -1911,8 +1958,12 @@ backup_main() {
   fi
   cleanup_transaction_helpers "$transaction_id" || return 1
   assert_transaction_helpers_absent "$transaction_id" || return 1
-  if [ "$leave_stopped" -eq 1 ]; then
+  if [ "$handoff" -eq 1 ]; then
     rewrite_transaction_state activation-prepared "$completed_dir" || return 1
+    return 0
+  fi
+  if [ "$supervised_legacy" -eq 1 ]; then
+    clear_transaction || return 1
     return 0
   fi
   if restart_original_stack "$release_dir"; then

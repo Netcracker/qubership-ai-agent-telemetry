@@ -9,8 +9,11 @@ portable backups, minimized downtime, strict health verification, durable rollba
 **Architecture:** `backup-backend.sh` owns shared maintenance primitives and the portable backup transaction;
 `update-backend.sh` sources those primitives, resolves immutable GitHub content, stages pinned per-release images, and
 drives activation. A Docker-backed contract test runs both scripts only under `/tmp`, uses an opaque-redirect HTTP
-fixture, and injects process death at transaction boundaries. Release packaging stays in a separate repository script
-and publishes only the two server commands.
+fixture, and injects process death at transaction boundaries. Release packaging
+stays in a separate repository script and publishes only the two server
+commands. The ordinary maintenance identity is
+`ai-agent-telemetry-backend`. Moving the inspected legacy deployment to it is
+a separate, supervised runbook procedure.
 
 **Tech Stack:** Bash 4+, Docker Engine 24+, Docker Compose v2, GNU coreutils/tar/date, curl, Python 3 standard library,
 ShellCheck, GitHub Actions, VictoriaLogs, VictoriaMetrics, Grafana, Caddy, and OpenTelemetry JSON/HTTP.
@@ -18,8 +21,12 @@ ShellCheck, GitHub Actions, VictoriaLogs, VictoriaMetrics, Grafana, Caddy, and O
 ## Global constraints
 
 - Keep exactly two public server commands: `backup-backend.sh` and `update-backend.sh`.
-- Use `/opt/skills-telemetry-backend`, `/opt/skills-telemetry-backups`, and project
-  `skills-telemetry-backend` in production.
+- Use `/opt/ai-agent-telemetry-backend`,
+  `/opt/ai-agent-telemetry-backups`, and project `ai-agent-telemetry-backend`
+  for ordinary production maintenance.
+- Keep identity migration out of the updater. Require an operator to follow
+  `telemetry-backend/MIGRATE_LEGACY_BACKEND.md`, run at most one project,
+  retain legacy resources after success, and perform cleanup explicitly later.
 - Allow path, lock, project, API, download, and timeout overrides only when
   `TELEMETRY_MAINTENANCE_TEST_MODE=1`; test filesystem paths must resolve under `/tmp`.
 - Never connect tests to the production server.
@@ -32,8 +39,10 @@ ShellCheck, GitHub Actions, VictoriaLogs, VictoriaMetrics, Grafana, Caddy, and O
   `.maintenance-compose.yml` override.
 - Store backups as compressed, root-only `pre-<target>-YYYYMMDD-HHMMSSZ` directories; never run Compose with `-v`.
 - Pin registry services by repository digest and tag Grafana as
-  `skills-telemetry-backend-grafana:<release-id>` before downtime.
+  `ai-agent-telemetry-backend-grafana:<release-id>` before downtime.
 - Persist transaction phases with same-directory `mv -Tf` and `sync -f`; process-local traps are only a fast path.
+- Preserve backup and update transaction recovery and exact-label helper
+  cleanup after the identity transition.
 - Roll back configuration and image identity, but never restore volume data automatically.
 - Do not save Docker images in backups; restore pulls pinned registry images and rebuilds the release-specific Grafana
   image from the archived source.
@@ -59,6 +68,8 @@ ShellCheck, GitHub Actions, VictoriaLogs, VictoriaMetrics, Grafana, Caddy, and O
 - Modify `.github/workflows/telemetry-backend-tests.yaml`: run syntax, ShellCheck, packaging, and maintenance contracts.
 - Modify `telemetry-backend/tests/config-contract.sh`: enforce executable scripts and operator-documentation contract.
 - Modify `telemetry-backend/README.md`: installation, backup, update, recovery, retention, and restore procedures.
+- Create `telemetry-backend/MIGRATE_LEGACY_BACKEND.md`: supervised identity
+  cutover, fallback, and later cleanup.
 - Modify `docs/release.md`: exact asset list and backend archive/checksum rules.
 
 ---
@@ -189,7 +200,8 @@ git commit -S -m "build(release): package telemetry backend assets"
   and `backup_main`.
 - `update-backend.sh` later loads them with `TELEMETRY_SOURCE_ONLY=1 source "$script_dir/backup-backend.sh"`.
 - Public backup syntax is
-  `backup-backend.sh [--target-label LABEL] [--leave-stopped] [--allow-large-backup]`.
+  `backup-backend.sh [--target-label LABEL] [--leave-stopped]`
+  `[--allow-large-backup] [--legacy-source]`.
 - The test harness defines `fail MESSAGE` and `run_fails COMMAND...`; `run_fails` succeeds only when its command exits
   nonzero.
 
@@ -223,10 +235,13 @@ Expected: FAIL because `backup-backend.sh` does not exist.
 Define exact production constants and allow overrides only in test mode:
 
 ```bash
-readonly PROJECT_NAME_DEFAULT=skills-telemetry-backend
-readonly BACKEND_ROOT_DEFAULT=/opt/skills-telemetry-backend
-readonly BACKUP_ROOT_DEFAULT=/opt/skills-telemetry-backups
-readonly LOCK_FILE_DEFAULT=/run/lock/skills-telemetry-backend-maintenance.lock
+readonly PROJECT_NAME_DEFAULT=ai-agent-telemetry-backend
+readonly BACKEND_ROOT_DEFAULT=/opt/ai-agent-telemetry-backend
+readonly BACKUP_ROOT_DEFAULT=/opt/ai-agent-telemetry-backups
+readonly LOCK_FILE_DEFAULT=/run/lock/ai-agent-telemetry-backend-maintenance.lock
+readonly LEGACY_PROJECT_NAME=skills-telemetry-backend
+readonly LEGACY_BACKEND_ROOT=/opt/skills-telemetry-backend
+readonly LEGACY_LOCK_FILE=/run/lock/skills-telemetry-backend-maintenance.lock
 HELPER_IMAGE='docker.io/library/alpine:3.20@sha256:'
 HELPER_IMAGE+='d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
 readonly HELPER_IMAGE
@@ -456,7 +471,7 @@ requested_ref=main
 resolved_identity=0123456789abcdef0123456789abcdef01234567
 content_identity=<normalized-backend-sha256>
 image.caddy=<repository-digest>|<local-image-id>
-image.grafana=skills-telemetry-backend-grafana:0123456789ab|<local-image-id>
+image.grafana=ai-agent-telemetry-backend-grafana:0123456789ab|<local-image-id>
 ```
 
 - [ ] **Step 5: Run resolution tests and verify GREEN**
@@ -682,8 +697,10 @@ git commit -S -m "feat(backend): recover interrupted maintenance"
 
 Create backups at 30, 20, 10, and 1 day old plus malformed and `.incomplete` entries. Assert interactive default No,
 noninteractive report-only behavior, explicit prune, newest-two protection, and preservation of malformed entries.
-Extend `config-contract.sh` to require `/opt/skills-telemetry-backups`, `--ref`, `--allow-large-backup`,
-`--prune-backups`, `SIGKILL`, `RESTORE.md`, image digests, and the no-volume-restore rollback warning.
+Extend `config-contract.sh` to require `/opt/ai-agent-telemetry-backups`,
+`--ref`, `--allow-large-backup`, `--prune-backups`, `SIGKILL`, `RESTORE.md`,
+image digests, the manual identity migration link, and the no-volume-restore
+rollback warning.
 
 - [ ] **Step 2: Run retention and documentation tests and verify RED**
 
@@ -714,7 +731,9 @@ fi
 Add sections for release installation layout, standalone backup, latest/tag/branch/SHA update, required GitHub token
 behavior, data-dependent downtime, large-backup confirmation, pinned images, health probes, automatic rollback,
 interrupted transaction recovery, helper cleanup, retention, and cross-machine restore. State that operators rerun
-update after a reboot during maintenance and that volume restore is always manual.
+update after a reboot during maintenance and that volume restore is always
+manual. Link the supervised migration from the legacy project and keep
+identity migration out of the update command.
 
 - [ ] **Step 5: Run retention and documentation tests and verify GREEN**
 

@@ -252,6 +252,15 @@ Repeat the process for **VictoriaMetrics**, use `https://<SITE_ADDRESS>:<HTTPS_P
 
 ## Operations
 
+Production maintenance uses the ordinary Compose project
+`ai-agent-telemetry-backend`, backend root
+`/opt/ai-agent-telemetry-backend`, and backup root
+`/opt/ai-agent-telemetry-backups`. If a server still runs the legacy
+`skills-telemetry-backend` project from `/opt/skills-telemetry-backend`, follow
+the [legacy identity migration runbook](MIGRATE_LEGACY_BACKEND.md) before using
+the ordinary backup and update commands. The migration keeps the legacy
+deployment available for an operator-controlled fallback and later cleanup.
+
 | Task | Command |
 | --- | --- |
 | Run the complete local backend test | `sh tests/smoke.sh` |

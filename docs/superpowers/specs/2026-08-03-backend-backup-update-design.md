@@ -2,8 +2,11 @@
 
 ## Goal
 
-Publish the telemetry backend as a release asset and provide two server-side scripts that create a portable backup and
-update an installed backend with minimized, data-dependent downtime and automatic configuration rollback.
+Publish the telemetry backend as a release asset and provide two server-side
+scripts that create a portable backup and update an installed backend with
+minimized, data-dependent downtime and automatic configuration rollback. The
+scripts operate on the ordinary `ai-agent-telemetry-backend` identity. Moving
+the verified legacy deployment to it is a separate, supervised procedure.
 
 ## Verified deployment
 
@@ -21,6 +24,21 @@ The production server was inspected read-only on August 3, 2026. Its active depl
 The scripts must not connect to or modify the production server during development or testing. All implementation
 verification uses an isolated local sandbox.
 
+## Deployment identity transition
+
+The inspected deployment uses the legacy project
+`skills-telemetry-backend` and root `/opt/skills-telemetry-backend`. Ordinary
+maintenance uses project `ai-agent-telemetry-backend`, root
+`/opt/ai-agent-telemetry-backend`, backup root
+`/opt/ai-agent-telemetry-backups`, and lock
+`/run/lock/ai-agent-telemetry-backend-maintenance.lock`.
+
+Identity migration is not part of `update-backend.sh`. An operator follows the
+[manual runbook](../../../telemetry-backend/MIGRATE_LEGACY_BACKEND.md), remains
+present, keeps at most one project running, and retains legacy resources for
+explicit fallback and later cleanup. The ordinary update transaction begins
+only after that one-time migration succeeds.
+
 ## Files and public commands
 
 Create two executable Bash scripts:
@@ -34,9 +52,10 @@ on durable activation state.
 
 Production defaults are:
 
-- backend root: `/opt/skills-telemetry-backend`;
-- backup root: `/opt/skills-telemetry-backups`;
-- active link: `/opt/skills-telemetry-backend/latest`;
+- Compose project: `ai-agent-telemetry-backend`;
+- backend root: `/opt/ai-agent-telemetry-backend`;
+- backup root: `/opt/ai-agent-telemetry-backups`;
+- active link: `/opt/ai-agent-telemetry-backend/latest`;
 - GitHub repository: `Netcracker/qubership-ai-agent-telemetry`.
 
 Tests may override the roots, Compose project name, maintenance lock path, repository API URL, download URL, and probe
@@ -131,7 +150,7 @@ if [[ -f "$release_dir/.maintenance-compose.yml" ]]; then
 fi
 
 docker compose \
-  --project-name skills-telemetry-backend \
+  --project-name ai-agent-telemetry-backend \
   --project-directory "$release_dir" \
   --env-file "$release_dir/.env" \
   "${compose_files[@]}" \
@@ -139,21 +158,26 @@ docker compose \
 ```
 
 The wrapper is the only path to `config`, `pull`, `build`, `down`, `up`, `ps`, and Compose metadata discovery. Direct
-Docker discovery filters networks, volumes, and containers by the same exact project label. The script validates that
-the active deployment belongs to `skills-telemetry-backend`. The explicit project name overrides the archive's
-top-level Compose name and preserves the production containers, network, and volumes.
+Docker discovery filters networks, volumes, and containers by the same exact
+project label. The script validates that the active deployment belongs to
+`ai-agent-telemetry-backend`. The explicit project name overrides the
+archive's top-level Compose name and
+preserves the production containers, network, and volumes.
 
-Before pulling or building a Compose service image, both scripts bootstrap `.maintenance-compose.yml` for a legacy
-active release that does not have one. The bootstrap maps each registry-backed service to the immutable repository
+Before pulling or building an image, both scripts bootstrap
+`.maintenance-compose.yml` for an older active release that does not have one.
+The bootstrap maps each registry-backed service to the immutable repository
 digest of its running container. It tags the running Grafana image as
-`skills-telemetry-backend-grafana:<active-release-id>` and assigns that tag to the Grafana service. Bootstrap stops
+`ai-agent-telemetry-backend-grafana:<active-release-id>` and assigns that tag
+to Grafana. Bootstrap stops
 before changing any tag when a running container, service mapping, or registry digest is missing or ambiguous. The
 script rerenders and validates the effective Compose configuration after writing the override.
 
 Each target release gets its own `.maintenance-compose.yml`. The updater first pulls registry-backed images from the
 base Compose configuration, resolves their local repository digests, and writes those digest references into the
 override. It assigns Grafana the deployment-specific image tag
-`skills-telemetry-backend-grafana:<target-release-id>` before building it. Later pulls, builds, activation, health
+`ai-agent-telemetry-backend-grafana:<target-release-id>` before building it.
+Later pulls, builds, activation, health
 checks, backup restarts, and rollback all use the effective base-plus-override configuration. Pulling a mutable source
 tag or building a target therefore cannot move an image reference used by the previous release.
 
@@ -197,7 +221,7 @@ estimate: offline duration remains proportional to stored data, storage throughp
 Backups are stored at:
 
 ```text
-/opt/skills-telemetry-backups/pre-<target>-<UTC timestamp>
+/opt/ai-agent-telemetry-backups/pre-<target>-<UTC timestamp>
 ```
 
 The timestamp format is `YYYYMMDD-HHMMSSZ`. The backup is created first as a mode-`700` sibling directory ending in
@@ -262,8 +286,10 @@ strict health gate.
 
 ## Activation, health gate, and rollback
 
-The root-only transaction file is `/opt/skills-telemetry-backend/.maintenance-transaction`. It contains a format
-version, transaction ID, operation, phase, previous release, optional target release, backup path, and expected image
+The root-only transaction file is
+`/opt/ai-agent-telemetry-backend/.maintenance-transaction`. It contains a
+format version, transaction ID, operation, phase, previous release, optional
+target release, backup path, and expected image
 references and IDs for both releases. Both scripts write each state through a mode-`600` temporary file, replace the
 transaction with `mv -Tf`, and call GNU `sync -f` on the backend filesystem before crossing the associated state
 boundary. Every transaction removal is followed by the same filesystem synchronization.
@@ -345,12 +371,16 @@ transaction creation and cannot stop the active stack or change `latest`.
 
 Update `telemetry-backend/README.md` with installation paths, backup and update commands, supported refs, the
 data-dependent downtime model, the large-backup confirmation gate, health probes, rollback behavior, retention, and
-disaster recovery steps. Document per-release image pinning, interrupted-update recovery, and the requirement to rerun
-update after a host reboot that occurred during activation. Update `docs/release.md` with the new exact release asset
-list and checksum contract.
+disaster recovery steps. Document per-release image pinning,
+interrupted-update recovery, and the requirement to rerun update after a host
+reboot during activation. Link the supervised legacy identity migration
+runbook; the updater does not automate identity migration. Update
+`docs/release.md` with the exact release asset list and checksum contract.
 
-The documentation uses `/opt/skills-telemetry-backend` and `/opt/skills-telemetry-backups`. It does not retain the old
-`/root/skills-telemetry-backups` location as a default.
+The documentation uses `/opt/ai-agent-telemetry-backend` and
+`/opt/ai-agent-telemetry-backups`. It names the legacy root only in the manual
+migration procedure and does not retain `/root/skills-telemetry-backups` as a
+default.
 
 ## Verification
 
@@ -369,8 +399,8 @@ The contract covers:
 - compressed source, environment, and every declared volume in a completed backup;
 - source archive creation and verification before the first `docker compose down` event;
 - checksum verification and portable restoration into a second sandbox;
-- explicit `skills-telemetry-backend` project selection despite the different top-level Compose name;
-- legacy active-release image pinning before any target pull or build;
+- explicit `ai-agent-telemetry-backend` project selection;
+- older active-release image pinning before any target pull or build;
 - per-release registry digests and distinct Grafana image tags across two releases;
 - original-stack restart after standalone backup success and failure;
 - no symlink change after download, validation, or backup failure;
