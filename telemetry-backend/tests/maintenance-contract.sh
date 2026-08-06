@@ -1998,15 +1998,352 @@ run_resolution_suite() {
   printf '%s\n' 'PASS: maintenance resolution contract'
 }
 
+cleanup_manual_identity_migration_sandbox() {
+  local sandbox=${1:-} legacy_project=${2:-} new_project=${3:-} project
+  local -a containers volumes networks
+
+  for project in "$legacy_project" "$new_project"; do
+    [ -n "$project" ] || continue
+    mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=$project")
+    [ "${#containers[@]}" -eq 0 ] || docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
+    mapfile -t volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+    [ "${#volumes[@]}" -eq 0 ] || docker volume rm "${volumes[@]}" >/dev/null 2>&1 || true
+    mapfile -t networks < <(docker network ls -q --filter "label=com.docker.compose.project=$project")
+    [ "${#networks[@]}" -eq 0 ] || docker network rm "${networks[@]}" >/dev/null 2>&1 || true
+  done
+  case "$sandbox" in
+    /tmp/telemetry-manual-migration.*) rm -rf "$sandbox" ;;
+    '') ;;
+    *) fail "refusing to remove unexpected manual migration sandbox: $sandbox" ;;
+  esac
+}
+
+assert_only_migration_project_running() {
+  local running_project=$1 stopped_project=$2
+  local -a running stopped
+
+  mapfile -t running < <(docker ps -q --filter "label=com.docker.compose.project=$running_project")
+  mapfile -t stopped < <(docker ps -q --filter "label=com.docker.compose.project=$stopped_project")
+  [ "${#running[@]}" -eq 5 ] || fail "expected five running containers for $running_project"
+  [ "${#stopped[@]}" -eq 0 ] || fail "project $stopped_project is running during identity migration"
+}
+
+assert_migration_volume_matches_archive() {
+  local backup_dir=$1 archive=$2 actual=$3 helper_image=$4
+
+  docker run --rm --pull never \
+    --mount "type=volume,src=$actual,dst=/actual,readonly" \
+    --mount "type=bind,src=$backup_dir/volumes,dst=/backup,readonly" \
+    "$helper_image" sh -eu -c '
+      mkdir /expected
+      tar -xzf "/backup/$1" -C /expected
+      find /expected -exec stat -c "%n|%F|%a|%u|%g|%s|%N" {} \; |
+        sed "s#/expected##g" | sort >/tmp/expected.meta
+      find /actual -exec stat -c "%n|%F|%a|%u|%g|%s|%N" {} \; |
+        sed "s#/actual##g" | sort >/tmp/actual.meta
+      find /expected -type f -exec sha256sum {} \; |
+        sed "s#/expected##g" | sort >/tmp/expected.sha
+      find /actual -type f -exec sha256sum {} \; |
+        sed "s#/actual##g" | sort >/tmp/actual.sha
+      if ! cmp /tmp/expected.meta /tmp/actual.meta; then
+        diff -u /tmp/expected.meta /tmp/actual.meta >&2 || true
+        exit 1
+      fi
+      if ! cmp /tmp/expected.sha /tmp/actual.sha; then
+        diff -u /tmp/expected.sha /tmp/actual.sha >&2 || true
+        exit 1
+      fi
+    ' sh "$archive" || fail "restored volume $actual differs from $archive"
+}
+
+write_manual_migration_docker() {
+  local path=$1
+
+  cat >"$path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'docker %s\n' "$*" >>"$TELEMETRY_TEST_COMMAND_LOG"
+if [ "${1:-}" = run ]; then
+  case " $* " in
+    *'io.qubership.ai-agent-telemetry.maintenance.role=health'*)
+      sample_value=${!#}
+      sample_timestamp=$(date +%s)
+      printf 'METRIC_VALUE_SAMPLE=%s|%s\n' "$sample_timestamp" "$sample_value"
+      printf 'METRIC_RAW_TIMESTAMP_SAMPLE=%s|%s\n' "$sample_timestamp" "$sample_timestamp"
+      exit 0
+      ;;
+  esac
+fi
+exec "$TELEMETRY_REAL_DOCKER" "$@"
+EOF
+  chmod 700 "$path"
+}
+
+write_manual_migration_curl() {
+  local path=$1
+
+  cat >"$path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'curl %s\n' "$*" >>"$TELEMETRY_TEST_COMMAND_LOG"
+case " $* " in *' --config - '*) cat >/dev/null ;; esac
+printf '%s\n' '{}'
+EOF
+  chmod 700 "$path"
+}
+
+run_manual_identity_migration_sandbox() {
+  local helper_image=$1 sandbox legacy_root new_root legacy_release new_release backup_root backup_dir
+  local legacy_project new_project docker_dir command_log real_docker logical actual archive legacy_actual
+  local service reference expected_id container output
+  local -a legacy_volumes new_volumes manifest_images
+
+  sandbox=$(mktemp -d /tmp/telemetry-manual-migration.XXXXXX)
+  legacy_project="telemetry_legacy_$RANDOM$RANDOM"
+  new_project="telemetry_new_$RANDOM$RANDOM"
+  trap 'cleanup_manual_identity_migration_sandbox "${sandbox:-}" "${legacy_project:-}" "${new_project:-}"' \
+    EXIT HUP INT TERM
+  legacy_root=$sandbox/legacy-root
+  new_root=$sandbox/new-root
+  legacy_release=$legacy_root/legacy-release
+  new_release=$new_root/new-release
+  backup_root=$sandbox/backups
+  docker_dir=$sandbox/bin
+  command_log=$sandbox/migration.trace
+  real_docker=$(command -v docker)
+  mkdir -p "$legacy_release" "$new_release" "$backup_root" "$docker_dir" "$sandbox/docker-config"
+  : >"$command_log"
+  write_manual_migration_docker "$docker_dir/docker"
+  write_manual_migration_curl "$docker_dir/curl"
+
+  cat >"$legacy_release/.env" <<'EOF'
+SITE_ADDRESS=localhost
+HTTPS_PORT=8443
+INGEST_TOKEN=migration-token
+DASHBOARD_AUTH_USER=migration-viewer
+EOF
+  cat >"$legacy_release/docker-compose.yml" <<EOF
+services:
+  caddy:
+    image: $helper_image
+    command: ["sh", "-c", "while :; do sleep 3600; done"]
+    stop_grace_period: 1s
+    volumes: [caddy-config:/caddy-config, caddy-data:/caddy-data]
+    networks: [backend]
+  collector:
+    image: $helper_image
+    command: ["sh", "-c", "while :; do sleep 3600; done"]
+    stop_grace_period: 1s
+    networks: [backend]
+  grafana:
+    image: $helper_image
+    command: ["sh", "-c", "while :; do sleep 3600; done"]
+    stop_grace_period: 1s
+    volumes: [grafana-data:/grafana-data]
+    networks: [backend]
+  victorialogs:
+    image: $helper_image
+    command: ["sh", "-c", "while :; do sleep 3600; done"]
+    stop_grace_period: 1s
+    volumes: [vlogs-data:/vlogs-data]
+    networks: [backend]
+  victoriametrics:
+    image: $helper_image
+    command: ["sh", "-c", "while :; do sleep 3600; done"]
+    stop_grace_period: 1s
+    volumes: [vmetrics-data:/vmetrics-data]
+    networks: [backend]
+volumes:
+  caddy-config: {}
+  caddy-data: {}
+  grafana-data: {}
+  vlogs-data: {}
+  vmetrics-data: {}
+networks:
+  backend: {}
+EOF
+  cp "$legacy_release/.env" "$new_release/.env"
+  cp "$legacy_release/docker-compose.yml" "$new_release/docker-compose.yml"
+  cp "$legacy_release/.env" "$legacy_root/.env"
+  cp "$legacy_release/docker-compose.yml" "$legacy_root/docker-compose.yml"
+  ln -s legacy-release "$legacy_root/latest"
+  ln -s new-release "$new_root/latest"
+
+  PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
+    TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config" \
+    docker compose --project-name "$legacy_project" --project-directory "$legacy_release" \
+    --env-file "$legacy_release/.env" -f "$legacy_release/docker-compose.yml" up -d --pull never
+  assert_only_migration_project_running "$legacy_project" "$new_project"
+  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
+    PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
+      TELEMETRY_TEST_COMMAND_LOG="$command_log" docker run --rm --pull never \
+      --mount "type=volume,src=${legacy_project}_${logical},dst=/data" "$helper_image" \
+      sh -eu -c "install -d -m 751 -o 1234 -g 2345 /data/state; \
+        printf '%s' '$logical-payload' >/data/state/$logical; \
+        chown 3456:4567 /data/state/$logical; chmod 640 /data/state/$logical"
+  done
+
+  (
+    export PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker"
+    export TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config"
+    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$legacy_root"
+    export TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$legacy_project"
+    export TELEMETRY_TEST_LOCK_FILE="$sandbox/legacy.lock" TELEMETRY_TEST_HEALTH_ATTEMPTS=2
+    export TELEMETRY_TEST_STABILITY_SECONDS=0
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    eval "$(declare -f maintenance_init | sed '1s/maintenance_init/original_maintenance_init/')"
+    # shellcheck disable=SC2329 # backup_main invokes this test boundary override.
+    maintenance_init() {
+      [ "${1:-}" = legacy-source ] || return 1
+      original_maintenance_init ordinary || return 1
+      export MAINTENANCE_IDENTITY_MODE=legacy-source
+      CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
+      COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
+      ENV_FILE=$CURRENT_BACKEND_DIR/.env
+      GENERATED_OVERRIDE_FILE=$CURRENT_BACKEND_DIR/.maintenance-compose.yml
+    }
+    backup_main --legacy-source --target-label identity-migration --leave-stopped
+  ) || fail 'manual migration did not create a durable stopped legacy backup'
+  assert_services_stopped "$legacy_project"
+  assert_services_stopped "$new_project"
+  backup_dir=$(single_completed_backup "$backup_root")
+  (cd "$backup_dir" && sha256sum -c SHA256SUMS >/dev/null) ||
+    fail 'manual migration backup checksums do not verify'
+  mapfile -t manifest_images < <(sed -n 's/^IMAGE=//p' "$backup_dir/manifest.txt")
+  [ "${#manifest_images[@]}" -eq 5 ] || fail 'manual migration backup lacks five image identities'
+
+  while IFS='|' read -r logical legacy_actual archive; do
+    [ "$legacy_actual" = "${legacy_project}_${logical}" ] ||
+      fail "backup manifest changed the legacy volume identity for $logical"
+    actual="${new_project}_${logical}"
+    docker volume create --label "com.docker.compose.project=$new_project" \
+      --label "com.docker.compose.volume=$logical" "$actual" >/dev/null
+    docker run --rm --pull never --mount "type=volume,src=$actual,dst=/actual" \
+      --mount "type=bind,src=$backup_dir/volumes,dst=/backup,readonly" \
+      "$helper_image" sh -eu -c 'cd /actual && tar -xzf "/backup/$1"' sh "$archive"
+    assert_migration_volume_matches_archive "$backup_dir" "$archive" "$actual" "$helper_image"
+  done < <(sed -n 's/^VOLUME=//p' "$backup_dir/manifest.txt")
+  mapfile -t legacy_volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$legacy_project")
+  mapfile -t new_volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$new_project")
+  [ "${#legacy_volumes[@]}" -eq 5 ] && [ "${#new_volumes[@]}" -eq 5 ] ||
+    fail 'manual migration did not retain two complete volume data sets'
+
+  PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
+    TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config" \
+    docker compose --project-name "$new_project" --project-directory "$new_release" \
+    --env-file "$new_release/.env" -f "$new_release/docker-compose.yml" up -d --pull never
+  (
+    export PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker"
+    export TELEMETRY_TEST_COMMAND_LOG="$command_log" TELEMETRY_MAINTENANCE_TEST_MODE=1
+    export TELEMETRY_TEST_HEALTH_ATTEMPTS=2 TELEMETRY_TEST_STABILITY_SECONDS=1
+    export TELEMETRY_TEST_CA_CERT="$sandbox/test-ca.pem"
+    : >"$TELEMETRY_TEST_CA_CERT"
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    PROJECT_NAME=$new_project
+    BACKEND_ROOT=$new_root
+    BACKUP_ROOT=$backup_root
+    LOCK_FILE=$sandbox/new.lock
+    COMPOSE_FILE=$new_release/docker-compose.yml
+    ENV_FILE=$new_release/.env
+    GENERATED_OVERRIDE_FILE=$new_release/.maintenance-compose.yml
+    TRANSACTION_FILE=$new_root/.maintenance-transaction
+    strict_health_gate "$new_release"
+    strict_health_gate "$new_release"
+  ) || fail 'manual migration new project did not pass strict health and stability probes'
+  assert_only_migration_project_running "$new_project" "$legacy_project"
+  grep -F '/v1/logs' "$command_log" >/dev/null || fail 'manual migration skipped the log probe'
+  grep -F '/v1/metrics' "$command_log" >/dev/null || fail 'manual migration skipped the metric probe'
+  grep -F '/api/dashboards/uid/codex-native-metrics' "$command_log" >/dev/null ||
+    fail 'manual migration skipped the Grafana dashboard probes'
+  printf '%s\n' 'TRACE: manual migration success left only the new identity running'
+
+  if output=$(
+    export PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker"
+    export TELEMETRY_TEST_COMMAND_LOG="$command_log" TELEMETRY_MAINTENANCE_TEST_MODE=1
+    export TELEMETRY_TEST_HEALTH_ATTEMPTS=1 TELEMETRY_TEST_STABILITY_SECONDS=0
+    export TELEMETRY_TEST_FORCE_UNHEALTHY=1
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    PROJECT_NAME=$new_project
+    BACKEND_ROOT=$new_root
+    COMPOSE_FILE=$new_release/docker-compose.yml
+    ENV_FILE=$new_release/.env
+    GENERATED_OVERRIDE_FILE=$new_release/.maintenance-compose.yml
+    TRANSACTION_FILE=$new_root/.maintenance-transaction
+    strict_health_gate "$new_release" 2>&1
+  ); then
+    fail 'manual migration accepted an injected new-project health failure'
+  fi
+  [[ $output == *'services did not become healthy'* ]] ||
+    fail "injected new-project health failure lacked a diagnostic: $output"
+  PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
+    TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config" \
+    docker compose --project-name "$new_project" --project-directory "$new_release" \
+    --env-file "$new_release/.env" -f "$new_release/docker-compose.yml" down --remove-orphans
+  assert_services_stopped "$new_project"
+  {
+    printf '%s\n' 'services:'
+    for image_record in "${manifest_images[@]}"; do
+      IFS='|' read -r service reference expected_id <<<"$image_record"
+      printf '  %s:\n    image: %s\n' "$service" "$reference"
+    done
+  } >"$legacy_release/.maintenance-compose.yml"
+  PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
+    TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config" \
+    docker compose --project-name "$legacy_project" --project-directory "$legacy_release" \
+    --env-file "$legacy_release/.env" -f "$legacy_release/docker-compose.yml" \
+    -f "$legacy_release/.maintenance-compose.yml" up -d --no-build --pull never
+  for image_record in "${manifest_images[@]}"; do
+    IFS='|' read -r service reference expected_id <<<"$image_record"
+    container=$(docker ps -q --filter "label=com.docker.compose.project=$legacy_project" \
+      --filter "label=com.docker.compose.service=$service")
+    [ -n "$container" ] || fail "fallback did not start legacy service $service"
+    [ "$(docker inspect --format '{{.Image}}' "$container")" = "$expected_id" ] ||
+      fail "fallback image ID differs from the manifest for $service"
+  done
+  (
+    export PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker"
+    export TELEMETRY_TEST_COMMAND_LOG="$command_log" TELEMETRY_MAINTENANCE_TEST_MODE=1
+    export TELEMETRY_TEST_HEALTH_ATTEMPTS=2 TELEMETRY_TEST_STABILITY_SECONDS=0
+    export TELEMETRY_TEST_CA_CERT="$sandbox/test-ca.pem"
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    PROJECT_NAME=$legacy_project
+    BACKEND_ROOT=$legacy_root
+    BACKUP_ROOT=$backup_root
+    LOCK_FILE=$sandbox/legacy.lock
+    COMPOSE_FILE=$legacy_release/docker-compose.yml
+    ENV_FILE=$legacy_release/.env
+    GENERATED_OVERRIDE_FILE=$legacy_release/.maintenance-compose.yml
+    TRANSACTION_FILE=$legacy_root/.maintenance-transaction
+    strict_health_gate "$legacy_release"
+  ) || fail 'manual migration fallback did not restore legacy health'
+  assert_only_migration_project_running "$legacy_project" "$new_project"
+  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
+    assert_volume_file "$legacy_project" "$logical" "/state/$logical"
+    assert_volume_file "$new_project" "$logical" "/state/$logical"
+  done
+  printf '%s\n' 'TRACE: manual migration fallback restored five manifest image IDs and retained both data sets'
+
+  cleanup_manual_identity_migration_sandbox "$sandbox" "$legacy_project" "$new_project"
+  trap - EXIT HUP INT TERM
+}
+
 cleanup_real_activation_sandbox() {
   local sandbox=${1:-} project=${2:-} original_alpine_id=${3:-} previous_release=${4:-} target_release=${5:-}
-  local -a containers volumes
+  local -a containers volumes networks
 
   [ -n "$project" ] || return 0
   mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=$project")
   [ "${#containers[@]}" -eq 0 ] || docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
   mapfile -t volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
   [ "${#volumes[@]}" -eq 0 ] || docker volume rm "${volumes[@]}" >/dev/null 2>&1 || true
+  mapfile -t networks < <(docker network ls -q --filter "label=com.docker.compose.project=$project")
+  [ "${#networks[@]}" -eq 0 ] || docker network rm "${networks[@]}" >/dev/null 2>&1 || true
   [ -z "$original_alpine_id" ] || docker tag "$original_alpine_id" alpine:3.20 >/dev/null 2>&1 || true
   docker image rm "task5-mutable:$project" "skills-telemetry-backend-grafana:$previous_release" \
     "skills-telemetry-backend-grafana:$target_release" "alpine:task5-original-$project" >/dev/null 2>&1 || true
@@ -2029,6 +2366,7 @@ run_activation_real_suite() {
     fail 'real-Docker activation setup requires the pinned Alpine helper image'
   docker image inspect "$json_image" >/dev/null 2>&1 ||
     fail 'real-Docker activation setup requires the pinned JSON helper image'
+  run_manual_identity_migration_sandbox "$alpine_digest"
   real_docker=$(command -v docker)
   original_alpine_id=$(docker image inspect --format '{{.Id}}' "$alpine_digest")
   docker tag "$original_alpine_id" alpine:3.20
