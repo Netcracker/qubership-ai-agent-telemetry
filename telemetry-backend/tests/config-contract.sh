@@ -57,9 +57,9 @@ if grep -Fq '/opt/skills-telemetry-backups' "$release_guide"; then
   fail 'release guide must use the ordinary backend backup root'
 fi
 
-grep -Fqx \
-  'FROM grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63' \
-  "$grafana_dockerfile" || fail 'Grafana build must pin its multi-platform base image digest'
+grep -Eq \
+  '^FROM grafana/grafana:[^@[:space:]]+@sha256:[0-9a-f]{64}$' \
+  "$grafana_dockerfile" || fail 'Grafana build must pin its base image by tag and digest'
 
 for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
   VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES VM_SELF_SCRAPE_INTERVAL; do
@@ -152,6 +152,9 @@ rendered=$(mktemp)
 legacy_env=$(mktemp)
 trap 'rm -f "$rendered" "$legacy_env"' EXIT HUP INT TERM
 docker compose --env-file "$env_file" -f "$compose_file" config --format json >"$rendered"
+jq -e '[.services.caddy.image, .services.collector.image, .services.victorialogs.image,
+  .services.victoriametrics.image] | all(test("@sha256:[0-9a-f]{64}$"))' "$rendered" >/dev/null ||
+  fail 'every registry-backed service must pin its image digest'
 jq -e '.services.caddy.ports | length == 2' "$rendered" >/dev/null || fail 'Caddy must publish two ports'
 jq -e '[.services.collector.ports, .services.victorialogs.ports] | all(. == null)' "$rendered" >/dev/null ||
   fail 'Collector and VictoriaLogs must not publish ports'

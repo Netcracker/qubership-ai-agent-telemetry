@@ -83,6 +83,7 @@ validate_production_runtime() {
 
 maintenance_init() {
   local test_mode=${TELEMETRY_MAINTENANCE_TEST_MODE:-} kill_at=${TELEMETRY_TEST_KILL_AT:-}
+  local recovery_release
 
   umask 077
   : "$HELPER_IMAGE" "$JSON_IMAGE" "$TRANSACTION_LABEL" "$ROLE_LABEL" "$LARGE_BACKUP_BYTES"
@@ -125,11 +126,16 @@ maintenance_init() {
   fi
 
   validate_project_name "$PROJECT_NAME" || return 1
-  CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
+  TRANSACTION_FILE=$BACKEND_ROOT/.maintenance-transaction
+  if ! CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT"); then
+    [ -f "$TRANSACTION_FILE" ] || return 1
+    validate_transaction_state || return 1
+    recovery_release=$(read_transaction PREVIOUS_RELEASE) || return 1
+    CURRENT_BACKEND_DIR=$(transaction_release_dir "$recovery_release") || return 1
+  fi
   COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
   ENV_FILE=$CURRENT_BACKEND_DIR/.env
   GENERATED_OVERRIDE_FILE=$CURRENT_BACKEND_DIR/.maintenance-compose.yml
-  TRANSACTION_FILE=$BACKEND_ROOT/.maintenance-transaction
   TEST_COMMAND_LOG=
   if [ -n "$test_mode" ]; then
     COMPOSE_FILE=$(validate_test_path COMPOSE_FILE "$COMPOSE_FILE") || return 1

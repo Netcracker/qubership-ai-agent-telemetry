@@ -1542,11 +1542,7 @@ EOF
       printf '%s\n' target >"$state"
       cp "$sandbox/deployment-success.valid" "$backend_root/target/.deployment-success"
       rm -f "$backend_root/latest"
-      if [ "$committed_case" = raw-link ]; then
-        ln -s "$backend_root/target" "$backend_root/latest"
-      else
-        ln -s target "$backend_root/latest"
-      fi
+      ln -s target "$backend_root/latest"
       bash -c '
         TELEMETRY_SOURCE_ONLY=1 source "$0"
         maintenance_init
@@ -1562,6 +1558,16 @@ EOF
           entries+=("TARGET_IMAGE_${service^^}=$target_id")
         done
         write_transaction "${entries[@]}"
+        if [ "$committed_case" = raw-link ]; then
+          rm -f "$backend_root/latest"
+          ln -s "$backend_root/target" "$backend_root/latest"
+          exec bash -c '\''
+            TELEMETRY_SOURCE_ONLY=1 source "$0"
+            maintenance_init
+            recover_update_transaction
+            [ "$(readlink "$backend_root/latest")" = previous ]
+          '\'' "$0"
+        fi
         recover_update_transaction
         [ "$(readlink "$backend_root/latest")" = previous ]
       ' "$update_script"
@@ -1718,7 +1724,9 @@ if [ "$1" = pull ]; then
   case "${2:-}" in
     ghcr.io/jqlang/jq:1.7.1@sha256:096b83865ad59b5b02841f103f83f45c51318394331bf1995e187ea3be937432|\
       caddy:2|otel/opentelemetry-collector-contrib:0.119.0|victoriametrics/victoria-logs:v1.16.0-victorialogs|\
-      victoriametrics/victoria-metrics:v1.148.0|example/alertmanager:1.0)
+      victoriametrics/victoria-metrics:v1.148.0|example/alertmanager:1.0|\
+      "$TELEMETRY_TEST_CURRENT_CADDY_REFERENCE"|"$TELEMETRY_TEST_CURRENT_COLLECTOR_REFERENCE"|\
+      "$TELEMETRY_TEST_CURRENT_VLOGS_REFERENCE"|"$TELEMETRY_TEST_CURRENT_VMETRICS_REFERENCE")
       exit 0
       ;;
     *)
@@ -1733,11 +1741,19 @@ fi
 if [ "$1" = image ] && [ "$2" = inspect ]; then
   image=${!#}
   case "$image" in
+    "$TELEMETRY_TEST_CURRENT_CADDY_REFERENCE") document="[{\"Id\":\"sha256:caddy-local\",\"RepoDigests\":[\"$TELEMETRY_TEST_CURRENT_CADDY_DIGEST_REFERENCE\"]}]" ;;
+    "$TELEMETRY_TEST_CURRENT_COLLECTOR_REFERENCE") document="[{\"Id\":\"sha256:collector-local\",\"RepoDigests\":[\"$TELEMETRY_TEST_CURRENT_COLLECTOR_DIGEST_REFERENCE\"]}]" ;;
+    "$TELEMETRY_TEST_CURRENT_VLOGS_REFERENCE") document="[{\"Id\":\"sha256:vlogs-local\",\"RepoDigests\":[\"$TELEMETRY_TEST_CURRENT_VLOGS_DIGEST_REFERENCE\"]}]" ;;
+    "$TELEMETRY_TEST_CURRENT_VMETRICS_REFERENCE") document="[{\"Id\":\"sha256:vmetrics-local\",\"RepoDigests\":[\"$TELEMETRY_TEST_CURRENT_VMETRICS_DIGEST_REFERENCE\"]}]" ;;
     caddy:2) document='[{"Id":"sha256:caddy-local","RepoDigests":["caddy@sha256:caddyfixture"]}]' ;;
     otel/opentelemetry-collector-contrib:0.119.0) document='[{"Id":"sha256:collector-local","RepoDigests":["otel/opentelemetry-collector-contrib@sha256:collectorfixture"]}]' ;;
     victoriametrics/victoria-logs:v1.16.0-victorialogs) document='[{"Id":"sha256:vlogs-local","RepoDigests":["victoriametrics/victoria-logs@sha256:vlogsfixture"]}]' ;;
     victoriametrics/victoria-metrics:v1.148.0) document='[{"Id":"sha256:vmetrics-local","RepoDigests":["victoriametrics/victoria-metrics@sha256:vmetricsfixture"]}]' ;;
     example/alertmanager:1.0) document='[{"Id":"sha256:alertmanager-local","RepoDigests":["example/alertmanager@sha256:alertmanagerfixture"]}]' ;;
+    "$TELEMETRY_TEST_CURRENT_CADDY_DIGEST_REFERENCE") document='[{"Id":"sha256:caddy-local","RepoDigests":[]}]' ;;
+    "$TELEMETRY_TEST_CURRENT_COLLECTOR_DIGEST_REFERENCE") document='[{"Id":"sha256:collector-local","RepoDigests":[]}]' ;;
+    "$TELEMETRY_TEST_CURRENT_VLOGS_DIGEST_REFERENCE") document='[{"Id":"sha256:vlogs-local","RepoDigests":[]}]' ;;
+    "$TELEMETRY_TEST_CURRENT_VMETRICS_DIGEST_REFERENCE") document='[{"Id":"sha256:vmetrics-local","RepoDigests":[]}]' ;;
     caddy@sha256:caddyfixture) document='[{"Id":"sha256:caddy-local","RepoDigests":[]}]' ;;
     otel/opentelemetry-collector-contrib@sha256:collectorfixture) document='[{"Id":"sha256:collector-local","RepoDigests":[]}]' ;;
     victoriametrics/victoria-logs@sha256:vlogsfixture) document='[{"Id":"sha256:vlogs-local","RepoDigests":[]}]' ;;
@@ -1895,9 +1911,27 @@ EOF
 
 run_resolution_suite() {
   local sandbox fixture_pid fixture_port fixture_log output docker_dir release_target requests implicit_identity explicit_identity
-  local release_dist
+  local release_dist rendered_compose
+  local caddy_reference collector_reference vlogs_reference vmetrics_reference
 
   [ -x "$update_script" ] || fail 'update-backend.sh does not exist or is not executable'
+  rendered_compose=$(docker compose --env-file "$backend_dir/.env.example" \
+    -f "$backend_dir/docker-compose.yml" config --format json)
+  caddy_reference=$(jq -r '.services.caddy.image' <<<"$rendered_compose")
+  collector_reference=$(jq -r '.services.collector.image' <<<"$rendered_compose")
+  vlogs_reference=$(jq -r '.services.victorialogs.image' <<<"$rendered_compose")
+  vmetrics_reference=$(jq -r '.services.victoriametrics.image' <<<"$rendered_compose")
+  for reference in "$caddy_reference" "$collector_reference" "$vlogs_reference" "$vmetrics_reference"; do
+    [[ $reference =~ @sha256:[0-9a-f]{64}$ ]] || fail "current backend image is not digest-pinned: $reference"
+  done
+  export TELEMETRY_TEST_CURRENT_CADDY_REFERENCE=$caddy_reference
+  export TELEMETRY_TEST_CURRENT_COLLECTOR_REFERENCE=$collector_reference
+  export TELEMETRY_TEST_CURRENT_VLOGS_REFERENCE=$vlogs_reference
+  export TELEMETRY_TEST_CURRENT_VMETRICS_REFERENCE=$vmetrics_reference
+  export TELEMETRY_TEST_CURRENT_CADDY_DIGEST_REFERENCE="caddy@${caddy_reference##*@}"
+  export TELEMETRY_TEST_CURRENT_COLLECTOR_DIGEST_REFERENCE="otel/opentelemetry-collector-contrib@${collector_reference##*@}"
+  export TELEMETRY_TEST_CURRENT_VLOGS_DIGEST_REFERENCE="victoriametrics/victoria-logs@${vlogs_reference##*@}"
+  export TELEMETRY_TEST_CURRENT_VMETRICS_DIGEST_REFERENCE="victoriametrics/victoria-metrics@${vmetrics_reference##*@}"
   export TELEMETRY_TEST_STAGE_ONLY=1
   sandbox=$(mktemp -d /tmp/telemetry-resolution.XXXXXX)
   trap 'kill "${fixture_pid:-}" >/dev/null 2>&1 || true; rm -rf "${sandbox:-}"' EXIT HUP INT TERM
