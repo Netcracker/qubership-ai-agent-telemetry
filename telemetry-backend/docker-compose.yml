@@ -13,7 +13,7 @@ services:
     restart: unless-stopped
 
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.148.0
+    image: victoriametrics/victoria-metrics:v1.148.0@sha256:407013e902f9a0ba1d4b2d4c077c47bbaf917c893c52ff39b19efe83a654afda
     command:
       - -storageDataPath=/vmetrics
       - -retentionPeriod=${VM_RETENTION:-365d}
@@ -75,7 +75,7 @@ services:
     restart: unless-stopped
 
   caddy:
-    image: caddy:2
+    image: caddy:2@sha256:844f60b64e4724a5aa8245e019dace0d3f199f7433ce6c57676cb30a920dbad9
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
