@@ -281,7 +281,7 @@ jobs:
             <<< "$dashboard_issues_json")"
 
           if [[ -z "$dashboard_json" ]]; then
-            reasons+=('Dependency Dashboard is missing')
+            reasons+=('Renovate Dependency Dashboard was not found')
           else
             dashboard_body="$(jq -r '.body' <<< "$dashboard_json")"
             dashboard_url="$(jq -r '.url' <<< "$dashboard_json")"
@@ -330,15 +330,15 @@ jobs:
               echo
               echo 'Healthy'
               echo
-              echo "- [Dependency Dashboard]($dashboard_url)"
-              echo "- [Workflow run]($run_url)"
+              echo "- [Renovate Dependency Dashboard]($dashboard_url)"
+              echo "- [Renovate health-check run]($run_url)"
             } >> "$GITHUB_STEP_SUMMARY"
 
             if [[ -n "$health_number" ]]; then
               recovery_file="$(mktemp)"
               trap 'rm -f "$recovery_file"' EXIT
-              printf 'Renovate health recovered.\n\n- [Dependency Dashboard](%s)\n- [Workflow run](%s)\n' \
-                "$dashboard_url" "$run_url" > "$recovery_file"
+              printf 'The Renovate health check passed. This issue is closing automatically.\n\n### Details\n\n- [Successful Renovate health-check run](%s)\n- [Renovate Dependency Dashboard](%s)\n' \
+                "$run_url" "$dashboard_url" > "$recovery_file"
               gh issue comment "$health_number" --body-file "$recovery_file"
               gh issue close "$health_number" --reason completed
             fi
@@ -347,17 +347,42 @@ jobs:
 
           report_file="$(mktemp)"
           trap 'rm -f "$report_file"' EXIT
-          {
-            echo "$health_marker"
-            echo 'The scheduled Renovate health check found these problems:'
-            echo
-            printf -- '- %s\n' "${reasons[@]}"
-            echo
-            if [[ -n "$dashboard_url" ]]; then
-              echo "- [Dependency Dashboard]($dashboard_url)"
-            fi
-            echo "- [Workflow run]($run_url)"
-          } > "$report_file"
+          if [[ -n "$health_number" ]]; then
+            {
+              echo 'The Renovate health check is still failing.'
+              echo
+              echo '### Problems'
+              echo
+              printf -- '- %s\n' "${reasons[@]}"
+              echo
+              echo '### Details'
+              echo
+              echo "- [Latest failed Renovate health-check run]($run_url)"
+              if [[ -n "$dashboard_url" ]]; then
+                echo "- [Renovate Dependency Dashboard]($dashboard_url)"
+              fi
+              echo
+              echo 'This issue remains open and will close automatically after a successful check.'
+            } > "$report_file"
+          else
+            {
+              echo "$health_marker"
+              echo 'The Renovate health check needs attention.'
+              echo
+              echo '### Problems'
+              echo
+              printf -- '- %s\n' "${reasons[@]}"
+              echo
+              echo 'Review the details below, fix the listed problems, and rerun the health check. This issue updates after repeated failures and closes automatically after a successful check.'
+              echo
+              echo '### Details'
+              echo
+              echo "- [Failed Renovate health-check run]($run_url)"
+              if [[ -n "$dashboard_url" ]]; then
+                echo "- [Renovate Dependency Dashboard]($dashboard_url)"
+              fi
+            } > "$report_file"
+          fi
 
           {
             echo '### Renovate health'
@@ -367,9 +392,9 @@ jobs:
             printf -- '- %s\n' "${reasons[@]}"
             echo
             if [[ -n "$dashboard_url" ]]; then
-              echo "- [Dependency Dashboard]($dashboard_url)"
+              echo "- [Renovate Dependency Dashboard]($dashboard_url)"
             fi
-            echo "- [Workflow run]($run_url)"
+            echo "- [Renovate health-check run]($run_url)"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [[ -n "$health_number" ]]; then
