@@ -22,7 +22,9 @@ powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 
 
 1. Follow any preflight prompts for collector settings or selected Git and Java prerequisites.
 2. Run `ai-agent-telemetry status` and `ai-agent-telemetry selftest`.
-3. If installation changed the Codex hook definition and hash, fully restart Codex. If prompted, inspect and approve
+3. If installation added the CLI directory to `PATH`, fully restart every running Cline host. Confirm that Cline Hooks
+   are enabled, invoke a skill in Cline, and verify its `skill_executed` event in the telemetry backend.
+4. If installation changed the Codex hook definition and hash, fully restart Codex. If prompted, inspect and approve
    `ai-agent-telemetry ingest --agent=codex`.
 
 See [Installation](#installation) for configuration options, hook repair, and verification details.
@@ -207,7 +209,17 @@ ai-agent-telemetry selftest  # send a probe and confirm collector delivery
 native file path and parse error. `selftest` proves the CLI can deliver to the collector, but it
 cannot prove that a harness loaded or invoked its hook. Check both before relying on telemetry.
 
-### 3. Restart Codex after a hook change
+### 3. Activate and verify Cline
+
+If installation added the CLI directory to `PATH`, fully restart every running Cline host, including VS Code or a
+JetBrains IDE. A process that started before the `PATH` change cannot find the managed CLI. Confirm that the Cline Hooks
+setting is enabled, invoke a skill in Cline, and verify a matching `skill_executed` event with `agent=cline` in the
+telemetry backend. Filter by the Cline session, skill name, and invocation time when other sessions are active.
+
+`status` verifies the managed hook file, and `selftest` verifies transport. Only the real event check proves that Cline
+loaded and invoked the hook.
+
+### 4. Restart Codex after a hook change
 
 If installation or hook refresh changed the Codex hook definition and hash, fully restart Codex. A new chat is not
 enough. The CLI does not edit Codex's private trust state, so inspect and approve exactly this command if prompted:

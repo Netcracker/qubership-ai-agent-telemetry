@@ -86,8 +86,9 @@ The effective configuration must contain a metrics exporter and no logs exporter
 onboarding until Remote Configuration is corrected. Do not assume a native Cline metric name or stable `service.name`;
 the backend fixture proves backend compatibility but does not define a dashboard selector.
 
-Cline is not an accepted `--harnesses` target or a first-class APM target. GitHub Copilot CLI is outside this support
-matrix.
+Cline is an accepted lifecycle `--harnesses` target. The lifecycle installs its global file hook and maps Cline skill
+deployment to APM's `agent-skills` target because Cline has no first-class APM target. This hook path is separate from
+the native metrics configuration in this section. GitHub Copilot CLI is outside this support matrix.
 
 ## Verify ingestion
 

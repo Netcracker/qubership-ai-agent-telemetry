@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -198,6 +202,144 @@ func TestRunLifecycleTelemetryFailurePreventsCLIRemoval(t *testing.T) {
 	last := summary.Results[len(summary.Results)-1]
 	if last.Name != "managed-cli" || last.State != operationSkipped {
 		t.Fatalf("last result = %#v, want skipped managed CLI", last)
+	}
+}
+
+func TestRunLifecyclePreservesCLIAndTelemetryDataForModifiedClineHook(t *testing.T) {
+	tests := []struct {
+		name string
+		opts lifecycleOptions
+	}{
+		{
+			name: "full uninstall",
+			opts: lifecycleOptions{Action: actionUninstall, Purge: true},
+		},
+		{
+			name: "telemetry uninstall with remove CLI",
+			opts: lifecycleOptions{
+				Action: actionUninstall, Components: []componentName{componentTelemetry}, Purge: true, RemoveCLI: true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			if err := hookInstallError(installHooks(home, []hookTarget{hookClaude, hookCline, hookCursor})); err != nil {
+				t.Fatal(err)
+			}
+			clinePath := hookPath(home, hookCline)
+			modified := append(clineHookContent(runtime.GOOS), []byte("# local change\n")...)
+			if err := os.WriteFile(clinePath, modified, clineHookMode(runtime.GOOS)); err != nil {
+				t.Fatal(err)
+			}
+
+			configDir := filepath.Join(home, ".config", pkgName)
+			cacheDir := filepath.Join(home, ".cache", pkgName)
+			for _, path := range []string{configDir, cacheDir} {
+				if err := os.MkdirAll(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			var calls []string
+			deps := fakeLifecycleDeps(&calls, nil, nil)
+			deps.Components[componentTelemetry] = newTelemetryComponent(telemetryDeps{
+				Home: func() string { return home }, ConfigDir: func() string { return configDir },
+				CacheDir: func() string { return cacheDir }, Warnings: &bytes.Buffer{},
+			})
+
+			summary := runLifecycle(context.Background(), tt.opts, deps)
+			if summary.Err == nil || !strings.Contains(summary.Err.Error(), "cline") {
+				t.Fatalf("runLifecycle() error = %v, want incomplete Cline cleanup", summary.Err)
+			}
+			if containsString(calls, "uninstall:cli") {
+				t.Fatalf("calls = %v, CLI removal must not run while the Cline hook remains", calls)
+			}
+			if got, err := os.ReadFile(clinePath); err != nil || !bytes.Equal(got, modified) {
+				t.Fatalf("modified Cline hook = %q, %v; want byte-for-byte preservation", got, err)
+			}
+			statuses := gatherHookStatus(home)
+			states := make(map[hookTarget]hookState, len(statuses))
+			for _, status := range statuses {
+				states[status.Target] = status.State
+			}
+			for _, target := range []hookTarget{hookClaude, hookCursor} {
+				if state := states[target]; state != hookMissing {
+					t.Fatalf("%s hook status = %s, want missing after independent cleanup", target, state)
+				}
+			}
+			for _, path := range []string{configDir, cacheDir} {
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("telemetry data removed after incomplete hook cleanup: %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRunLifecycleRemovesCLIAndTelemetryDataForUnrelatedClineHook(t *testing.T) {
+	tests := []struct {
+		name    string
+		symlink bool
+	}{
+		{name: "file"},
+		{name: "symlink", symlink: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			clinePath := hookPath(home, hookCline)
+			if err := os.MkdirAll(filepath.Dir(clinePath), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			original := []byte("#!/bin/sh\necho unrelated\n")
+			writePath := clinePath
+			if tt.symlink {
+				writePath = filepath.Join(home, "unrelated-hook")
+			}
+			if err := os.WriteFile(writePath, original, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tt.symlink {
+				if err := os.Symlink(writePath, clinePath); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			}
+
+			configDir := filepath.Join(home, ".config", pkgName)
+			cacheDir := filepath.Join(home, ".cache", pkgName)
+			for _, path := range []string{configDir, cacheDir} {
+				if err := os.MkdirAll(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			var calls []string
+			deps := fakeLifecycleDeps(&calls, nil, nil)
+			deps.Components[componentTelemetry] = newTelemetryComponent(telemetryDeps{
+				Home: func() string { return home }, ConfigDir: func() string { return configDir },
+				CacheDir: func() string { return cacheDir }, Warnings: &bytes.Buffer{},
+			})
+			summary := runLifecycle(context.Background(), lifecycleOptions{
+				Action: actionUninstall, Components: []componentName{componentTelemetry}, Purge: true, RemoveCLI: true,
+			}, deps)
+			if summary.Err != nil {
+				t.Fatalf("runLifecycle() error = %v, want unrelated hook preserved without blocking cleanup", summary.Err)
+			}
+			if !containsString(calls, "uninstall:cli") {
+				t.Fatalf("calls = %v, want CLI removal for unrelated Cline hook", calls)
+			}
+			if got, err := os.ReadFile(clinePath); err != nil || !bytes.Equal(got, original) {
+				t.Fatalf("unrelated Cline hook = %q, %v; want byte-for-byte preservation", got, err)
+			}
+			for _, path := range []string{configDir, cacheDir} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("telemetry data remains after successful purge: %s: %v", path, err)
+				}
+			}
+		})
 	}
 }
 

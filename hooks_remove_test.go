@@ -265,8 +265,8 @@ func TestUninstallHooksContinuesAfterModifiedClineHook(t *testing.T) {
 
 	var warnings bytes.Buffer
 	results := uninstallHooks(home, []hookTarget{hookCursor, hookCline, hookClaude}, &warnings)
-	if err := hookInstallError(results); err != nil {
-		t.Fatal(err)
+	if err := hookInstallError(results); err == nil || !strings.Contains(err.Error(), "cline") {
+		t.Fatalf("hookInstallError() = %v, want incomplete Cline cleanup", err)
 	}
 	if len(results) != 3 || !results[0].Changed || results[1].Changed || !results[2].Changed {
 		t.Fatalf("results = %#v", results)

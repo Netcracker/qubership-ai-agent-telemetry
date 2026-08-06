@@ -259,13 +259,42 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 	})
 
 	t.Run("modified", func(t *testing.T) {
+		for _, goos := range []string{"darwin", "windows"} {
+			t.Run(goos, func(t *testing.T) {
+				home := t.TempDir()
+				path, _, err := installClineHook(home, goos)
+				if err != nil {
+					t.Fatal(err)
+				}
+				modified := append(clineHookContent(goos), []byte("# local change\n")...)
+				if err := os.WriteFile(path, modified, clineHookMode(goos)); err != nil {
+					t.Fatal(err)
+				}
+				var warnings bytes.Buffer
+				changed, err := removeClineHook(path, goos, &warnings)
+				if err == nil || changed || !strings.Contains(err.Error(), "cleanup is incomplete") ||
+					!strings.Contains(warnings.String(), "preserved modified Cline hook") {
+					t.Fatalf("changed = %v, err = %v, warnings = %q", changed, err, warnings.String())
+				}
+				got, readErr := os.ReadFile(path)
+				if readErr != nil || !bytes.Equal(got, modified) {
+					t.Fatalf("modified hook changed: %q, %v", got, readErr)
+				}
+			})
+		}
+	})
+
+	t.Run("unrelated", func(t *testing.T) {
 		home := t.TempDir()
-		path, _, err := installClineHook(home, "darwin")
-		if err != nil {
+		path := clineHookPath(home, "darwin")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		modified := append(clineHookContent("darwin"), []byte("# local change\n")...)
-		if err := os.WriteFile(path, modified, 0o755); err != nil {
+		original := []byte("#!/bin/sh\n# ai-agent-telemetry ingest --agent=cline\n" +
+			"echo ai-agent-telemetry ingest --agent=cline\n" +
+			"echo \"text && ai-agent-telemetry ingest --agent=cline --not-run\"\n" +
+			"echo unrelated # && ai-agent-telemetry ingest --agent=cline --not-run\n")
+		if err := os.WriteFile(path, original, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		var warnings bytes.Buffer
@@ -273,9 +302,150 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 		if err != nil || changed || !strings.Contains(warnings.String(), "preserved modified Cline hook") {
 			t.Fatalf("changed = %v, err = %v, warnings = %q", changed, err, warnings.String())
 		}
-		got, readErr := os.ReadFile(path)
-		if readErr != nil || !bytes.Equal(got, modified) {
-			t.Fatalf("modified hook changed: %q, %v", got, readErr)
+		if got, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(got, original) {
+			t.Fatalf("unrelated hook changed: %q, %v", got, readErr)
 		}
 	})
+
+	t.Run("unrelated symlink", func(t *testing.T) {
+		home := t.TempDir()
+		target := filepath.Join(home, "unrelated-hook")
+		original := []byte("#!/bin/sh\necho unrelated\n")
+		if err := os.WriteFile(target, original, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := clineHookPath(home, "darwin")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		var warnings bytes.Buffer
+		changed, err := removeClineHook(path, "darwin", &warnings)
+		if err != nil || changed || !strings.Contains(warnings.String(), "preserved modified Cline hook") {
+			t.Fatalf("changed = %v, err = %v, warnings = %q", changed, err, warnings.String())
+		}
+		if info, statErr := os.Lstat(path); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("link changed: info=%v err=%v", info, statErr)
+		}
+	})
+}
+
+func TestRemoveClineHookDetectsManagedInvocationVariants(t *testing.T) {
+	tests := []struct {
+		name    string
+		goos    string
+		content string
+	}{
+		{
+			name:    "POSIX whitespace",
+			goos:    "darwin",
+			content: "#!/bin/sh\nai-agent-telemetry\t ingest   --agent=cline >/dev/null 2>&1 || true\n",
+		},
+		{
+			name:    "POSIX continuation and wrapper",
+			goos:    "darwin",
+			content: "#!/bin/sh\ncommand ai-agent-telemetry \\\n  ingest --agent=cline >/dev/null 2>&1 || true\n",
+		},
+		{
+			name:    "POSIX assignment prefix",
+			goos:    "darwin",
+			content: "VAR=value ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true\n",
+		},
+		{
+			name:    "POSIX pipeline",
+			goos:    "darwin",
+			content: "printf payload | ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true\n",
+		},
+		{
+			name:    "PowerShell whitespace",
+			goos:    "windows",
+			content: "&  ai-agent-telemetry\t ingest --agent cline *> $null\n",
+		},
+		{
+			name:    "PowerShell quoted command",
+			goos:    "windows",
+			content: "& \"ai-agent-telemetry\" ingest --agent=cline *> $null\n",
+		},
+		{
+			name:    "PowerShell pipeline",
+			goos:    "windows",
+			content: "Get-Content payload | & ai-agent-telemetry ingest --agent=cline *> $null\n",
+		},
+		{
+			name:    "flag order",
+			goos:    "darwin",
+			content: "ai-agent-telemetry ingest --endpoint=https://collector.example/v1/logs --agent=cline\n",
+		},
+		{
+			name:    "Windows executable suffix",
+			goos:    "windows",
+			content: "& ai-agent-telemetry.exe ingest --agent=cline *> $null\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			path := clineHookPath(home, tt.goos)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tt.content), clineHookMode(tt.goos)); err != nil {
+				t.Fatal(err)
+			}
+			changed, err := removeClineHook(path, tt.goos, &bytes.Buffer{})
+			if err == nil || changed || !strings.Contains(err.Error(), "cleanup is incomplete") {
+				t.Fatalf("changed = %v, err = %v, want incomplete cleanup", changed, err)
+			}
+		})
+	}
+}
+
+func TestRemoveClineHookPreservesSymlinkWithoutReadingTarget(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, string)
+	}{
+		{
+			name: "directory target",
+			setup: func(t *testing.T, target string) {
+				if err := os.Mkdir(target, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "oversized target",
+			setup: func(t *testing.T, target string) {
+				if err := os.WriteFile(target, bytes.Repeat([]byte("unrelated\n"), 1<<17), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			target := filepath.Join(home, "unmanaged-target")
+			tt.setup(t, target)
+			path := clineHookPath(home, "darwin")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+
+			changed, err := removeClineHook(path, "darwin", &bytes.Buffer{})
+			if err != nil || changed {
+				t.Fatalf("changed = %v, err = %v, want unmanaged symlink preserved", changed, err)
+			}
+			if info, statErr := os.Lstat(path); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("link changed: info=%v err=%v", info, statErr)
+			}
+		})
+	}
 }
