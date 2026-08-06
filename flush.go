@@ -38,7 +38,10 @@ func newBatchingExporter(inner sdklog.Exporter) *batchingExporter {
 	return &batchingExporter{inner: inner}
 }
 
-func (b *batchingExporter) Export(_ context.Context, records []sdklog.Record) error {
+func (b *batchingExporter) Export(ctx context.Context, records []sdklog.Record) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(records) == 0 {
 		return nil
 	}
@@ -265,6 +268,9 @@ func deliverEvents(
 	sentNames := make([]string, 0, len(names))
 	var retainedIssues boundedErrors
 	for _, n := range names {
+		if err := ctx.Err(); err != nil {
+			break
+		}
 		ev, rerr := s.Read(n)
 		if rerr != nil {
 			if strict {
@@ -280,6 +286,11 @@ func deliverEvents(
 			continue
 		}
 		logger.Emit(ctx, rec)
+		// Export may reject a canceled context without buffering; do not treat
+		// that emit as accepted for deletion.
+		if err := ctx.Err(); err != nil {
+			break
+		}
 		sentNames = append(sentNames, n)
 	}
 

@@ -33,6 +33,64 @@ func (e testLogExporter) Export(context.Context, []sdklog.Record) error { return
 func (e testLogExporter) Shutdown(context.Context) error                { return e.shutdownErr }
 func (e testLogExporter) ForceFlush(context.Context) error              { return nil }
 
+type countingLogExporter struct {
+	exports atomic.Int32
+	records atomic.Int32
+}
+
+func (e *countingLogExporter) Export(_ context.Context, records []sdklog.Record) error {
+	e.exports.Add(1)
+	e.records.Add(int32(len(records)))
+	return nil
+}
+func (e *countingLogExporter) Shutdown(context.Context) error   { return nil }
+func (e *countingLogExporter) ForceFlush(context.Context) error { return nil }
+
+func TestBatchingExporterExportHonorsCanceledContext(t *testing.T) {
+	inner := &countingLogExporter{}
+	exp := newBatchingExporter(inner)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var rec sdklog.Record
+	if err := exp.Export(ctx, []sdklog.Record{rec}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Export error = %v, want context.Canceled", err)
+	}
+	if err := exp.ForceFlush(context.Background()); err != nil {
+		t.Fatalf("ForceFlush: %v", err)
+	}
+	if got := inner.exports.Load(); got != 0 {
+		t.Fatalf("inner exports = %d, want 0 after canceled Export", got)
+	}
+	if got := inner.records.Load(); got != 0 {
+		t.Fatalf("inner records = %d, want 0 after canceled Export", got)
+	}
+}
+
+func TestBatchingExporterKeepsAcceptedRecordsAfterLaterCancel(t *testing.T) {
+	inner := &countingLogExporter{}
+	exp := newBatchingExporter(inner)
+
+	var rec sdklog.Record
+	if err := exp.Export(context.Background(), []sdklog.Record{rec, rec}); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := exp.Export(ctx, []sdklog.Record{rec}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled Export error = %v, want context.Canceled", err)
+	}
+	if err := exp.ForceFlush(context.Background()); err != nil {
+		t.Fatalf("ForceFlush: %v", err)
+	}
+	if got := inner.exports.Load(); got != 1 {
+		t.Fatalf("inner exports = %d, want 1", got)
+	}
+	if got := inner.records.Load(); got != 2 {
+		t.Fatalf("inner records = %d, want 2 previously accepted records", got)
+	}
+}
+
 func explicitResolver(endpoint string) deliveryResolver {
 	return deliveryResolver{
 		Endpoint: func() (string, error) { return endpoint, nil },

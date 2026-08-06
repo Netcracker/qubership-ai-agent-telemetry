@@ -261,9 +261,11 @@ generated UUID v4 session, and no repository value. No harness adapter can creat
 repository policy because it tests machine delivery, and legacy readers recognize the same exact reserved pair.
 
 The outbox retains at most 100 events by default, and an ordinary flush has a 2-second
-timeout. Each flush attempt exports its selected outbox records in one OTLP/HTTP request
-and deletes those files only after that export succeeds. Configure persistent overrides
-with positive values:
+timeout. Each flush attempt exports its selected outbox records as one OTLP batch and
+deletes those files only after that export succeeds. The OTLP HTTP exporter may
+retransmit the same batch in additional HTTP requests when retries fire (for example
+with a longer configured flush timeout). Configure persistent overrides with positive
+values:
 
 ```sh
 ai-agent-telemetry configure --buffer-cap=1000 --flush-timeout=30s
