@@ -2,7 +2,7 @@ name: ai-agent-telemetry-backend
 
 services:
   victorialogs:
-    image: victoriametrics/victoria-logs:v1.16.0-victorialogs
+    image: victoriametrics/victoria-logs:v1.24.0-victorialogs@sha256:1ec31ddccc39dc9ead2607cddbf2829be1eb5ad39890e72bba26b359be20801d
     command:
       - -storageDataPath=/vlogs
       - -retentionPeriod=${VL_RETENTION:-365d}
@@ -29,7 +29,7 @@ services:
     restart: unless-stopped
 
   collector:
-    image: otel/opentelemetry-collector-contrib:0.119.0
+    image: otel/opentelemetry-collector-contrib:0.157.0@sha256:f2f01157055a9b2aab9df7118e1f1c9abf345e99b23bc7a2bc791db374a7d0f6
     command: ["--config=/etc/otel/config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otel/config.yaml:ro
