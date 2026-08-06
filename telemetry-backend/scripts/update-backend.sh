@@ -803,9 +803,14 @@ def root_matches(root_path, root_stat):
     return stat.S_ISDIR(current.st_mode) and (current.st_dev, current.st_ino) == root_stat
 
 
+def list_directory(directory_fd):
+    os.lseek(directory_fd, 0, os.SEEK_SET)
+    return os.listdir(directory_fd)
+
+
 def completed_backups(root_fd):
     try:
-        names = os.listdir(root_fd)
+        names = list_directory(root_fd)
     except OSError as error:
         raise RetentionError(f"cannot list the backup root: {error}") from error
 
@@ -1671,17 +1676,17 @@ def reconcile_claim(root_path, root_fd, root_stat, state_file, state, original_n
 
 def reconcile_claims(root_path, root_fd, root_stat):
     try:
-        names = os.listdir(root_fd)
+        names = list_directory(root_fd)
     except OSError as error:
         raise RetentionError(f"cannot list retention state: {error}") from error
     cleanup_ledger_residues(root_fd, names)
     try:
-        names = os.listdir(root_fd)
+        names = list_directory(root_fd)
     except OSError as error:
         raise RetentionError(f"cannot list retention state after ledger cleanup: {error}") from error
     reconcile_temporary_states(root_path, root_fd, root_stat, names)
     try:
-        names = os.listdir(root_fd)
+        names = list_directory(root_fd)
     except OSError as error:
         raise RetentionError(f"cannot list reconciled retention state: {error}") from error
     state_files = [name for name in names if os.fsencode(name).startswith(b".retention-state-") and

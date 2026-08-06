@@ -2682,6 +2682,36 @@ run_retention_suite() {
   local state_phase state_boundary unique_temp unique_quarantine unique_state_temp unique_claim
   local ledger_cleanup ledger_entry
 
+  python3 - "$update_script" <<'PY'
+import os
+import pathlib
+import sys
+import tempfile
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+start = source.index("import calendar\n", source.index("prune_backups()"))
+end = source.index("\nPY\n", start)
+namespace = {"__name__": "retention_contract"}
+original_argv = sys.argv
+try:
+    sys.argv = ["retention-helper", "", "", "0", "", "", "", "", "", ""]
+    exec(compile(source[start:end], sys.argv[0], "exec"), namespace)
+finally:
+    sys.argv = original_argv
+
+with tempfile.TemporaryDirectory() as root:
+    pathlib.Path(root, "before").touch()
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        namespace["list_directory"](root_fd)
+        pathlib.Path(root, "after").touch()
+        names = namespace["list_directory"](root_fd)
+    finally:
+        os.close(root_fd)
+    if {"before", "after"} - set(names):
+        raise SystemExit("retention directory enumeration did not observe a newly created entry")
+PY
+
   prepare_retention_fixture() {
     local fixture_root=$1
 
