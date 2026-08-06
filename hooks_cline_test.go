@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -62,7 +63,7 @@ func TestInstallClineHookByPlatform(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if info.Mode().Perm() != tt.mode {
+			if runtime.GOOS != "windows" && info.Mode().Perm() != tt.mode {
 				t.Fatalf("mode = %o, want %o", info.Mode().Perm(), tt.mode)
 			}
 
@@ -79,6 +80,9 @@ func TestInstallClineHookByPlatform(t *testing.T) {
 }
 
 func TestInstallClineHookRepairsOwnedMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX permission bits")
+	}
 	home := t.TempDir()
 	path, _, err := installClineHook(home, "darwin")
 	if err != nil {
@@ -97,6 +101,9 @@ func TestInstallClineHookRepairsOwnedMode(t *testing.T) {
 }
 
 func TestClinePOSIXHookIsSilentAndFailsOpenWhenTelemetryCLIIsMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX hooks cannot execute on Windows")
+	}
 	home := t.TempDir()
 	path, _, err := installClineHook(home, "darwin")
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 const clineHookOwner = "Managed by ai-agent-telemetry. Do not edit."
@@ -86,7 +87,7 @@ func installClineHook(home, goos string) (string, bool, error) {
 	if !bytes.Equal(data, want) {
 		return path, false, fmt.Errorf("existing Cline hook is not managed by ai-agent-telemetry and was preserved: %s", path)
 	}
-	if info.Mode().Perm() == wantMode {
+	if runtime.GOOS == "windows" || info.Mode().Perm() == wantMode {
 		return path, false, nil
 	}
 	if err := os.Chmod(path, wantMode); err != nil {
@@ -102,7 +103,7 @@ func writeClineHookExclusively(path string, data []byte, mode os.FileMode) error
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("Cline hook appeared during installation and was preserved: %s", path)
+			return fmt.Errorf("cline hook appeared during installation and was preserved: %s", path)
 		}
 		return err
 	}
@@ -147,7 +148,7 @@ func inspectClineHook(path, goos string) (hookState, string) {
 	if !bytes.Equal(data, clineHookContent(goos)) && !bytes.Equal(data, clinePreviousHookContent(goos)) {
 		return hookInvalid, "hook is not managed by ai-agent-telemetry"
 	}
-	if info.Mode().Perm() != clineHookMode(goos) {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != clineHookMode(goos) {
 		return hookInvalid, fmt.Sprintf("mode is %04o, want %04o", info.Mode().Perm(), clineHookMode(goos))
 	}
 	return hookInstalled, ""
