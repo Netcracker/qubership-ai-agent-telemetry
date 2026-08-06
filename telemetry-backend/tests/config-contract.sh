@@ -46,6 +46,13 @@ printf '%s\n' "$legacy_hits" | while IFS= read -r legacy_path; do
       [ "$legacy_backup_values" = "$expected_legacy_backup_values" ] ||
         fail 'backup executable must define each fixed legacy identity constant exactly once'
       ;;
+    telemetry-backend/README.md)
+      legacy_readme_lines=$(git -C "$repository_root" grep -nF 'skills-telemetry-backend' -- "$legacy_path" || true)
+      legacy_readme_text=$(printf '%s\n' "$legacy_readme_lines" | sed 's/^[^:]*:[0-9]*://')
+      expected_legacy_readme_text='`skills-telemetry-backend` project from `/opt/skills-telemetry-backend`, follow'
+      [ "$legacy_readme_text" = "$expected_legacy_readme_text" ] ||
+        fail 'backend README must name the legacy identity only in the fixed migration sentence'
+      ;;
     telemetry-backend/tests/config-contract.sh|telemetry-backend/tests/maintenance-contract.sh|\
       telemetry-backend/MIGRATE_LEGACY_BACKEND.md|\
       docs/superpowers/plans/*|docs/superpowers/specs/*)
