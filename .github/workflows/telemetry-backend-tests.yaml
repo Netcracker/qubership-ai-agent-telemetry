@@ -7,11 +7,15 @@ on:
       - "main"
     paths:
       - "telemetry-backend/**"
+      - "scripts/package-backend-release.sh"
+      - "scripts/package_backend_release_test.sh"
       - ".github/workflows/telemetry-backend-tests.yaml"
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
       - "telemetry-backend/**"
+      - "scripts/package-backend-release.sh"
+      - "scripts/package_backend_release_test.sh"
       - ".github/workflows/telemetry-backend-tests.yaml"
   workflow_dispatch: null
 
@@ -37,6 +41,18 @@ jobs:
 
       - name: Verify VictoriaMetrics query retry bounds
         run: sh telemetry-backend/tests/metrics-query-retry-test.sh
+
+      - name: Verify backend release packaging
+        run: bash scripts/package_backend_release_test.sh
+
+      - name: Verify maintenance contracts
+        run: |
+          bash telemetry-backend/tests/maintenance-contract.sh cli
+          bash telemetry-backend/tests/maintenance-contract.sh resolution
+          bash telemetry-backend/tests/maintenance-contract.sh activation
+          bash telemetry-backend/tests/maintenance-contract.sh recovery
+          bash telemetry-backend/tests/maintenance-contract.sh restore-portability
+          bash telemetry-backend/tests/maintenance-contract.sh retention
 
       - name: Run backend smoke test
         run: sh telemetry-backend/tests/smoke.sh
