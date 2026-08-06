@@ -30,8 +30,8 @@
   },
   {
    "id": 2,
-   "type": "stat",
-   "title": "Installs",
+   "type": "timeseries",
+   "title": "Active installations per day",
    "gridPos": {
     "h": 4,
     "w": 8,
@@ -44,10 +44,19 @@
    },
    "fieldConfig": {
     "defaults": {
-     "displayName": "Machines",
+     "displayName": "Installations",
+     "unit": "locale",
+     "decimals": 0,
+     "min": 0,
      "color": {
       "mode": "fixed",
       "fixedColor": "text"
+     },
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 0,
+      "lineWidth": 1,
+      "axisSoftMin": 0
      }
     },
     "overrides": []
@@ -58,26 +67,24 @@
       "type": "victoriametrics-logs-datasource",
       "uid": "victorialogs"
      },
-     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(machine.id) installs",
-     "queryType": "stats",
+     "expr": "{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nmachine.id:*\nrepo.remote:~\"${repository:regex}\"\nagent:~\"${harness:regex}\"\nos.type:~\"${os:regex}\"\nservice.version:~\"${version:regex}\"\n| stats by (_time:1d offset 0h) count_uniq(machine.id) installations\n| sort by (_time)",
+     "queryType": "statsRange",
      "refId": "A"
     }
    ],
    "options": {
-    "colorMode": "none",
-    "graphMode": "none",
-    "reduceOptions": {
-     "calcs": [
-      "lastNotNull"
-     ]
+    "legend": {
+     "displayMode": "hidden",
+     "placement": "bottom",
+     "showLegend": false
     }
    },
-   "description": "Distinct machines that sent at least one telemetry event."
+   "description": "UTC calendar-day count of unique machine.id installations that sent telemetry. The default range contains complete UTC days; with a custom range, edge buckets may be partial."
   },
   {
    "id": 3,
-   "type": "stat",
-   "title": "Used in repositories",
+   "type": "timeseries",
+   "title": "Active repositories per day",
    "gridPos": {
     "h": 4,
     "w": 8,
@@ -91,9 +98,18 @@
    "fieldConfig": {
     "defaults": {
      "displayName": "Repositories",
+     "unit": "locale",
+     "decimals": 0,
+     "min": 0,
      "color": {
       "mode": "fixed",
       "fixedColor": "text"
+     },
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 0,
+      "lineWidth": 1,
+      "axisSoftMin": 0
      }
     },
     "overrides": []
@@ -104,26 +120,24 @@
       "type": "victoriametrics-logs-datasource",
       "uid": "victorialogs"
      },
-     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | format if (!repo.remote:*) \"(unknown)\" as repo.remote | replace (\"git@github.com:\", \"\") at repo.remote | replace (\"github.com/\", \"\") at repo.remote | replace (\".git\", \"\") at repo.remote | format \"<lc:repo.remote>\" as repo.remote | stats count_uniq(repo.remote) repositories",
-     "queryType": "stats",
+     "expr": "{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nrepo.remote:*\nrepo.remote:~\"${repository:regex}\"\nagent:~\"${harness:regex}\"\nos.type:~\"${os:regex}\"\nservice.version:~\"${version:regex}\"\n| replace_regexp(`^[[:space:]]+|[[:space:]]+$`, \"\") at repo.remote\n| format \"<lc:repo.remote>\" as repo.remote\n| replace_regexp(`^(git@github[.]com:|ssh://(git@)?github[.]com/|git://github[.]com/|https?://github[.]com/|github[.]com/)`, \"\") at repo.remote\n| replace_regexp(`/+$`, \"\") at repo.remote\n| replace_regexp(`[.]git$`, \"\") at repo.remote\n| replace_regexp(`/+$`, \"\") at repo.remote\n| repo.remote:*\n| stats by (_time:1d offset 0h) count_uniq(repo.remote) repositories\n| sort by (_time)",
+     "queryType": "statsRange",
      "refId": "A"
     }
    ],
    "options": {
-    "colorMode": "none",
-    "graphMode": "none",
-    "reduceOptions": {
-     "calcs": [
-      "lastNotNull"
-     ]
+    "legend": {
+     "displayMode": "hidden",
+     "placement": "bottom",
+     "showLegend": false
     }
    },
-   "description": "Distinct repositories where skill or MCP activity was recorded."
+   "description": "UTC calendar-day count of normalized repositories, excluding events with missing remotes. The default range contains complete UTC days; with a custom range, edge buckets may be partial."
   },
   {
    "id": 4,
-   "type": "stat",
-   "title": "Sessions caught",
+   "type": "timeseries",
+   "title": "Sessions observed per day",
    "gridPos": {
     "h": 4,
     "w": 8,
@@ -137,9 +151,18 @@
    "fieldConfig": {
     "defaults": {
      "displayName": "Sessions",
+     "unit": "locale",
+     "decimals": 0,
+     "min": 0,
      "color": {
       "mode": "fixed",
       "fixedColor": "text"
+     },
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 0,
+      "lineWidth": 1,
+      "axisSoftMin": 0
      }
     },
     "overrides": []
@@ -150,21 +173,19 @@
       "type": "victoriametrics-logs-datasource",
       "uid": "victorialogs"
      },
-     "expr": "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" repo.remote:~\"${repository:regex}\" agent:~\"${harness:regex}\" os.type:~\"${os:regex}\" service.version:~\"${version:regex}\" | stats count_uniq(agent, session.id) sessions",
-     "queryType": "stats",
+     "expr": "{service.name=\"ai-agent-telemetry\"}\nagent:!=\"selftest\"\nsession.id:*\nrepo.remote:~\"${repository:regex}\"\nagent:~\"${harness:regex}\"\nos.type:~\"${os:regex}\"\nservice.version:~\"${version:regex}\"\n| stats by (_time:1d offset 0h) count_uniq(agent, session.id) sessions\n| sort by (_time)",
+     "queryType": "statsRange",
      "refId": "A"
     }
    ],
    "options": {
-    "colorMode": "none",
-    "graphMode": "none",
-    "reduceOptions": {
-     "calcs": [
-      "lastNotNull"
-     ]
+    "legend": {
+     "displayMode": "hidden",
+     "placement": "bottom",
+     "showLegend": false
     }
    },
-   "description": "Distinct agent sessions with at least one skill or MCP event."
+   "description": "UTC calendar-day count of unique (agent, session.id) sessions with observed telemetry. The default range contains complete UTC days; with a custom range, edge buckets may be partial."
   },
   {
    "id": 5,
@@ -186,6 +207,9 @@
     "defaults": {
      "min": 0,
      "unit": "short",
+     "color": {
+      "mode": "continuous-BlPu"
+     },
      "custom": {
       "drawStyle": "bars",
       "fillOpacity": 85,
@@ -421,7 +445,7 @@
   {
    "id": 7,
    "type": "bargauge",
-   "title": "Activity per machine",
+   "title": "Activity per installation",
    "gridPos": {
     "h": 9,
     "w": 8,
@@ -468,7 +492,7 @@
     "showUnfilled": true,
     "valueMode": "color"
    },
-   "description": "Skill and MCP events per machine (deduplicated)."
+   "description": "Deduplicated skill and MCP events per installation."
   },
   {
    "id": 8,
@@ -539,6 +563,9 @@
     "defaults": {
      "min": 0,
      "unit": "short",
+     "color": {
+      "mode": "continuous-BlPu"
+     },
      "custom": {
       "fillOpacity": 85,
       "lineWidth": 1
@@ -852,6 +879,9 @@
     "defaults": {
      "min": 0,
      "unit": "short",
+     "color": {
+      "mode": "continuous-BlPu"
+     },
      "custom": {
       "fillOpacity": 85,
       "lineWidth": 1
@@ -1138,6 +1168,9 @@
     "defaults": {
      "min": 0,
      "unit": "short",
+     "color": {
+      "mode": "continuous-BlPu"
+     },
      "custom": {
       "fillOpacity": 85,
       "lineWidth": 1
@@ -1367,10 +1400,10 @@
   ]
  },
  "time": {
-  "from": "now-30d",
-  "to": "now"
+  "from": "now-30d/d",
+  "to": "now/d"
  },
- "timezone": "",
+ "timezone": "utc",
  "title": "Adoption overview",
  "uid": "ai-agent-telemetry-adoption",
  "version": 3

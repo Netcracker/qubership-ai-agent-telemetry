@@ -5,6 +5,32 @@ receivers:
         endpoint: 0.0.0.0:4318
 
 processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+  resource/privacy:
+    attributes:
+      - key: session.id
+        action: delete
+      - key: user.email
+        action: delete
+      - key: user.account_uuid
+        action: delete
+      - key: organization.id
+        action: delete
+  attributes/privacy:
+    actions:
+      - key: session.id
+        action: delete
+      - key: user.email
+        action: delete
+      - key: user.account_uuid
+        action: delete
+      - key: organization.id
+        action: delete
+  deltatocumulative:
+    max_streams: 100000
   batch:
     timeout: 5s
 
@@ -13,13 +39,21 @@ exporters:
     logs_endpoint: http://victorialogs:9428/insert/opentelemetry/v1/logs
     tls:
       insecure: true
+  otlphttp/victoriametrics:
+    metrics_endpoint: http://victoriametrics:8428/opentelemetry/v1/metrics
+    tls:
+      insecure: true
 
 service:
   pipelines:
     logs:
       receivers: [otlp]
-      processors: [batch]
+      processors: [memory_limiter, batch]
       exporters: [otlphttp/victorialogs]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/privacy, attributes/privacy, deltatocumulative, batch]
+      exporters: [otlphttp/victoriametrics]
   telemetry:
     logs:
       level: info

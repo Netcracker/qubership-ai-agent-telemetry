@@ -1,0 +1,196 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "links": [
+    {"title": "Native agent metrics overview", "type": "link", "url": "/grafana/d/native-agent-metrics-overview"},
+    {"title": "Adoption overview", "type": "link", "url": "/grafana/d/ai-agent-telemetry-adoption"},
+    {"title": "Telemetry health", "type": "link", "url": "/grafana/d/ai-agent-health"}
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Average sessions and turns per hour",
+      "description": "Each point covers the complete Grafana query interval and is normalized to an hourly average. At a one-hour interval, it is the exact count for that hour.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "interval": "1h", "expr": "sum(increase(codex_thread_started_total{service_name=\"codex_cli_rs\",session_source=\"cli\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Sessions"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "interval": "1h", "expr": "sum(increase(codex_conversation_turn_count_total{service_name=\"codex_cli_rs\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Turns"}
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Average tool and MCP calls per hour",
+      "description": "Each point covers the complete Grafana query interval and is normalized to an hourly average. At a one-hour interval, it is the exact count for that hour.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "interval": "1h", "expr": "sum(increase(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Tool calls"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "interval": "1h", "expr": "sum(increase(codex_mcp_call_total{service_name=\"codex_cli_rs\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "MCP calls"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Tool failure ratio per query interval",
+      "description": "Each point covers the complete Grafana query interval. Missing failed-call series produce zero only when tool calls exist.",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 1, "unit": "percentunit", "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}}, "overrides": []},
+      "options": {"legend": {"displayMode": "hidden"}, "tooltip": {"mode": "single"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "interval": "1h", "expr": "(sum(increase(codex_tool_call_total{service_name=\"codex_cli_rs\",success=\"false\"}[$__interval])) or (0 * sum(increase(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__interval])))) / sum(increase(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__interval]))"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Average tokens processed per hour",
+      "description": "Each point covers the complete Grafana query interval and is normalized to an hourly average. At a one-hour interval, it is the exact count for that hour.",
+      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "interval": "1h", "expr": "sum by (token_type) (increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "{{token_type}}"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "bargauge",
+      "title": "Top tools",
+      "description": "The ten most frequently called tools in the selected range.",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "color": {"mode": "continuous-BlPu"}}, "overrides": []},
+      "options": {"displayMode": "gradient", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "topk(10, sum by (tool) (increase(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__range])))", "legendFormat": "{{tool}}", "instant": true}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "bargauge",
+      "title": "MCP servers and outcomes",
+      "description": "The ten most frequent Model Context Protocol server and outcome combinations.",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "color": {"mode": "continuous-BlPu"}}, "overrides": []},
+      "options": {"displayMode": "gradient", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "topk(10, sum by (server, status) (increase(codex_mcp_call_total{service_name=\"codex_cli_rs\"}[$__range])))", "legendFormat": "{{server}} · {{status}}", "instant": true}
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Tokens by model and type",
+      "description": "Non-total turn tokens by model and type over the selected range.",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {"id": "byType", "options": "number"},
+            "properties": [
+              {"id": "unit", "value": "locale"},
+              {"id": "decimals", "value": 0},
+              {"id": "color", "value": {"mode": "continuous-BlPu"}},
+              {"id": "custom.align", "value": "center"},
+              {"id": "custom.cellOptions", "value": {"type": "color-background"}}
+            ]
+          }
+        ]
+      },
+      "options": {"showHeader": true, "cellHeight": "sm"},
+      "transformations": [
+        {"id": "joinByLabels", "options": {"join": ["model"], "value": "token_type"}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {}, "renameByName": {"model": "Model"}}}
+      ],
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (model, token_type) (increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[$__range]))", "instant": true, "format": "time_series"}
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Turn latency",
+      "description": "End-to-end turn mean, p50, and p95 latency. Codex uses a highest finite histogram bucket of 120 seconds, so observations above it can make the quantiles appear capped. The mean uses sum/count and remains uncapped. Quantiles require enough observations in the selected rate interval.",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ms"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(codex_turn_e2e_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "p50"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_turn_e2e_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "p95"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(rate(codex_turn_e2e_duration_ms_milliseconds_sum{service_name=\"codex_cli_rs\"}[$__rate_interval])) / sum(rate(codex_turn_e2e_duration_ms_milliseconds_count{service_name=\"codex_cli_rs\"}[$__rate_interval]))", "legendFormat": "Mean"}
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Tool latency",
+      "description": "Tool call mean, p50, and p95 latency. Codex uses a highest finite histogram bucket of 120 seconds, so observations above it can make the quantiles appear capped. The mean uses sum/count and remains uncapped. Quantiles require enough observations in the selected rate interval.",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ms"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(codex_tool_call_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "p50"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_tool_call_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "p95"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(rate(codex_tool_call_duration_ms_milliseconds_sum{service_name=\"codex_cli_rs\"}[$__rate_interval])) / sum(rate(codex_tool_call_duration_ms_milliseconds_count{service_name=\"codex_cli_rs\"}[$__rate_interval]))", "legendFormat": "Mean"}
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "API latency",
+      "description": "Responses API mean, p50, and p95 latency stages. Codex uses a highest finite histogram bucket of 120 seconds, so observations above it can make the quantiles appear capped. Each mean uses sum/count and remains uncapped. Quantiles require enough observations in the selected rate interval.",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "ms"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "TTFT p50"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "TTFT p95"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "TBT p50"},
+        {"refId": "D", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "TBT p95"},
+        {"refId": "E", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(codex_responses_api_inference_time_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "Inference p50"},
+        {"refId": "F", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(codex_responses_api_inference_time_duration_ms_milliseconds_bucket{service_name=\"codex_cli_rs\"}[$__rate_interval])))", "legendFormat": "Inference p95"},
+        {"refId": "G", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_sum{service_name=\"codex_cli_rs\"}[$__rate_interval])) / sum(rate(codex_responses_api_engine_service_ttft_duration_ms_milliseconds_count{service_name=\"codex_cli_rs\"}[$__rate_interval]))", "legendFormat": "TTFT mean"},
+        {"refId": "H", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_sum{service_name=\"codex_cli_rs\"}[$__rate_interval])) / sum(rate(codex_responses_api_engine_service_tbt_duration_ms_milliseconds_count{service_name=\"codex_cli_rs\"}[$__rate_interval]))", "legendFormat": "TBT mean"},
+        {"refId": "I", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(rate(codex_responses_api_inference_time_duration_ms_milliseconds_sum{service_name=\"codex_cli_rs\"}[$__rate_interval])) / sum(rate(codex_responses_api_inference_time_duration_ms_milliseconds_count{service_name=\"codex_cli_rs\"}[$__rate_interval]))", "legendFormat": "Inference mean"}
+      ]
+    },
+    {
+      "id": 11,
+      "type": "bargauge",
+      "title": "Skill injections",
+      "description": "The fifteen most frequent injected skills by invocation type and outcome.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "color": {"mode": "continuous-BlPu"}}, "overrides": []},
+      "options": {"displayMode": "gradient", "namePlacement": "left", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true, "valueMode": "color"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "topk(15, sum by (skill, invoke_type, status) (increase(codex_skill_injected_total{service_name=\"codex_cli_rs\"}[$__range])))", "legendFormat": "{{skill}} · {{invoke_type}} · {{status}}", "instant": true}
+      ]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 41,
+  "tags": ["ai-agent-telemetry", "native-metrics", "codex"],
+  "templating": {"list": []},
+  "time": {"from": "now-7d", "to": "now"},
+  "timezone": "browser",
+  "title": "Codex native metrics",
+  "uid": "codex-native-metrics",
+  "version": 1
+}

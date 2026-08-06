@@ -53,10 +53,13 @@ queries=$(mktemp)
 response=$(mktemp)
 trap 'rm -f "$queries" "$response"' EXIT HUP INT TERM
 for dashboard in "$dashboard_dir"/*.json; do
-  jq -r '[.panels[].targets[]?.expr] | unique[]' "$dashboard" >>"$queries"
+  jq -c '[.panels[].targets[]?
+    | select(.datasource.uid == "victorialogs")
+    | .expr] | unique[]' "$dashboard" >>"$queries"
 done
 sort -u "$queries" -o "$queries"
-while IFS= read -r query; do
+while IFS= read -r encoded_query; do
+  query=$(printf '%s\n' "$encoded_query" | jq -r .)
   query=$(printf '%s\n' "$query" | sed 's/\${[^}]*:regex}/.*/g')
   status=$(curl --silent --show-error --cacert "$TEST_CA_CERT" \
     --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \

@@ -1,0 +1,100 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "links": [
+    {"title": "Adoption overview", "type": "link", "url": "/grafana/d/ai-agent-telemetry-adoption"},
+    {"title": "Telemetry health", "type": "link", "url": "/grafana/d/ai-agent-health"},
+    {"title": "Codex native metrics", "type": "link", "url": "/grafana/d/codex-native-metrics"}
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Signal availability",
+      "transparent": true,
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "| Harness | Native metrics | Hook telemetry |\n| --- | --- | --- |\n| Codex | Supported | Supported |\n| Claude Code | Supported | Supported |\n| Cursor | Not documented | Supported |\n| Cline | Backend fixture only | Not supported |\n\nNative exporters and hooks provide different signals. Unsupported or unverified signals remain descriptive instead of numeric zeroes."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Native metric sample age",
+      "description": "Age in seconds of the newest client-provided sample timestamp during the previous 30 days. Client clock skew or replay can make this differ from time since server receipt.",
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "s", "overrides": []}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(tlast_over_time({__name__=~\"codex_.*\",service_name=\"codex_cli_rs\"}[30d]))", "legendFormat": "Codex"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "time() - max(tlast_over_time({__name__=~\"claude_code_.*\",service_name=~\"claude-code|claude-code-desktop\"}[30d]))", "legendFormat": "Claude"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Average top-level sessions per hour",
+      "description": "Each point covers the complete Grafana query interval and is normalized to an hourly average. At a one-hour interval, it is the exact count for that hour. Claude Code agent-view sessions are excluded.",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(codex_thread_started_total{service_name=\"codex_cli_rs\",session_source=\"cli\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Codex", "interval": "1h"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum(increase(claude_code_session_count_total{service_name=~\"claude-code|claude-code-desktop\",start_type!=\"agents_view\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Claude", "interval": "1h"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Average tokens processed per hour",
+      "description": "Each point covers the complete Grafana query interval and is normalized to an hourly average. At a one-hour interval, it is the exact count for that hour.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 15},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "locale", "decimals": 0, "custom": {"showPoints": "always", "pointSize": 5, "spanNulls": false}, "overrides": []}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (token_type) (increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Codex · {{token_type}}", "interval": "1h"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "sum by (type) (increase(claude_code_token_usage_tokens_total{service_name=~\"claude-code|claude-code-desktop\"}[$__interval])) * 3600000 / $__interval_ms", "legendFormat": "Claude · {{type}}", "interval": "1h"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Tokens by model and type",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"min": 0}, "overrides": [{"matcher": {"id": "byType", "options": "number"}, "properties": [{"id": "unit", "value": "locale"}, {"id": "decimals", "value": 0}, {"id": "color", "value": {"mode": "continuous-BlPu"}}, {"id": "custom.align", "value": "center"}, {"id": "custom.cellOptions", "value": {"type": "color-background"}}]}]},
+      "options": {"showHeader": true},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "label_join(\n  label_set(\n    sum by (model, token_type) (\n      increase(codex_turn_token_usage_sum{\n        service_name=\"codex_cli_rs\",\n        token_type!=\"total\"\n      }[$__range])\n    ),\n    \"harness\", \"Codex\"\n  ),\n  \"agent_model\", \" · \", \"harness\", \"model\"\n)\nor\nlabel_join(\n  label_set(\n    label_move(\n      sum by (model, type) (\n        increase(claude_code_token_usage_tokens_total{\n          service_name=~\"claude-code|claude-code-desktop\"\n        }[$__range])\n      ),\n      \"type\", \"token_type\"\n    ),\n    \"harness\", \"Claude\"\n  ),\n  \"agent_model\", \" · \", \"harness\", \"model\"\n)", "instant": true, "format": "time_series"}
+      ],
+      "transformations": [{"id": "joinByLabels", "options": {"join": ["agent_model"], "value": "token_type"}}, {"id": "organize", "options": {"renameByName": {"agent_model": "Harness · Model"}}}]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Observed client versions",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "victoriametrics"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"showHeader": true},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "victoriametrics"}, "expr": "label_set(\n  group by (service_version) (\n    max_over_time(codex_tool_call_total{service_name=\"codex_cli_rs\"}[$__range])\n  ),\n  \"harness\", \"Codex\"\n)\nor\nlabel_set(\n  group by (service_version) (\n    max_over_time(claude_code_session_count_total{\n      service_name=~\"claude-code|claude-code-desktop\"\n    }[$__range])\n  ),\n  \"harness\", \"Claude\"\n)", "instant": true, "format": "table"}
+      ],
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true, "__name__": true}, "renameByName": {"harness": "Harness", "service_version": "Version"}, "indexByName": {"harness": 0, "service_version": 1}}}]
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 41,
+  "tags": ["ai-agent-telemetry", "native-metrics"],
+  "templating": {"list": []},
+  "time": {"from": "now-7d", "to": "now"},
+  "timezone": "browser",
+  "title": "Native agent metrics overview",
+  "uid": "native-agent-metrics-overview",
+  "version": 1
+}

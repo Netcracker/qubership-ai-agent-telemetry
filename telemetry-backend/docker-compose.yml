@@ -5,9 +5,25 @@ services:
     image: victoriametrics/victoria-logs:v1.16.0-victorialogs
     command:
       - -storageDataPath=/vlogs
-      - -retentionPeriod=${VL_RETENTION}
+      - -retentionPeriod=${VL_RETENTION:-365d}
     volumes:
       - vlogs-data:/vlogs
+    networks:
+      - backend
+    restart: unless-stopped
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.148.0
+    command:
+      - -storageDataPath=/vmetrics
+      - -retentionPeriod=${VM_RETENTION:-365d}
+      - -opentelemetry.usePrometheusNaming
+      - -storage.maxHourlySeries=${VM_MAX_HOURLY_SERIES:-50000}
+      - -storage.maxDailySeries=${VM_MAX_DAILY_SERIES:-200000}
+      - -storage.minFreeDiskSpaceBytes=${VM_MIN_FREE_DISK_SPACE_BYTES:-1073741824}
+      - -selfScrapeInterval=${VM_SELF_SCRAPE_INTERVAL:-30s}
+    volumes:
+      - vmetrics-data:/vmetrics
     networks:
       - backend
     restart: unless-stopped
@@ -21,6 +37,7 @@ services:
       - backend
     depends_on:
       - victorialogs
+      - victoriametrics
     restart: unless-stopped
 
   grafana:
@@ -54,6 +71,7 @@ services:
       - backend
     depends_on:
       - victorialogs
+      - victoriametrics
     restart: unless-stopped
 
   caddy:
@@ -75,6 +93,7 @@ services:
       - backend
     depends_on:
       - collector
+      - victoriametrics
     restart: unless-stopped
 
 networks:
@@ -82,6 +101,7 @@ networks:
 
 volumes:
   vlogs-data: {}
+  vmetrics-data: {}
   grafana-data: {}
   caddy-data: {}
   caddy-config: {}

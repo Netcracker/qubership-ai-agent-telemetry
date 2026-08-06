@@ -2,7 +2,7 @@
 	tls {$CADDY_TLS}
 
 	# Telemetry ingest — shared bearer token
-	@ingest path /v1/logs
+	@ingest path /v1/logs /v1/metrics
 	handle @ingest {
 		@authorized header Authorization "Bearer {$INGEST_TOKEN}"
 		handle @authorized {
@@ -60,6 +60,28 @@
 			{$DASHBOARD_AUTH_USER} {$DASHBOARD_AUTH_PASSWORD_HASH}
 		}
 		reverse_proxy victorialogs:9428
+	}
+
+	# VictoriaMetrics UI + Prometheus query API — shared read-only access
+	@prometheus path \
+		/prometheus/api/v1/alerts \
+		/prometheus/api/v1/label/* \
+		/prometheus/api/v1/labels \
+		/prometheus/api/v1/metadata \
+		/prometheus/api/v1/query \
+		/prometheus/api/v1/query_exemplars \
+		/prometheus/api/v1/query_range \
+		/prometheus/api/v1/rules \
+		/prometheus/api/v1/series \
+		/prometheus/api/v1/status/* \
+		/prometheus/vmui \
+		/prometheus/vmui/*
+	handle @prometheus {
+		basic_auth {
+			{$DASHBOARD_AUTH_USER} {$DASHBOARD_AUTH_PASSWORD_HASH}
+		}
+		uri strip_prefix /prometheus
+		reverse_proxy victoriametrics:8428
 	}
 
 	respond "not found" 404

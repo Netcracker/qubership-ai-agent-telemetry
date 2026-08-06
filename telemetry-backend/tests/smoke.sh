@@ -96,6 +96,13 @@ printf '%s' "$viewer_orgs" | jq -e 'any(.[]; .role == "Viewer")' >/dev/null ||
 
 [ "$(status --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" "$TEST_BASE_URL/select/vmui/")" = 200 ] ||
   fail 'authenticated VMUI request failed'
+[ "$(status --request POST "$TEST_BASE_URL/v1/metrics")" = 401 ] ||
+  fail 'metrics ingest must require a bearer token'
+[ "$(status "$TEST_BASE_URL/prometheus/api/v1/query?query=up")" = 401 ] ||
+  fail 'VictoriaMetrics queries must require Basic Auth'
+[ "$(status --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" --request POST \
+  "$TEST_BASE_URL/prometheus/api/v1/write")" = 404 ] ||
+  fail 'dashboard credentials must not authorize VictoriaMetrics writes'
 
 datasource=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
   --cookie "$viewer_cookie" \
@@ -108,7 +115,25 @@ datasource_health=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
 [ "$(printf '%s' "$datasource_health" | jq -r '.status')" = OK ] ||
   fail 'VictoriaLogs datasource health check failed'
 
-for uid in ai-agent-health ai-agent-telemetry-adoption; do
+[ "$(status --cookie "$viewer_cookie" \
+  "$TEST_BASE_URL/grafana/api/datasources/uid/victoriametrics")" = 200 ] ||
+  fail 'VictoriaMetrics datasource was not provisioned'
+metrics_datasource=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
+  --cookie "$viewer_cookie" \
+  "$TEST_BASE_URL/grafana/api/datasources/uid/victoriametrics")
+[ "$(printf '%s' "$metrics_datasource" | jq -r '.type')" = prometheus ] ||
+  fail 'VictoriaMetrics datasource must use the Prometheus type'
+metrics_datasource_health=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
+  --cookie "$viewer_cookie" \
+  "$TEST_BASE_URL/grafana/api/datasources/uid/victoriametrics/health")
+[ "$(printf '%s' "$metrics_datasource_health" | jq -r '.status')" = OK ] ||
+  fail 'VictoriaMetrics datasource health check failed'
+
+for uid in \
+  ai-agent-health \
+  ai-agent-telemetry-adoption \
+  native-agent-metrics-overview \
+  codex-native-metrics; do
   curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
     --cookie "$viewer_cookie" \
     "$TEST_BASE_URL/grafana/api/dashboards/uid/$uid" >/dev/null || fail "dashboard $uid was not provisioned"
@@ -117,7 +142,8 @@ done
 cookie_jar=$(mktemp)
 grafana_query=$(mktemp)
 grafana_response=$(mktemp)
-trap 'rm -f "$challenge_headers" "$viewer_cookie" "$cookie_jar" "$grafana_query" "$grafana_response"' \
+stale_response=$(mktemp)
+trap 'rm -f "$challenge_headers" "$viewer_cookie" "$cookie_jar" "$grafana_query" "$grafana_response" "$stale_response"' \
   EXIT HUP INT TERM
 [ "$(status --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
   "$TEST_BASE_URL/grafana/login?disableAutoLogin=true")" = 200 ] ||
@@ -133,7 +159,8 @@ admin_user=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" --cookie
   fail 'Grafana administrator session does not have administrator access'
 
 time_from_ms=$((TEST_TIME_FROM * 1000))
-time_to_ms=$((TEST_TIME_TO * 1000))
+# Instant Prometheus queries evaluate at `to`. Keep it close to ingestion so fixture samples are in the lookback window.
+time_to_ms=$(($(date -u +%s) * 1000))
 jq -n --arg from "$time_from_ms" --arg to "$time_to_ms" '{
   from: $from,
   to: $to,
@@ -172,6 +199,46 @@ jq -n --arg from "$time_from_ms" --arg to "$time_to_ms" '{
       datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
       expr: "{service.name=\"ai-agent-telemetry\"} _msg:=\"mcp_tool_executed\" | format if (!mcp.server.name:*) \"Unknown\" as mcp.server.name | stats by (mcp.server.name, mcp.tool.name) count_uniq(event.id) calls",
       queryType: "stats", refId: "M", maxDataPoints: 1000, intervalMs: 60000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" machine.id:* | stats by (_time:1d offset 0h) count_uniq(machine.id) installations | sort by (_time)",
+      queryType: "statsRange", refId: "DA", maxDataPoints: 1000, intervalMs: 86400000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "options(ignore_global_time_filter=true) _time:30d {service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" machine.id:* NOT machine.id:in(_time:1d {service.name=\"ai-agent-telemetry\"} agent:!=\"selftest\" machine.id:* | uniq by (machine.id)) | first 1 by (_time desc) partition by (machine.id) | fields machine.id, _time, agent, service.version | sort by (_time desc) | limit 100",
+      queryType: "logs", refId: "ST", maxDataPoints: 1000, intervalMs: 60000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} | stats by (_time:1h) count() total, count(machine.id) with_id | math 100 * with_id / total as coverage_percent | keep _time, coverage_percent",
+      queryType: "statsRange", refId: "QI", maxDataPoints: 1000, intervalMs: 3600000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} event.id:* | stats by (_time:1h) count(event.id) delivered, count_uniq(event.id) distinct | math 100 * (delivered - distinct) / delivered as duplicate_percent | keep _time, duplicate_percent",
+      queryType: "statsRange", refId: "QD", maxDataPoints: 1000, intervalMs: 3600000
+    },
+    {
+      datasource: {type: "victoriametrics-logs-datasource", uid: "victorialogs"},
+      expr: "{service.name=\"ai-agent-telemetry\"} _msg:=\"mcp_tool_executed\" | stats by (_time:1h) count() total, count(mcp.duration_ms) with_duration | math 100 * with_duration / total as coverage_percent | keep _time, coverage_percent",
+      queryType: "statsRange", refId: "QM", maxDataPoints: 1000, intervalMs: 3600000
+    },
+    {
+      datasource: {type: "prometheus", uid: "victoriametrics"},
+      expr: "sum(codex_tool_call_total{service_name=\"codex_cli_rs\"})",
+      format: "time_series", instant: true, refId: "CM", maxDataPoints: 1000, intervalMs: 60000
+    },
+    {
+      datasource: {type: "prometheus", uid: "victoriametrics"},
+      expr: "sum by (model, token_type) (increase(codex_turn_token_usage_sum{service_name=\"codex_cli_rs\",token_type!=\"total\"}[1h]))",
+      format: "time_series", instant: true, refId: "TM", maxDataPoints: 1000, intervalMs: 3600000
+    },
+    {
+      datasource: {type: "prometheus", uid: "victoriametrics"},
+      expr: "sum(claude_code_token_usage_tokens_total{service_name=\"claude-code\",type=\"input\"})",
+      format: "time_series", instant: true, refId: "HM", maxDataPoints: 1000, intervalMs: 60000
     }
   ]
 }' >"$grafana_query"
@@ -179,10 +246,21 @@ curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
   --cookie "$viewer_cookie" \
   --header 'Content-Type: application/json' --data-binary "@$grafana_query" \
   "$TEST_BASE_URL/grafana/api/ds/query" >"$grafana_response"
-jq -e '.results | [.S, .T, .P, .R, .H, .O, .M] | all(.status == 200 and (.frames | length > 0))' \
+jq -e '.results | [.S, .T, .P, .R, .H, .O, .M, .QI, .QD, .QM] |
+  all(.status == 200 and (.frames | length > 0))' \
   "$grafana_response" >/dev/null || fail 'Grafana datasource queries did not return frames'
-jq -e '[.results[].frames[].schema.fields[].name] | index("Line") == null' \
+jq -e '[.results | [.S, .T, .P, .R, .H, .O, .M, .DA, .QI, .QD, .QM] | .[].frames[].schema.fields[].name]
+  | index("Line") == null' \
   "$grafana_response" >/dev/null || fail 'an aggregate Grafana query returned a raw log frame'
+
+for ref_id in QI QD QM; do
+  jq -e --arg ref_id "$ref_id" '
+    .results[$ref_id].status == 200 and
+    (.results[$ref_id].frames | [.[].schema.fields[]] |
+      any(.name == "Time" and .type == "time") and any(.name == "Value" and .type == "number"))
+  ' "$grafana_response" >/dev/null ||
+    fail "the Grafana $ref_id delivery-quality query did not return a numeric time series"
+done
 jq -e '.results.S.frames[0]
   | (.schema.fields | any(.name == "Value" and .type == "number"))
     and (.data.values[1][0] == 3)' "$grafana_response" >/dev/null ||
@@ -202,6 +280,19 @@ jq -e '(.results.R.frames | [.[].schema.fields[]]
   and (.results.R.frames | [.[].schema.fields[]]
     | any(.name == "Value" and .type == "number"))' "$grafana_response" >/dev/null ||
   fail 'the Grafana range query did not return a numeric time series'
+jq -e '.results.DA.status == 200 and
+  (.results.DA.frames | [.[].schema.fields[]] | any(.name == "Time" and .type == "time")) and
+  (.results.DA.frames | [.[].schema.fields[]] | any(.name == "Value" and .type == "number"))' \
+  "$grafana_response" >/dev/null ||
+  fail 'daily active installations did not return a UTC numeric range frame'
+jq -e '.results.TM.status == 200 and
+  (.results.TM.frames | [.[].schema.fields[].labels?]
+    | any(.model == "fixture-codex" and .token_type != null))' \
+  "$grafana_response" >/dev/null ||
+  fail 'the token matrix query did not return model and token_type labels'
+jq -e '.results.ST.status == 200 and (.results.ST.frames | length > 0)' \
+  "$grafana_response" >/dev/null ||
+  fail 'the stale query did not return a Grafana frame'
 jq -e '.results.H.frames | length == 1 and
   (.[0].schema.fields | any(.name == "Value" and .type == "number" and .labels.__name__ == "coverage_percent"))' \
   "$grafana_response" >/dev/null ||
@@ -214,8 +305,37 @@ jq -e '[.results.M.frames[].schema.fields[].labels?]
   | any(.["mcp.server.name"] == "Unknown" and .["mcp.tool.name"] == "search")' \
   "$grafana_response" >/dev/null ||
   fail 'the Grafana MCP query did not retain a tool event without a server name'
+jq -e '.results | [.CM, .HM] | all(
+  .status == 200 and
+  (.frames | length > 0) and
+  ([.frames[].schema.fields[]] | any(.type == "number"))
+)' "$grafana_response" >/dev/null ||
+  fail 'Grafana Prometheus queries did not return numeric frames'
+jq -e '.results.CM.frames | any(
+  ([.schema.fields[]] | any(.type == "number")) and
+  any(.data.values[]?; any(.[]?; . == 3))
+)' "$grafana_response" >/dev/null ||
+  fail 'the Grafana Codex metrics query did not return 3 as numeric data'
+jq -e '.results.HM.frames | any(
+  ([.schema.fields[]] | any(.type == "number")) and
+  any(.data.values[]?; any(.[]?; . == 900))
+)' "$grafana_response" >/dev/null ||
+  fail 'the Grafana Claude metrics query did not return 900 as numeric data'
+
+stale_query='options(ignore_global_time_filter=true) _time:30d {service.name="ai-agent-telemetry"} agent:!="selftest" machine.id:* NOT machine.id:in(_time:1d {service.name="ai-agent-telemetry"} agent:!="selftest" machine.id:* | uniq by (machine.id)) | first 1 by (_time desc) partition by (machine.id) | fields machine.id, _time, agent, service.version | sort by (_time desc) | limit 100'
+curl --fail --silent --show-error --cacert "$TEST_CA_CERT" \
+  --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
+  --get --data-urlencode "query=$stale_query" \
+  "$TEST_BASE_URL/select/logsql/query" >"$stale_response"
+jq -s -e '
+  length == 1 and
+  all(.[];
+    has("machine.id") and has("_time") and has("agent") and has("service.version"))
+' "$stale_response" >/dev/null ||
+  fail 'the stale query did not return one correlated latest event'
 
 sh "$script_dir/query-contract.sh"
+sh "$script_dir/metrics-query-contract.sh"
 sh "$script_dir/dashboard-contract.sh"
 
 compose stop grafana >/dev/null
