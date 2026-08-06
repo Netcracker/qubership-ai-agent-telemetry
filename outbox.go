@@ -248,6 +248,11 @@ func (o *OffsetStore) Load(key string) int64 {
 	return n
 }
 
+func (o *OffsetStore) exists(key string) bool {
+	_, err := os.Stat(o.path(key))
+	return err == nil
+}
+
 // Save records the byte offset for key with an atomic temp-file rename.
 func (o *OffsetStore) Save(key string, off int64) error {
 	final := o.path(key)

@@ -697,17 +697,36 @@ func TestIngestCursorFromTranscript(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv(envRepoAllow, "github.com/Netcracker/*")
 
+	root, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	tp := filepath.Join(dir, "t.jsonl")
-	body := `{"message":{"content":[{"type":"tool_use","name":"Read","input":{"path":"/repo/.cursor/skills/from-transcript/SKILL.md"}}]}}` + "\n"
-	if err := os.WriteFile(tp, []byte(body), 0o600); err != nil {
+	body, err := json.Marshal(map[string]any{
+		"message": map[string]any{
+			"content": []map[string]any{
+				{"type": "tool_use", "name": "Read", "input": map[string]any{
+					"path": filepath.Join(root, ".cursor", "skills", "from-transcript", "SKILL.md"),
+				}},
+				{"type": "tool_use", "name": "Read", "input": map[string]any{
+					"path": filepath.Join(root, "main_test.go"),
+				}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tp, append(body, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stdin, _ := json.Marshal(map[string]any{
 		"hook_event_name": "afterAgentResponse",
 		"session_id":      "c1",
-		"workspace_roots": []string{"/repo"},
+		"workspace_roots": []string{root},
 		"transcript_path": tp,
 	})
 
