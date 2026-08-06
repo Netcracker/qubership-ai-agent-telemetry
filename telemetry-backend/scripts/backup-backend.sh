@@ -1280,12 +1280,28 @@ archive_source() {
   record_test_event VERIFY_SOURCE_ARCHIVE || return 1
 }
 
+bundle_maintenance_library() {
+  local backup_work_dir=$1 library_source
+
+  library_source=$(realpath -e -- "${BASH_SOURCE[0]}") || return 1
+  [ -f "$library_source" ] && [ ! -L "$library_source" ] || {
+    maintenance_error "executing maintenance library is missing or unsafe: $library_source"
+    return 1
+  }
+  install -m 700 -- "$library_source" "$backup_work_dir/backup-backend.sh" || return 1
+  cmp -s -- "$library_source" "$backup_work_dir/backup-backend.sh" || {
+    maintenance_error 'bundled maintenance library differs from the executing library'
+    return 1
+  }
+  sync -f "$backup_work_dir/backup-backend.sh" || return 1
+}
+
 write_static_checksums() {
   local backup_work_dir=$1
 
   (
     cd "$backup_work_dir" || exit 1
-    sha256sum backend.env telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
+    sha256sum backend.env backup-backend.sh telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
       >SHA256SUMS || exit 1
     sha256sum -c SHA256SUMS || exit 1
   ) || return 1
@@ -1337,6 +1353,11 @@ release_id=$(basename -- "$RELEASE_DIR") || exit 1
 
 cd "$BACKUP_DIR"
 sha256sum -c SHA256SUMS
+[ -f "$BACKUP_DIR/backup-backend.sh" ] && [ ! -L "$BACKUP_DIR/backup-backend.sh" ] && \
+  [ "$(stat -c '%a' "$BACKUP_DIR/backup-backend.sh")" = 700 ] || {
+  restore_error 'verified backup maintenance library is missing or unsafe'
+  exit 1
+}
 PROJECT_NAME=$(sed -n 's/^PROJECT_NAME=//p' manifest.txt)
 [[ $PROJECT_NAME =~ ^[a-zA-Z0-9_-]+$ ]] || {
   restore_error 'manifest contains an invalid Compose project name'
@@ -1348,7 +1369,7 @@ PROJECT_NAME=$(sed -n 's/^PROJECT_NAME=//p' manifest.txt)
 }
 
 declare -a expected_services=(caddy collector grafana victorialogs victoriametrics)
-declare -A image_references=() image_ids=()
+declare -A image_references=() image_ids=() runtime_image_ids=()
 image_count=0
 while IFS= read -r image_record; do
   IFS='|' read -r service reference image_id extra <<<"$image_record"
@@ -1388,8 +1409,8 @@ done < <(sed -n 's/^IMAGE=//p' manifest.txt)
 install -d -m 700 "$RELEASE_DIR"
 tar -xzf telemetry-backend-source.tar.gz -C "$RELEASE_DIR"
 install -m 600 backend.env "$RELEASE_DIR/.env"
-[ -f "$RELEASE_DIR/docker-compose.yml" ] && [ -f "$RELEASE_DIR/.maintenance-compose.yml" ] && \
-  [ -f "$RELEASE_DIR/scripts/backup-backend.sh" ] || {
+install -D -m 700 "$BACKUP_DIR/backup-backend.sh" "$RELEASE_DIR/scripts/backup-backend.sh"
+[ -f "$RELEASE_DIR/docker-compose.yml" ] && [ -f "$RELEASE_DIR/.maintenance-compose.yml" ] || {
   restore_error 'restored source is missing required maintenance files'
   exit 1
 }
@@ -1406,6 +1427,14 @@ sync -f "$RELEASE_DIR"
 restore_compose config --quiet
 restore_compose pull --ignore-buildable
 restore_compose build --pull grafana
+for service in caddy collector victorialogs victoriametrics; do
+  runtime_image_ids[$service]=$(docker image inspect --format '{{.Id}}' "${image_references[$service]}") || exit 1
+  [ "${runtime_image_ids[$service]}" = "${image_ids[$service]}" ] || {
+    restore_error "registry image identity differs from the manifest: $service"
+    exit 1
+  }
+done
+runtime_image_ids[grafana]=$(docker image inspect --format '{{.Id}}' "${image_references[grafana]}") || exit 1
 docker image inspect "$RESTORE_HELPER_IMAGE" >/dev/null 2>&1 || docker pull "$RESTORE_HELPER_IMAGE"
 
 volume_count=0
@@ -1451,15 +1480,15 @@ for service in "${expected_services[@]}"; do
     exit 1
   }
   running_image=$(docker inspect --format '{{.Image}}' "${containers[0]}") || exit 1
-  [ "$running_image" = "${image_ids[$service]}" ] || {
-    restore_error "restored service image identity differs from the manifest: $service"
+  [ "$running_image" = "${runtime_image_ids[$service]}" ] || {
+    restore_error "restored service image identity differs from the prepared image: $service"
     exit 1
   }
 done
 
 # Reuse the shipped maintenance health implementation so update and disaster recovery cannot drift.
 # shellcheck disable=SC1091
-TELEMETRY_SOURCE_ONLY=1 source "$RELEASE_DIR/scripts/backup-backend.sh"
+TELEMETRY_SOURCE_ONLY=1 source "$BACKUP_DIR/backup-backend.sh"
 BACKUP_ROOT=$BACKUP_DIR
 LOCK_FILE="$BACKEND_ROOT/.restore-maintenance.lock"
 COMPOSE_FILE="$RELEASE_DIR/docker-compose.yml"
@@ -1468,12 +1497,12 @@ GENERATED_OVERRIDE_FILE="$RELEASE_DIR/.maintenance-compose.yml"
 TRANSACTION_FILE="$BACKEND_ROOT/.maintenance-transaction"
 TEST_COMMAND_LOG=
 health_transaction_id="restore-health-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM"
-export RELEASE_DIR BACKEND_ROOT BACKUP_ROOT LOCK_FILE PROJECT_NAME COMPOSE_FILE ENV_FILE GENERATED_OVERRIDE_FILE
+export BACKUP_DIR RELEASE_DIR BACKEND_ROOT BACKUP_ROOT LOCK_FILE PROJECT_NAME COMPOSE_FILE ENV_FILE GENERATED_OVERRIDE_FILE
 export TRANSACTION_FILE TEST_COMMAND_LOG TELEMETRY_HEALTH_TRANSACTION_ID="$health_transaction_id"
 trap 'cleanup_transaction_helpers "$health_transaction_id" >/dev/null 2>&1 || true' EXIT HUP INT TERM
 if ! timeout --foreground --signal=TERM 120 bash -c '
   set -euo pipefail
-  TELEMETRY_SOURCE_ONLY=1 source "$RELEASE_DIR/scripts/backup-backend.sh"
+  TELEMETRY_SOURCE_ONLY=1 source "$BACKUP_DIR/backup-backend.sh"
   strict_health_gate "$RELEASE_DIR"
 '; then
   cleanup_transaction_helpers "$health_transaction_id" || true
@@ -1495,8 +1524,10 @@ write_restore_instructions() {
 
 Install Docker Engine and Docker Compose on the recovery host. Registry access is required because Docker images are
 not stored in the backup. Set `BACKUP_DIR` to this backup directory and set `RELEASE_DIR` to a new immutable release
-directory. The checked restore helper uses the manifest for every volume identity, rebuilds the pinned Grafana image,
-starts the exact Compose project, and runs the same strict 120-second health gate as an update.
+directory. The checksums cover a separate copy of the maintenance library, so recovery does not depend on the archived
+release containing that script. The checked restore helper uses the manifest for every volume identity, requires the
+exact registry image IDs, rebuilds Grafana from the archived context, verifies the rebuilt image, starts the exact
+Compose project, and runs the same strict 120-second health gate as an update.
 
 ```bash
 BACKUP_DIR=/path/to/pre-backup
@@ -1865,6 +1896,7 @@ backup_main() {
   done
   write_restore_helper "$backup_work_dir" || return 1
   write_restore_instructions "$backup_work_dir" || return 1
+  bundle_maintenance_library "$backup_work_dir" || return 1
   write_static_checksums "$backup_work_dir" || return 1
   if [ "$handoff" -eq 1 ]; then
     rewrite_transaction_state backup-offline "$completed_dir" || return 1
@@ -1930,7 +1962,7 @@ backup_main() {
   if [ "$failed" -eq 0 ]; then
     (
       cd "$backup_work_dir" || exit 1
-      sha256sum backend.env telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
+      sha256sum backend.env backup-backend.sh telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
         volumes/*.tar.gz >SHA256SUMS || exit 1
       if [ "${TELEMETRY_MAINTENANCE_TEST_MODE:-}" = 1 ] &&
         [ "${TELEMETRY_TEST_CORRUPT_BACKUP_CHECKSUM:-}" = 1 ]; then

@@ -200,11 +200,118 @@ cleanup_restore_project() {
   rm -rf "$root"
 }
 
+cleanup_restore_portability_sandbox() {
+  local sandbox=$1 project=$2
+  local -a containers volumes networks
+
+  mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=$project")
+  [ "${#containers[@]}" -eq 0 ] || docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
+  mapfile -t volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+  [ "${#volumes[@]}" -eq 0 ] || docker volume rm "${volumes[@]}" >/dev/null 2>&1 || true
+  mapfile -t networks < <(docker network ls -q --filter "label=com.docker.compose.project=$project")
+  [ "${#networks[@]}" -eq 0 ] || docker network rm "${networks[@]}" >/dev/null 2>&1 || true
+  rm -rf "$sandbox"
+}
+
+run_restore_portability_suite() {
+  local sandbox backup_dir source_dir release_dir project registry_reference registry_id grafana_reference
+  local source_grafana_id logical volume_source container running_id rebuilt_grafana_id service
+  local -a containers
+
+  sandbox=$(mktemp -d /tmp/telemetry-restore-portability.XXXXXX)
+  project="telemetry_restore_portability_$RANDOM$RANDOM"
+  trap 'cleanup_restore_portability_sandbox "${sandbox:-}" "${project:-}"' EXIT HUP INT TERM
+  backup_dir=$sandbox/backup
+  source_dir=$sandbox/source
+  release_dir=$sandbox/backend/restored
+  mkdir -p "$backup_dir/volumes" "$source_dir" "$sandbox/volume-source"
+  cp "$backend_dir/.env.example" "$backup_dir/backend.env"
+  cat >"$source_dir/docker-compose.yml" <<EOF
+services:
+  caddy: {image: alpine:3.20, command: ["sh", "-c", "while :; do sleep 3600; done"]}
+  collector: {image: alpine:3.20, command: ["sh", "-c", "while :; do sleep 3600; done"]}
+  grafana:
+    build: {context: ., dockerfile: Dockerfile}
+    command: ["sh", "-c", "while :; do sleep 3600; done"]
+  victorialogs: {image: alpine:3.20, command: ["sh", "-c", "while :; do sleep 3600; done"]}
+  victoriametrics: {image: alpine:3.20, command: ["sh", "-c", "while :; do sleep 3600; done"]}
+EOF
+  printf '%s\n' 'FROM alpine:3.20' >"$source_dir/Dockerfile"
+  printf '%s\n' 'services: {}' >"$source_dir/.maintenance-compose.yml"
+  tar -C "$source_dir" -czf "$backup_dir/telemetry-backend-source.tar.gz" .
+  if tar -tzf "$backup_dir/telemetry-backend-source.tar.gz" | grep -Eq '(^|/)scripts/backup-backend[.]sh$'; then
+    fail 'portability source archive unexpectedly contains the maintenance library'
+  fi
+
+  docker pull docker.io/library/alpine:3.20 >/dev/null
+  registry_reference=$(docker image inspect --format '{{index .RepoDigests 0}}' docker.io/library/alpine:3.20)
+  registry_id=$(docker image inspect --format '{{.Id}}' "$registry_reference")
+  grafana_reference=${project}-grafana:restored
+  source_grafana_id=sha256:0000000000000000000000000000000000000000000000000000000000000000
+  {
+    printf 'PROJECT_NAME=%s\n' "$project"
+    printf 'IMAGE=caddy|%s|%s\n' "$registry_reference" "$registry_id"
+    printf 'IMAGE=collector|%s|%s\n' "$registry_reference" "$registry_id"
+    printf 'IMAGE=grafana|%s|%s\n' "$grafana_reference" "$source_grafana_id"
+    printf 'IMAGE=victorialogs|%s|%s\n' "$registry_reference" "$registry_id"
+    printf 'IMAGE=victoriametrics|%s|%s\n' "$registry_reference" "$registry_id"
+    for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
+      printf 'VOLUME=%s|%s_%s|%s_%s.tar.gz\n' "$logical" "$project" "$logical" "$project" "$logical"
+    done
+  } >"$backup_dir/manifest.txt"
+  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
+    volume_source=$sandbox/volume-source/$logical
+    mkdir -p "$volume_source"
+    printf '%s' "$logical" >"$volume_source/sentinel"
+    tar -C "$volume_source" -czf "$backup_dir/volumes/${project}_${logical}.tar.gz" .
+  done
+  (
+    # shellcheck disable=SC1090,SC1091 # Exercise the generated helper from the production maintenance library.
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    write_restore_helper "$backup_dir"
+    write_restore_instructions "$backup_dir"
+    bundle_maintenance_library "$backup_dir"
+  )
+  (
+    cd "$backup_dir"
+    sha256sum backend.env backup-backend.sh telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
+      volumes/*.tar.gz >SHA256SUMS
+    sha256sum -c SHA256SUMS >/dev/null
+  )
+  [ "$(stat -c '%a' "$backup_dir/backup-backend.sh")" = 700 ] ||
+    fail 'portability backup maintenance library is not executable mode 700'
+
+  TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
+    TELEMETRY_TEST_BACKUP_ROOT="$sandbox" TELEMETRY_TEST_PROJECT_NAME="$project" \
+    TELEMETRY_TEST_SKIP_REMOTE_PROBES=1 TELEMETRY_TEST_HEALTH_ATTEMPTS=5 TELEMETRY_TEST_STABILITY_SECONDS=0 \
+    "$backup_dir/restore-backend.sh" "$backup_dir" "$release_dir" >/dev/null
+  for service in caddy collector victorialogs victoriametrics; do
+    mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.project=$project" \
+      --filter "label=com.docker.compose.service=$service")
+    [ "${#containers[@]}" -eq 1 ] || fail "portability restore did not start one $service container"
+    running_id=$(docker inspect --format '{{.Image}}' "${containers[0]}")
+    [ "$running_id" = "$registry_id" ] || fail "portability restore changed registry image identity: $service"
+  done
+  mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.project=$project" \
+    --filter 'label=com.docker.compose.service=grafana')
+  [ "${#containers[@]}" -eq 1 ] || fail 'portability restore did not start one Grafana container'
+  running_id=$(docker inspect --format '{{.Image}}' "${containers[0]}")
+  rebuilt_grafana_id=$(docker image inspect --format '{{.Id}}' "$grafana_reference")
+  [ "$running_id" = "$rebuilt_grafana_id" ] && [ "$running_id" != "$source_grafana_id" ] ||
+    fail 'portability restore did not run and verify the rebuilt Grafana image'
+
+  cleanup_restore_portability_sandbox "$sandbox" "$project"
+  trap - EXIT HUP INT TERM
+  printf '%s\n' 'PASS: maintenance cross-host restore portability contract'
+}
+
 run_backup_suite() {
-  local sandbox backup_root restore_root mismatch_root project restore_project backup_dir event_log unsafe_event_log output
+  local sandbox backup_root restore_root mismatch_root functional_root project restore_project backup_dir event_log
+  local unsafe_event_log output functional_backup functional_container functional_grafana_id rebuilt_grafana_id
   local legacy_event_log down_lie_event_log docker_wrapper_dir real_docker
   local restore_instructions logical service image_record image_reference image_id extra manifest_checksum_count
-  local invalid_backup invalid_release invalid_case original_image_record previous_caddy_id
+  local invalid_backup invalid_release invalid_case original_image_record previous_caddy_id bundled_checksum_count
+  local grafana_reference source_grafana_id fake_grafana_id
   local -a source_volumes manifest_images manifest_services
 
   export TELEMETRY_TEST_SKIP_REMOTE_PROBES=1 TELEMETRY_TEST_STABILITY_SECONDS=0
@@ -265,6 +372,7 @@ EOF
     docker run --rm --mount "type=volume,src=${project}_${logical},dst=/data" docker.io/library/alpine:3.20 \
       sh -eu -c "mkdir -p /data/sentinel && printf '%s' '$logical' > /data/sentinel/$logical"
   done
+  rm -f "$sandbox/backend/previous/scripts/backup-backend.sh"
 
   TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
     TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project" \
@@ -283,6 +391,8 @@ EOF
     if [ "$service" = grafana ]; then
       [ "$image_reference" = "${project}-grafana:previous" ] ||
         fail 'backup manifest contains an unexpected Grafana image reference'
+      grafana_reference=$image_reference
+      source_grafana_id=$image_id
     else
       [[ $image_reference =~ @sha256:[0-9a-f]{64}$ ]] ||
         fail "backup manifest contains a mutable registry reference for $service"
@@ -296,8 +406,20 @@ EOF
   [ "$(printf '%s\n' "${manifest_services[@]}" | sort -u | tr '\n' ' ')" = \
     'caddy collector grafana victorialogs victoriametrics ' ] ||
     fail 'backup manifest image records must identify the five unique backend services'
+  [ "$(docker image inspect --format '{{.Id}}' "$grafana_reference")" = "$source_grafana_id" ] ||
+    fail 'backup manifest did not preserve the exact source-host Grafana image ID'
   manifest_checksum_count=$(sed -n '/[[:space:]]manifest[.]txt$/p' "$backup_dir/SHA256SUMS" | wc -l)
   [ "$manifest_checksum_count" -eq 1 ] || fail 'SHA256SUMS must contain manifest.txt exactly once'
+  bundled_checksum_count=$(sed -n '/[[:space:]]backup-backend[.]sh$/p' "$backup_dir/SHA256SUMS" | wc -l)
+  [ "$bundled_checksum_count" -eq 1 ] || fail 'SHA256SUMS must cover the bundled maintenance library exactly once'
+  [ -f "$backup_dir/backup-backend.sh" ] && [ ! -L "$backup_dir/backup-backend.sh" ] &&
+    [ "$(stat -c '%a' "$backup_dir/backup-backend.sh")" = 700 ] ||
+    fail 'backup does not contain a safe executable maintenance library'
+  cmp -s -- "$backup_script" "$backup_dir/backup-backend.sh" ||
+    fail 'backup maintenance library differs from the executing library'
+  if tar -tzf "$backup_dir/telemetry-backend-source.tar.gz" | grep -Eq '(^|/)scripts/backup-backend[.]sh$'; then
+    fail 'legacy source fixture unexpectedly contains the maintenance library'
+  fi
   original_image_record=${manifest_images[0]}
   for invalid_case in duplicate mutable missing-id; do
     invalid_backup=$sandbox/invalid-$invalid_case
@@ -318,7 +440,7 @@ EOF
     esac
     (
       cd "$invalid_backup"
-      sha256sum backend.env telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
+      sha256sum backend.env backup-backend.sh telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
         volumes/*.tar.gz >SHA256SUMS
     )
     assert_fails_with 'manifest image records are invalid' \
@@ -350,6 +472,7 @@ EOF
   (cd "$backup_dir" && sha256sum -c SHA256SUMS >/dev/null) || fail 'completed backup checksum verification failed'
   [ "$(stat -c '%a' "$backup_dir")" = 700 ] || fail 'completed backup directory is not mode 700'
   [ "$(stat -c '%a' "$backup_dir/backend.env")" = 600 ] || fail 'backup environment is not mode 600'
+  [ "$(stat -c '%a' "$backup_dir/backup-backend.sh")" = 700 ] || fail 'backup maintenance library is not mode 700'
   [ "$(stat -c '%a' "$backup_dir/restore-backend.sh")" = 700 ] || fail 'restore helper is not mode 700'
   if tar -tzf "$backup_dir/telemetry-backend-source.tar.gz" | grep -Fx '.env'; then
     fail 'source archive contains .env'
@@ -365,7 +488,7 @@ EOF
     '--project-directory "$RELEASE_DIR"' \
     'docker volume inspect "$actual"' \
     'mv -Tf -- "$temporary_link" "$BACKEND_ROOT/latest"' \
-    'TELEMETRY_SOURCE_ONLY=1 source "$RELEASE_DIR/scripts/backup-backend.sh"' \
+    'TELEMETRY_SOURCE_ONLY=1 source "$BACKUP_DIR/backup-backend.sh"' \
     'timeout --foreground --signal=TERM 120' \
     'strict_health_gate "$RELEASE_DIR"' \
     'cleanup_transaction_helpers "$health_transaction_id"'; do
@@ -618,14 +741,43 @@ EOF
   restore_project=$(restore_backup_into_second_sandbox "$backup_dir" "$mismatch_root" 1)
   cleanup_restore_project "$mismatch_root" "$restore_project"
   printf '%s\n' 'TRACE: fallback image mismatch rejected'
+
+  functional_root=$sandbox/restore-functional-grafana
+  functional_backup=$sandbox/functional-grafana-backup
+  fake_grafana_id=sha256:0000000000000000000000000000000000000000000000000000000000000000
+  cp -a "$backup_dir" "$functional_backup"
+  sed -i "/^IMAGE=grafana|/c\\IMAGE=grafana|$grafana_reference|$fake_grafana_id" "$functional_backup/manifest.txt"
+  (
+    cd "$functional_backup"
+    sha256sum backend.env backup-backend.sh telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
+      volumes/*.tar.gz >SHA256SUMS
+  )
+  restore_project=$(restore_backup_into_second_sandbox "$functional_backup" "$functional_root")
+  functional_container=$(docker ps -q --filter "label=com.docker.compose.project=$restore_project" \
+    --filter 'label=com.docker.compose.service=grafana')
+  [ -n "$functional_container" ] || fail 'functional Grafana restore did not start one container'
+  functional_grafana_id=$(docker inspect --format '{{.Image}}' "$functional_container")
+  rebuilt_grafana_id=$(docker image inspect --format '{{.Id}}' "$grafana_reference")
+  [ "$functional_grafana_id" = "$rebuilt_grafana_id" ] && [ "$functional_grafana_id" != "$fake_grafana_id" ] ||
+    fail 'cross-host restore did not run the Grafana image rebuilt from archived context'
+  cleanup_restore_project "$functional_root" "$restore_project"
+  printf '%s\n' 'TRACE: fallback accepted a functional Grafana rebuild with a different source-host image ID'
+
   restore_project=$(restore_backup_into_second_sandbox "$backup_dir" "$restore_root")
   [ "$restore_project" = "$project" ] || fail 'restore changed the manifest project identity'
   for image_record in "${manifest_images[@]}"; do
     IFS='|' read -r service image_reference image_id extra <<<"$image_record"
+    [ "$service" = grafana ] && continue
     printf '%s=%s\n' "$service" "$image_id"
   done >"$sandbox/restored-images"
   assert_container_image_ids "$restore_project" "$sandbox/restored-images"
-  printf '%s\n' 'TRACE: fallback restored five exact image IDs'
+  functional_container=$(docker ps -q --filter "label=com.docker.compose.project=$restore_project" \
+    --filter 'label=com.docker.compose.service=grafana')
+  functional_grafana_id=$(docker inspect --format '{{.Image}}' "$functional_container")
+  rebuilt_grafana_id=$(docker image inspect --format '{{.Id}}' "$grafana_reference")
+  [ "$functional_grafana_id" = "$rebuilt_grafana_id" ] ||
+    fail 'cross-host restore did not verify the rebuilt Grafana image ID'
+  printf '%s\n' 'TRACE: fallback restored four exact registry image IDs and rebuilt Grafana from archived context'
   for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
     assert_volume_file "$restore_project" "$logical" "/sentinel/$logical"
   done
@@ -3538,6 +3690,9 @@ case "${1:-}" in
   backup)
     run_backup_suite
     ;;
+  restore-portability)
+    run_restore_portability_suite
+    ;;
   resolution)
     run_resolution_suite
     ;;
@@ -3557,6 +3712,6 @@ case "${1:-}" in
     run_runbook_suite
     ;;
   *)
-    fail 'usage: maintenance-contract.sh <activation|activation-real|backup|cli|recovery|resolution|retention|runbook>'
+    fail 'usage: maintenance-contract.sh <activation|activation-real|backup|cli|recovery|resolution|restore-portability|retention|runbook>'
     ;;
 esac
