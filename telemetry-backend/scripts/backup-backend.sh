@@ -277,6 +277,7 @@ clear_transaction() {
     transaction_dir=$(dirname -- "$TRANSACTION_FILE")
     rm -f -- "$TRANSACTION_FILE" || return 1
     sync -f "$transaction_dir" || return 1
+    record_test_event TRANSACTION_CLEAR || return 1
   fi
 }
 
@@ -856,7 +857,7 @@ validate_transaction_state() {
     return 1
   }
   if ! LC_ALL=C od -An -v -tx1 -- "$TRANSACTION_FILE" | awk '
-    {
+  {
       for (field = 1; field <= NF; field++) {
         if ($field != "0a" && $field !~ /^[2-6][0-9a-f]$/ && $field !~ /^7[0-9a-e]$/) {
           exit 1
@@ -1343,6 +1344,44 @@ PROJECT_NAME=$(sed -n 's/^PROJECT_NAME=//p' manifest.txt)
   exit 1
 }
 
+declare -a expected_services=(caddy collector grafana victorialogs victoriametrics)
+declare -A image_references=() image_ids=()
+image_count=0
+while IFS= read -r image_record; do
+  IFS='|' read -r service reference image_id extra <<<"$image_record"
+  expected_service=${expected_services[image_count]:-}
+  [ "$service" = "$expected_service" ] && [ -n "$reference" ] && [ -z "${extra:-}" ] && \
+    [ -z "${image_references[$service]:-}" ] && [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    restore_error 'manifest image records are invalid'
+    exit 1
+  }
+  case "$service" in
+    grafana)
+      [[ $reference =~ ^${PROJECT_NAME}-grafana:[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || {
+        restore_error 'manifest image records are invalid'
+        exit 1
+      }
+      ;;
+    caddy|collector|victorialogs|victoriametrics)
+      [[ $reference =~ ^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$ ]] || {
+        restore_error 'manifest image records are invalid'
+        exit 1
+      }
+      ;;
+    *)
+      restore_error 'manifest image records are invalid'
+      exit 1
+      ;;
+  esac
+  image_references[$service]=$reference
+  image_ids[$service]=$image_id
+  image_count=$((image_count + 1))
+done < <(sed -n 's/^IMAGE=//p' manifest.txt)
+[ "$image_count" -eq 5 ] || {
+  restore_error 'manifest image records are invalid'
+  exit 1
+}
+
 install -d -m 700 "$RELEASE_DIR"
 tar -xzf telemetry-backend-source.tar.gz -C "$RELEASE_DIR"
 install -m 600 backend.env "$RELEASE_DIR/.env"
@@ -1351,6 +1390,16 @@ install -m 600 backend.env "$RELEASE_DIR/.env"
   restore_error 'restored source is missing required maintenance files'
   exit 1
 }
+override_tmp=$(mktemp "$RELEASE_DIR/.maintenance-compose.yml.XXXXXX") || exit 1
+{
+  printf 'services:\n'
+  for service in "${expected_services[@]}"; do
+    printf '  %s:\n    image: %s\n' "$service" "${image_references[$service]}"
+  done
+} >"$override_tmp"
+chmod 600 "$override_tmp"
+mv -Tf -- "$override_tmp" "$RELEASE_DIR/.maintenance-compose.yml"
+sync -f "$RELEASE_DIR"
 restore_compose config --quiet
 restore_compose pull --ignore-buildable
 restore_compose build --pull grafana
@@ -1391,6 +1440,19 @@ ln -s -- "$release_id" "$temporary_link"
 mv -Tf -- "$temporary_link" "$BACKEND_ROOT/latest"
 sync -f "$BACKEND_ROOT"
 restore_compose up -d --no-build --pull never
+for service in "${expected_services[@]}"; do
+  mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter "label=com.docker.compose.service=$service")
+  [ "${#containers[@]}" -eq 1 ] || {
+    restore_error "restored service mapping is missing or ambiguous: $service"
+    exit 1
+  }
+  running_image=$(docker inspect --format '{{.Image}}' "${containers[0]}") || exit 1
+  [ "$running_image" = "${image_ids[$service]}" ] || {
+    restore_error "restored service image identity differs from the manifest: $service"
+    exit 1
+  }
+done
 
 # Reuse the shipped maintenance health implementation so update and disaster recovery cannot drift.
 # shellcheck disable=SC1091
@@ -1516,13 +1578,72 @@ capture_running_image_entries() {
   done
 }
 
+capture_backup_image_records() {
+  local release_dir=$1 service reference image_id container release_id container_output references_output
+  local -a containers
+  local -A references=()
+
+  release_id=$(derive_release_id "$release_dir") || return 1
+  references_output=$(
+    compose "$release_dir" config --format json |
+      docker run --rm -i "$JSON_IMAGE" -er '
+        ["caddy", "collector", "grafana", "victorialogs", "victoriametrics"][] as $service
+        | [$service, (.services[$service].image // error("missing image for " + $service))]
+        | @tsv
+      '
+  ) || return 1
+  while IFS=$'\t' read -r service reference; do
+    [ -n "$service" ] && [ -n "$reference" ] && [ -z "${references[$service]:-}" ] || {
+      maintenance_error 'effective Compose image mapping is invalid'
+      return 1
+    }
+    references[$service]=$reference
+  done <<<"$references_output"
+  [ "${#references[@]}" -eq 5 ] || {
+    maintenance_error 'effective Compose image mapping is incomplete'
+    return 1
+  }
+
+  for service in caddy collector grafana victorialogs victoriametrics; do
+    reference=${references[$service]:-}
+    if [ "$service" = grafana ]; then
+      [ "$reference" = "${PROJECT_NAME}-grafana:${release_id}" ] || {
+        maintenance_error 'effective Grafana image reference is not release-specific'
+        return 1
+      }
+    else
+      [[ $reference =~ ^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$ ]] || {
+        maintenance_error "effective registry image reference is mutable: $service"
+        return 1
+      }
+    fi
+    container_output=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service") || return 1
+    containers=()
+    while IFS= read -r container; do
+      [ -z "$container" ] || containers+=("$container")
+    done <<<"$container_output"
+    [ "${#containers[@]}" -eq 1 ] || {
+      maintenance_error "active service mapping is missing or ambiguous: $service"
+      return 1
+    }
+    image_id=$(docker inspect --format '{{.Image}}' "${containers[0]}") || return 1
+    [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]] || {
+      maintenance_error "active service has a noncanonical image ID: $service"
+      return 1
+    }
+    printf '%s|%s|%s\n' "$service" "$reference" "$image_id" || return 1
+  done
+}
+
 backup_main() {
   local target_label=manual leave_stopped=0 allow_large_backup=0
   local identity_mode=ordinary legacy_source_seen=0
   local completed_dir backup_work_dir backup_parent transaction_id target_release previous_release volume_bytes total_bytes
   local logical_volume actual_volume archive_name ordinal failed=0 helper_id helper_status helper_delay=0
-  local handoff=0 release_dir logical_volume_output previous_image_output previous_image_entry created_at compose_version
-  local -a logical_volumes actual_volumes previous_image_entries
+  local handoff=0 release_dir logical_volume_output image_output image_record service reference image_id extra
+  local created_at compose_version
+  local -a logical_volumes actual_volumes image_records previous_image_entries
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -1672,21 +1793,37 @@ backup_main() {
         "${actual_volumes[ordinal]}"
     done
   } >"$backup_work_dir/manifest.txt" || return 1
+  image_output=$(capture_backup_image_records "$release_dir") || return 1
+  image_records=()
+  previous_image_entries=()
+  while IFS= read -r image_record; do
+    [ -z "$image_record" ] || image_records+=("$image_record")
+  done <<<"$image_output"
+  [ "${#image_records[@]}" -eq 5 ] || {
+    maintenance_error 'cannot capture complete backup image identities'
+    return 1
+  }
+  for image_record in "${image_records[@]}"; do
+    IFS='|' read -r service reference image_id extra <<<"$image_record"
+    [ -n "$service" ] && [ -n "$reference" ] && [ -n "$image_id" ] && [ -z "${extra:-}" ] || {
+      maintenance_error 'captured backup image identity is invalid'
+      return 1
+    }
+    printf 'IMAGE=%s\n' "$image_record" >>"$backup_work_dir/manifest.txt" || return 1
+    previous_image_entries+=("PREVIOUS_IMAGE_${service^^}=$image_id")
+    record_test_event "IMAGE_MANIFEST=$service" || return 1
+    if [ "$handoff" -eq 1 ] && \
+      [ "$(read_transaction "PREVIOUS_IMAGE_${service^^}" 2>/dev/null || true)" != "$image_id" ]; then
+      maintenance_error "updater image identity differs from the running service: $service"
+      return 1
+    fi
+  done
   write_restore_helper "$backup_work_dir" || return 1
   write_restore_instructions "$backup_work_dir" || return 1
   write_static_checksums "$backup_work_dir" || return 1
   if [ "$handoff" -eq 1 ]; then
     rewrite_transaction_state backup-offline "$completed_dir" || return 1
   else
-    previous_image_output=$(capture_running_image_entries) || return 1
-    previous_image_entries=()
-    while IFS= read -r previous_image_entry; do
-      [ -z "$previous_image_entry" ] || previous_image_entries+=("$previous_image_entry")
-    done <<<"$previous_image_output"
-    [ "${#previous_image_entries[@]}" -eq 5 ] || {
-      maintenance_error 'cannot capture complete active image identities'
-      return 1
-    }
     write_transaction "FORMAT_VERSION=1" "TRANSACTION_ID=$transaction_id" "OPERATION=backup" \
       "PHASE=backup-offline" "PREVIOUS_RELEASE=$previous_release" "BACKUP_PATH=$completed_dir" \
       "${previous_image_entries[@]}" || return 1

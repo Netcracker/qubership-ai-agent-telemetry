@@ -113,7 +113,7 @@ cleanup_backup_sandbox() {
 }
 
 restore_backup_into_second_sandbox() {
-  local backup_dir=$1 root=$2 project source_project docker_dir restore_log real_docker
+  local backup_dir=$1 root=$2 mismatch=${3:-0} project source_project docker_dir restore_log real_docker output
 
   (cd "$backup_dir" && sha256sum -c SHA256SUMS >/dev/null) || fail 'backup checksums did not verify before restore'
   source_project=$(sed -n 's/^PROJECT_NAME=//p' "$backup_dir/manifest.txt")
@@ -127,14 +127,25 @@ restore_backup_into_second_sandbox() {
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$RESTORE_DOCKER_LOG"
+if [ "${RESTORE_IMAGE_MISMATCH:-0}" = 1 ] && [ "$1" = inspect ]; then
+  case " $* " in
+    *' --format {{.Image}} '*) printf 'sha256:%064d\n' 0; exit 0 ;;
+  esac
+fi
 exec "$RESTORE_REAL_DOCKER" "$@"
 EOF
   chmod 700 "$docker_dir/docker"
-  PATH="$docker_dir:$PATH" RESTORE_DOCKER_LOG="$restore_log" RESTORE_REAL_DOCKER="$real_docker" \
-    TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$root" \
+  if ! output=$(PATH="$docker_dir:$PATH" RESTORE_DOCKER_LOG="$restore_log" RESTORE_REAL_DOCKER="$real_docker" \
+    RESTORE_IMAGE_MISMATCH="$mismatch" TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$root" \
     TELEMETRY_TEST_BACKUP_ROOT="$(dirname -- "$backup_dir")" TELEMETRY_TEST_PROJECT_NAME="$project" \
     TELEMETRY_TEST_SKIP_REMOTE_PROBES=1 TELEMETRY_TEST_HEALTH_ATTEMPTS=5 \
-    TELEMETRY_TEST_STABILITY_SECONDS=0 "$backup_dir/restore-backend.sh" "$backup_dir" "$root/release" >/dev/null
+    TELEMETRY_TEST_STABILITY_SECONDS=0 "$backup_dir/restore-backend.sh" "$backup_dir" "$root/release" 2>&1); then
+    [ "$mismatch" -eq 1 ] && [[ $output == *'image identity differs from the manifest'* ]] ||
+      fail "restore helper failed unexpectedly: $output"
+    printf '%s\n' "$project"
+    return 0
+  fi
+  [ "$mismatch" -eq 0 ] || fail 'restore helper accepted an injected container image mismatch'
   grep -F ' pull --ignore-buildable' "$restore_log" >/dev/null ||
     fail 'restore helper did not skip the buildable Grafana image during registry pulls'
   grep -F ' build --pull grafana' "$restore_log" >/dev/null ||
@@ -147,9 +158,21 @@ EOF
   printf '%s\n' "$project"
 }
 
+cleanup_restore_project() {
+  local root=$1 project=$2
+  local -a containers volumes
+
+  mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=$project")
+  [ "${#containers[@]}" -eq 0 ] || docker rm -f "${containers[@]}" >/dev/null
+  mapfile -t volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
+  [ "${#volumes[@]}" -eq 0 ] || docker volume rm "${volumes[@]}" >/dev/null
+  rm -rf "$root"
+}
+
 run_backup_suite() {
-  local sandbox backup_root restore_root project restore_project backup_dir event_log unsafe_event_log output
+  local sandbox backup_root restore_root mismatch_root project restore_project backup_dir event_log unsafe_event_log output
   local restore_instructions logical service image_record image_reference image_id extra manifest_checksum_count
+  local invalid_backup invalid_release invalid_case original_image_record previous_caddy_id
   local -a source_volumes manifest_images manifest_services
 
   export TELEMETRY_TEST_SKIP_REMOTE_PROBES=1 TELEMETRY_TEST_STABILITY_SECONDS=0
@@ -215,11 +238,6 @@ EOF
     TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$event_log" \
     "$backup_script" --target-label contract
   backup_dir=$(single_completed_backup "$backup_root")
-  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
-    assert_event_before "VOLUME_MEASURE=${project}_${logical}" COMPOSE_DOWN "$event_log"
-    assert_event_before COMPOSE_DOWN "VOLUME_ARCHIVE=${project}_${logical}" "$event_log"
-    assert_event_before "VOLUME_ARCHIVE=${project}_${logical}" TRANSACTION_CLEAR "$event_log"
-  done
   mapfile -t manifest_images < <(sed -n 's/^IMAGE=//p' "$backup_dir/manifest.txt")
   [ "${#manifest_images[@]}" -eq 5 ] || fail 'backup manifest must contain exactly five image records'
   manifest_services=()
@@ -229,14 +247,60 @@ EOF
       fail "backup manifest contains an invalid image record: $image_record"
     [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]] ||
       fail "backup manifest contains a noncanonical image ID for $service"
+    if [ "$service" = grafana ]; then
+      [ "$image_reference" = "${project}-grafana:previous" ] ||
+        fail 'backup manifest contains an unexpected Grafana image reference'
+    else
+      [[ $image_reference =~ @sha256:[0-9a-f]{64}$ ]] ||
+        fail "backup manifest contains a mutable registry reference for $service"
+    fi
     manifest_services+=("$service")
     assert_event_before "IMAGE_MANIFEST=$service" TRANSACTION_CLEAR "$event_log"
   done
+  [ "$(printf '%s\n' "${manifest_services[@]}")" = \
+    $'caddy\ncollector\ngrafana\nvictorialogs\nvictoriametrics' ] ||
+    fail 'backup manifest image records must be sorted by service'
   [ "$(printf '%s\n' "${manifest_services[@]}" | sort -u | tr '\n' ' ')" = \
     'caddy collector grafana victorialogs victoriametrics ' ] ||
     fail 'backup manifest image records must identify the five unique backend services'
   manifest_checksum_count=$(sed -n '/[[:space:]]manifest[.]txt$/p' "$backup_dir/SHA256SUMS" | wc -l)
   [ "$manifest_checksum_count" -eq 1 ] || fail 'SHA256SUMS must contain manifest.txt exactly once'
+  original_image_record=${manifest_images[0]}
+  for invalid_case in duplicate mutable missing-id; do
+    invalid_backup=$sandbox/invalid-$invalid_case
+    invalid_release=$sandbox/restore-invalid-$invalid_case/release
+    cp -a "$backup_dir" "$invalid_backup"
+    case "$invalid_case" in
+      duplicate)
+        printf 'IMAGE=%s\n' "$original_image_record" >>"$invalid_backup/manifest.txt"
+        ;;
+      mutable)
+        sed -i "/^IMAGE=caddy|/c\\IMAGE=caddy|registry.example/caddy:latest|${original_image_record##*|}" \
+          "$invalid_backup/manifest.txt"
+        ;;
+      missing-id)
+        sed -i "/^IMAGE=caddy|/c\\IMAGE=${original_image_record%|*}|" \
+          "$invalid_backup/manifest.txt"
+        ;;
+    esac
+    (
+      cd "$invalid_backup"
+      sha256sum backend.env telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
+        volumes/*.tar.gz >SHA256SUMS
+    )
+    assert_fails_with 'manifest image records are invalid' \
+      "$invalid_backup/restore-backend.sh" "$invalid_backup" "$invalid_release"
+  done
+  invalid_backup=$sandbox/invalid-checksum
+  cp -a "$backup_dir" "$invalid_backup"
+  printf 'IMAGE=%s\n' "$original_image_record" >>"$invalid_backup/manifest.txt"
+  assert_fails_with 'FAILED' "$invalid_backup/restore-backend.sh" "$invalid_backup" \
+    "$sandbox/restore-invalid-checksum/release"
+  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
+    assert_event_before "VOLUME_MEASURE=${project}_${logical}" COMPOSE_DOWN "$event_log"
+    assert_event_before COMPOSE_DOWN "VOLUME_ARCHIVE=${project}_${logical}" "$event_log"
+    assert_event_before "VOLUME_ARCHIVE=${project}_${logical}" TRANSACTION_CLEAR "$event_log"
+  done
   unsafe_event_log=$sandbox/unsafe-events.log
   for unsafe_link in missing absolute multi-component; do
     rm -f "$sandbox/backend/latest"
@@ -320,14 +384,18 @@ EOF
     entries=('FORMAT_VERSION=1' 'TRANSACTION_ID=updater-transaction' 'OPERATION=update' \
       'PHASE=backup-offline' 'TARGET_RELEASE=next-release' 'PREVIOUS_RELEASE=previous-release' 'BACKUP_PATH=')
     for service in caddy collector grafana victorialogs victoriametrics; do
-      entries+=("PREVIOUS_IMAGE_${service^^}=$(fixture_image_id previous-release "$service")")
+      container=$(docker ps -q --filter "label=com.docker.compose.project=$project" \
+        --filter "label=com.docker.compose.service=$service")
+      image_id=$(docker inspect --format '{{.Image}}' "$container")
+      [ "$service" != caddy ] || previous_caddy_id=$image_id
+      entries+=("PREVIOUS_IMAGE_${service^^}=$image_id")
       entries+=("TARGET_IMAGE_${service^^}=$(fixture_image_id next-release "$service")")
     done
     write_transaction "${entries[@]}"
     backup_main --target-label handoff --leave-stopped --allow-large-backup
     [ "$(read_transaction TRANSACTION_ID)" = updater-transaction ] || exit 1
     [ "$(read_transaction PHASE)" = activation-prepared ] || exit 1
-    [ "$(read_transaction PREVIOUS_IMAGE_CADDY)" = "$(fixture_image_id previous-release caddy)" ] || exit 1
+    [ "$(read_transaction PREVIOUS_IMAGE_CADDY)" = "$previous_caddy_id" ] || exit 1
   ) || fail 'validated update handoff did not preserve its transaction'
   docker compose --project-name "$project" --project-directory "$sandbox/backend" --env-file "$sandbox/backend/.env" \
     -f "$sandbox/backend/docker-compose.yml" up -d --no-build --pull never
@@ -411,8 +479,16 @@ EOF
   mapfile -t source_volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
   [ "${#source_volumes[@]}" -eq 5 ] || fail 'source project did not expose five exact volumes for restore'
   docker volume rm "${source_volumes[@]}" >/dev/null
+  mismatch_root=$sandbox/restore-mismatch
+  restore_project=$(restore_backup_into_second_sandbox "$backup_dir" "$mismatch_root" 1)
+  cleanup_restore_project "$mismatch_root" "$restore_project"
   restore_project=$(restore_backup_into_second_sandbox "$backup_dir" "$restore_root")
   [ "$restore_project" = "$project" ] || fail 'restore changed the manifest project identity'
+  for image_record in "${manifest_images[@]}"; do
+    IFS='|' read -r service image_reference image_id extra <<<"$image_record"
+    printf '%s=%s\n' "$service" "$image_id"
+  done >"$sandbox/restored-images"
+  assert_container_image_ids "$restore_project" "$sandbox/restored-images"
   for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
     assert_volume_file "$restore_project" "$logical" "/sentinel/$logical"
   done
@@ -426,6 +502,7 @@ EOF
 
 run_cli_suite() {
   local function_name sandbox active_before first_pid first_status lock_output missing_backup_root pin_output production_log
+  local fixture_registry_digest
   local override_name legacy_sandbox legacy_root legacy_release
 
   [ -x "$backup_script" ] || fail 'backup-backend.sh does not exist or is not executable'
@@ -720,7 +797,7 @@ run_cli_suite() {
     ) || fail "backup_main recovery ignored a helper $recovery_failure failure"
   done
 
-  for preoffline_failure in pin-inspect pin-sync capture-inspect archive-grep-error archive-read-error \
+  for preoffline_failure in pin-inspect pin-sync capture-inspect capture-missing-id archive-grep-error archive-read-error \
     archive-env-match; do
     (
       # shellcheck disable=SC1090,SC1091
@@ -739,7 +816,9 @@ run_cli_suite() {
       : >"$TELEMETRY_TEST_COMMAND_LOG"
       ln -s previous "$TELEMETRY_TEST_BACKEND_ROOT/latest"
       printf '%s\n' 0 >"$preoffline_root/inspect-count"
+      printf '%s\n' 0 >"$preoffline_root/json-count"
       printf '%s\n' 0 >"$preoffline_root/sync-count"
+      fixture_registry_digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
       # shellcheck disable=SC2329 # pin_active_images and write_transaction invoke this failure double.
       sync() {
         local sync_count
@@ -788,7 +867,7 @@ run_cli_suite() {
       strict_health_gate() { return 0; }
       # shellcheck disable=SC2329 # backup_main reaches Docker through the sourced production functions.
       docker() {
-        local argument inspect_count service=
+        local argument inspect_count json_count service=
 
         if [ "$1" = compose ]; then
           case " $* " in
@@ -820,6 +899,9 @@ run_cli_suite() {
             { [ "$preoffline_failure" = capture-inspect ] && [ "$inspect_count" -eq 6 ]; }; then
             return 1
           fi
+          if [ "$preoffline_failure" = capture-missing-id ] && [ "$inspect_count" -eq 6 ]; then
+            return 0
+          fi
           service=${!#}
           service=${service#container-}
           fixture_image_id previous "$service"
@@ -828,9 +910,10 @@ run_cli_suite() {
         if [ "$1" = image ] && [ "$2" = inspect ]; then
           case " $* " in
             *RepoDigests*)
-              printf '%s\n' registry.example/caddy@sha256:caddy registry.example/collector@sha256:collector \
-                registry.example/victorialogs@sha256:victorialogs \
-                registry.example/victoriametrics@sha256:victoriametrics
+              printf '%s\n' "registry.example/caddy@$fixture_registry_digest" \
+                "registry.example/collector@$fixture_registry_digest" \
+                "registry.example/victorialogs@$fixture_registry_digest" \
+                "registry.example/victoriametrics@$fixture_registry_digest"
               ;;
           esac
           return 0
@@ -839,12 +922,24 @@ run_cli_suite() {
           return 0
         fi
         if [ "$1" = run ] && [ "${5:-}" = -er ]; then
-          printf '%s\n' \
-            $'caddy\tregistry.example/caddy:1' \
-            $'collector\tregistry.example/collector:1' \
-            $'grafana\tregistry.example/grafana:1' \
-            $'victorialogs\tregistry.example/victorialogs:1' \
-            $'victoriametrics\tregistry.example/victoriametrics:1'
+          json_count=$(<"$preoffline_root/json-count")
+          json_count=$((json_count + 1))
+          printf '%s\n' "$json_count" >"$preoffline_root/json-count"
+          if [ "$json_count" -eq 1 ]; then
+            printf '%s\n' \
+              $'caddy\tregistry.example/caddy:1' \
+              $'collector\tregistry.example/collector:1' \
+              $'grafana\tregistry.example/grafana:1' \
+              $'victorialogs\tregistry.example/victorialogs:1' \
+              $'victoriametrics\tregistry.example/victoriametrics:1'
+          else
+            printf '%s\n' \
+              "caddy"$'\t'"registry.example/caddy@$fixture_registry_digest" \
+              "collector"$'\t'"registry.example/collector@$fixture_registry_digest" \
+              $'grafana\tpreoffline_status_test-grafana:previous' \
+              "victorialogs"$'\t'"registry.example/victorialogs@$fixture_registry_digest" \
+              "victoriametrics"$'\t'"registry.example/victoriametrics@$fixture_registry_digest"
+          fi
           return 0
         fi
         if [ "$1" = run ]; then
