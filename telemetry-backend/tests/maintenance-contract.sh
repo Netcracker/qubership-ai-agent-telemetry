@@ -2027,8 +2027,10 @@ run_resolution_suite() {
   if grep -F 'read_bytes(' "$update_script" >/dev/null; then
     fail 'normalized content hashing reads a retained source file into memory'
   fi
-  cp "$backend_dir/docker-compose.yml" "$sandbox/backend/docker-compose.yml"
-  cp "$backend_dir/.env.example" "$sandbox/backend/.env"
+  mkdir "$sandbox/backend/current"
+  cp "$backend_dir/docker-compose.yml" "$sandbox/backend/current/docker-compose.yml"
+  cp "$backend_dir/.env.example" "$sandbox/backend/current/.env"
+  ln -s current "$sandbox/backend/latest"
   run_update() {
     env TMPDIR="$sandbox/tmp" PATH="$docker_dir:$PATH" TELEMETRY_MAINTENANCE_TEST_MODE=1 \
       TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" \
@@ -2161,7 +2163,8 @@ run_resolution_suite() {
     fail 'existing target symlink was replaced'
   fi
   [ -L "$sandbox/backend/999999999999" ] || fail 'existing target symlink was clobbered'
-  ln -s 0123456789ab "$sandbox/backend/latest"
+  ln -s 0123456789ab "$sandbox/backend/.latest.test"
+  mv -Tf "$sandbox/backend/.latest.test" "$sandbox/backend/latest"
   if output=$(run_update --ref 0123456789abcdef0123456789abcdef01234567 2>&1); then
     fail 'active target without marker was accepted'
   fi
@@ -2194,6 +2197,7 @@ run_resolution_suite() {
     fail 'active target accepted a multi-component latest link'
   fi
   rm "$sandbox/backend/latest"
+  ln -s current "$sandbox/backend/latest"
   printf '%s\n' corrupt >"$sandbox/backend/0123456789ab/.normalized-content-checksums"
   if output=$(run_update --ref 0123456789abcdef0123456789abcdef01234567 2>&1); then
     fail 'damaged inactive staging target was reused'

@@ -151,10 +151,12 @@ with bundle:
         if archive_format == "commit":
             if root is None:
                 root = parts[0]
-            if parts[0] != root or (len(parts) > 1 and parts[1] != "telemetry-backend"):
+            if parts[0] != root:
                 raise SystemExit(f"source archive has an unexpected layout: {raw!r}")
             if len(parts) == 1 and not member.isdir():
                 raise SystemExit(f"source archive root is not a directory: {raw!r}")
+            if len(parts) > 1 and parts[1] != "telemetry-backend":
+                continue
             if len(parts) == 2 and not member.isdir():
                 raise SystemExit(f"source archive backend root is not a directory: {raw!r}")
             relative = "/".join(parts[2:])

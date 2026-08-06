@@ -50,6 +50,7 @@ def archive(root: str, variant: str = "valid") -> bytes:
     payload = io.BytesIO()
     with tarfile.open(fileobj=payload, mode="w:gz") as tar:
         entries = [
+            (f"{root}/README.md", tarfile.REGTYPE, b"# Repository fixture\n"),
             (f"{root}/telemetry-backend/docker-compose.yml", tarfile.REGTYPE, COMPOSE),
             (f"{root}/telemetry-backend/.env.example", tarfile.REGTYPE, b"SITE_ADDRESS=fixture.invalid\n"),
             (f"{root}/telemetry-backend/grafana/Dockerfile", tarfile.REGTYPE, b"FROM scratch\n"),
