@@ -16,6 +16,7 @@ adoption_dashboard=$backend_dir/grafana/dashboards/ai-agent-telemetry-adoption.j
 overview_dashboard=$backend_dir/grafana/dashboards/native-agent-metrics-overview.json
 codex_dashboard=$backend_dir/grafana/dashboards/codex-native-metrics.json
 collector_config=$backend_dir/otel-collector-config.yaml
+grafana_dockerfile=$backend_dir/grafana/Dockerfile
 fixture_stack=$backend_dir/tests/with-fixture-stack.sh
 repository_root=$(CDPATH='' cd -- "$backend_dir/.." && pwd)
 release_guide=$repository_root/docs/release.md
@@ -67,6 +68,10 @@ done
 if grep -Fq '/opt/skills-telemetry-backups' "$release_guide"; then
   fail 'release guide must use the ordinary backend backup root'
 fi
+
+grep -Fqx \
+  'FROM grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63' \
+  "$grafana_dockerfile" || fail 'Grafana build must pin its multi-platform base image digest'
 
 for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
   VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES VM_SELF_SCRAPE_INTERVAL; do
