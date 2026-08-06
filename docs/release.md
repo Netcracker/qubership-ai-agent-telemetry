@@ -74,9 +74,50 @@ update-backend.sh
 
 `ai-agent-telemetry-backend.tar.gz` contains the deployable backend files at the archive root, including Compose, Caddy, Collector, Grafana, dashboards, and maintenance scripts. It has no repository-name or `telemetry-backend/` wrapper directory.
 
+## First backend installation
+
+Install the release asset directly when the host does not have an active backend release. The updater requires an
+existing `/opt/ai-agent-telemetry-backend/latest` link and is only for subsequent updates.
+
+Run these commands as `root`, replacing `vX.Y.Z` with the verified release tag:
+
+```bash
+release_id=vX.Y.Z
+release_url="https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/$release_id"
+backend_root=/opt/ai-agent-telemetry-backend
+release_dir=$backend_root/$release_id
+
+install -d -m 0755 "$release_dir"
+curl -fsSLo /tmp/ai-agent-telemetry-backend.tar.gz "$release_url/ai-agent-telemetry-backend.tar.gz"
+curl -fsSLo /tmp/SHA256SUMS "$release_url/SHA256SUMS"
+(
+  cd /tmp
+  awk '$2 == "ai-agent-telemetry-backend.tar.gz"' SHA256SUMS | sha256sum -c -
+)
+tar -xzf /tmp/ai-agent-telemetry-backend.tar.gz -C "$release_dir"
+install -m 0600 "$release_dir/.env.example" "$release_dir/.env"
+vi "$release_dir/.env"
+ln -s "$release_id" "$backend_root/.latest.tmp"
+mv -Tf -- "$backend_root/.latest.tmp" "$backend_root/latest"
+docker compose --project-name ai-agent-telemetry-backend \
+  --project-directory "$release_dir" \
+  --env-file "$release_dir/.env" \
+  -f "$release_dir/docker-compose.yml" \
+  up -d --build
+docker compose --project-name ai-agent-telemetry-backend \
+  --project-directory "$release_dir" \
+  --env-file "$release_dir/.env" \
+  -f "$release_dir/docker-compose.yml" \
+  ps
+```
+
+Confirm that all five services are running and verify the dashboard, log, and metric endpoints before using the
+standalone maintenance commands.
+
 ## Backend updater bootstrap
 
-Download and verify both standalone maintenance scripts before running an update. Run these commands as `root` on the backend host:
+Download and verify both standalone maintenance scripts before updating an existing installation. Run these commands
+as `root` on the backend host:
 
 ```bash
 release_url=https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download
@@ -97,6 +138,13 @@ Pass a release tag, branch name, or full commit SHA to `--ref` when you do not w
 ```
 
 The updater stages downloads and images before downtime, creates a self-contained backup under `/opt/ai-agent-telemetry-backups`, activates the target through the `latest` symlink, checks backend health, and restores the previous release if activation fails.
+
+After a successful health check, an interactive update offers to remove backups older than 14 days. The two newest
+backups are always retained. Noninteractive runs keep old backups unless you pass `--prune-backups`:
+
+```bash
+./update-backend.sh --ref latest --prune-backups
+```
 
 ## Smoke checks
 

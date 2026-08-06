@@ -26,42 +26,30 @@ fail() {
   exit 1
 }
 
-legacy_hits=$(git -C "$repository_root" grep -Il 'skills-telemetry-backend' -- . || true)
-printf '%s\n' "$legacy_hits" | while IFS= read -r legacy_path; do
+legacy_hits=$(git -C "$repository_root" grep -In 'skills-telemetry' -- \
+  telemetry-backend scripts/package-backend-release.sh scripts/package_backend_release_test.sh \
+  docs/release.md .github/workflows/release.yaml || true)
+printf '%s\n' "$legacy_hits" | while IFS=: read -r legacy_path legacy_line_number legacy_text; do
   [ -n "$legacy_path" ] || continue
+  : "$legacy_text"
   case "$legacy_path" in
-    telemetry-backend/scripts/backup-backend.sh)
-      legacy_backup_lines=$(git -C "$repository_root" grep -nF 'skills-telemetry-backend' -- "$legacy_path" || true)
-      printf '%s\n' "$legacy_backup_lines" |
-        while IFS=: read -r matched_path line_number legacy_line; do
-          [ -n "$matched_path" ] || continue
-          printf '%s\n' "$legacy_line" | grep -Eq \
-            '^readonly [A-Z][A-Z0-9_]*=(skills-telemetry-backend|/opt/skills-telemetry-backend|/run/lock/skills-telemetry-backend-maintenance[.]lock)$' ||
-            fail "legacy backend identity occurs outside a fixed constant: $matched_path:$line_number"
-        done
-      legacy_backup_values=$(printf '%s\n' "$legacy_backup_lines" |
-        sed 's/^[^:]*:[0-9]*:readonly [A-Z][A-Z0-9_]*=//' | sort)
-      expected_legacy_backup_values=$(printf '%s\n' \
-        /opt/skills-telemetry-backend \
-        /run/lock/skills-telemetry-backend-maintenance.lock \
-        skills-telemetry-backend | sort)
-      [ "$legacy_backup_values" = "$expected_legacy_backup_values" ] ||
-        fail 'backup executable must define each fixed legacy identity constant exactly once'
-      ;;
-    telemetry-backend/README.md)
-      legacy_readme_lines=$(git -C "$repository_root" grep -nF 'skills-telemetry-backend' -- "$legacy_path" || true)
-      legacy_readme_text=$(printf '%s\n' "$legacy_readme_lines" | sed 's/^[^:]*:[0-9]*://')
-      expected_legacy_readme_text='`skills-telemetry-backend` project from `/opt/skills-telemetry-backend`, follow'
-      [ "$legacy_readme_text" = "$expected_legacy_readme_text" ] ||
-        fail 'backend README must name the legacy identity only in the fixed migration sentence'
-      ;;
-    telemetry-backend/tests/config-contract.sh|telemetry-backend/tests/maintenance-contract.sh|\
-      telemetry-backend/MIGRATE_LEGACY_BACKEND.md|\
-      docs/superpowers/plans/*|docs/superpowers/specs/*)
+    telemetry-backend/tests/config-contract.sh|docs/superpowers/plans/*|docs/superpowers/specs/*)
       ;;
     *)
-      fail "legacy backend identity remains outside its allowlist: $legacy_path"
+      fail "legacy backend identity remains outside its allowlist: $legacy_path:$legacy_line_number"
       ;;
+  esac
+done
+
+legacy_option_hits=$(git -C "$repository_root" grep -In -- '--legacy-source' -- \
+  telemetry-backend scripts/package-backend-release.sh scripts/package_backend_release_test.sh \
+  docs/release.md .github/workflows/release.yaml || true)
+printf '%s\n' "$legacy_option_hits" | while IFS=: read -r legacy_path legacy_line_number legacy_text; do
+  [ -n "$legacy_path" ] || continue
+  : "$legacy_text"
+  case "$legacy_path" in
+    telemetry-backend/tests/config-contract.sh|docs/superpowers/plans/*|docs/superpowers/specs/*) ;;
+    *) fail "legacy maintenance option remains outside its historical allowlist: $legacy_path:$legacy_line_number" ;;
   esac
 done
 

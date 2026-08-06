@@ -328,7 +328,7 @@ EOF
 run_backup_suite() {
   local sandbox backup_root restore_root mismatch_root functional_root project restore_project backup_dir event_log
   local unsafe_event_log output functional_backup functional_container functional_grafana_id rebuilt_grafana_id
-  local legacy_event_log down_lie_event_log docker_wrapper_dir real_docker
+  local down_lie_event_log docker_wrapper_dir real_docker
   local restore_instructions logical service image_record image_reference image_id extra manifest_checksum_count
   local invalid_backup invalid_release invalid_case original_image_record previous_caddy_id bundled_checksum_count
   local grafana_reference source_grafana_id fake_grafana_id
@@ -535,72 +535,12 @@ EOF
     fail 'preliminary checksums did not precede compose down'
 
   : >"$unsafe_event_log"
-  assert_fails_with '--leave-stopped is available only for an updater handoff or --legacy-source' env \
+  assert_fails_with '--leave-stopped is available only for an updater handoff' env \
     TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
     TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project" \
     TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$unsafe_event_log" \
     "$backup_script" --target-label unsafe-leave-stopped --leave-stopped
   [ ! -s "$unsafe_event_log" ] || fail 'unsafe standalone --leave-stopped reached Docker-backed backup work'
-
-  legacy_event_log=$sandbox/legacy-events.log
-  (
-    # Exercise the production legacy branch against the real Docker fixture while retaining test-safe paths.
-    # shellcheck disable=SC1090,SC1091
-    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    eval "$(declare -f maintenance_init | sed '1s/maintenance_init/original_maintenance_init/')"
-    # shellcheck disable=SC2329 # backup_main invokes this boundary override through the sourced script.
-    maintenance_init() {
-      [ "${1:-}" = legacy-source ] || return 1
-      original_maintenance_init ordinary || return 1
-      export MAINTENANCE_IDENTITY_MODE=legacy-source
-      CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
-      COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
-      ENV_FILE=$CURRENT_BACKEND_DIR/.env
-      GENERATED_OVERRIDE_FILE=$CURRENT_BACKEND_DIR/.maintenance-compose.yml
-    }
-    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend"
-    export TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project"
-    export TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$legacy_event_log"
-    backup_main --legacy-source --target-label legacy-cutover --leave-stopped
-  ) || fail 'supervised legacy backup did not complete successfully'
-  assert_backup_helper_names "$legacy_event_log"
-  assert_services_stopped "$project"
-  [ ! -f "$sandbox/backend/.maintenance-transaction" ] ||
-    fail 'successful supervised legacy backup retained its durable transaction'
-  mapfile -t legacy_backups < <(compgen -G "$backup_root/pre-legacy-cutover-*" || true)
-  [ "${#legacy_backups[@]}" -eq 1 ] && [[ ${legacy_backups[0]} != *.incomplete ]] ||
-    fail 'supervised legacy backup did not publish exactly one completed backup'
-  (cd "${legacy_backups[0]}" && sha256sum -c SHA256SUMS >/dev/null) ||
-    fail 'supervised legacy backup checksums do not verify'
-  [ "$(sed -n 's/^IMAGE=//p' "${legacy_backups[0]}/manifest.txt" | wc -l)" -eq 5 ] ||
-    fail 'supervised legacy backup did not preserve five image identities'
-  assert_event_before BACKUP_PUBLISHED TRANSACTION_CLEAR "$legacy_event_log"
-
-  docker compose --project-name "$project" --project-directory "$sandbox/backend/previous" \
-    --env-file "$sandbox/backend/previous/.env" -f "$sandbox/backend/previous/docker-compose.yml" \
-    -f "$sandbox/backend/previous/.maintenance-compose.yml" up -d --no-build --pull never
-  (
-    # shellcheck disable=SC1090,SC1091
-    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    eval "$(declare -f maintenance_init | sed '1s/maintenance_init/original_maintenance_init/')"
-    # shellcheck disable=SC2329 # backup_main invokes this boundary override through the sourced script.
-    maintenance_init() {
-      [ "${1:-}" = legacy-source ] || return 1
-      original_maintenance_init ordinary || return 1
-      export MAINTENANCE_IDENTITY_MODE=legacy-source
-      CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
-      COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
-      ENV_FILE=$CURRENT_BACKEND_DIR/.env
-      GENERATED_OVERRIDE_FILE=$CURRENT_BACKEND_DIR/.maintenance-compose.yml
-    }
-    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend"
-    export TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project"
-    export TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_FAIL_BACKUP_HELPER=1
-    run_fails backup_main --legacy-source --target-label legacy-cutover-failure --leave-stopped
-  ) || fail 'failed supervised legacy backup did not report failure'
-  assert_services_running "$project" "$sandbox/backend/previous"
-  [ ! -f "$sandbox/backend/.maintenance-transaction" ] ||
-    fail 'failed supervised legacy backup retained its durable transaction after recovery'
 
   down_lie_event_log=$sandbox/down-lie-events.log
   docker_wrapper_dir=$sandbox/down-lie-bin
@@ -828,7 +768,7 @@ EOF
 run_cli_suite() {
   local function_name sandbox active_before first_pid first_status lock_output missing_backup_root pin_output production_log
   local fixture_registry_digest
-  local override_name legacy_sandbox legacy_root legacy_release
+  local resolution_sandbox resolution_root resolution_release
 
   [ -x "$backup_script" ] || fail 'backup-backend.sh does not exist or is not executable'
 
@@ -841,55 +781,32 @@ run_cli_suite() {
     [ "$LOCK_FILE_DEFAULT" = /run/lock/ai-agent-telemetry-backend-maintenance.lock ]
   ) || fail 'ordinary maintenance identity defaults do not use ai-agent-telemetry-backend'
 
-  legacy_sandbox=$(mktemp -d /tmp/telemetry-legacy-source.XXXXXX)
-  trap 'rm -rf "${legacy_sandbox:-}" "${sandbox:-}"' EXIT HUP INT TERM
-  legacy_root=$legacy_sandbox/skills-telemetry-backend
-  legacy_release=$legacy_root/release-legacy
-  mkdir -p "$legacy_release"
-  : >"$legacy_release/docker-compose.yml"
-  : >"$legacy_release/.env"
-  ln -s release-legacy "$legacy_root/latest"
+  resolution_sandbox=$(mktemp -d /tmp/telemetry-active-resolution.XXXXXX)
+  trap 'rm -rf "${resolution_sandbox:-}" "${sandbox:-}"' EXIT HUP INT TERM
+  resolution_root=$resolution_sandbox/backend
+  resolution_release=$resolution_root/release-current
+  mkdir -p "$resolution_release"
+  : >"$resolution_release/docker-compose.yml"
+  : >"$resolution_release/.env"
+  ln -s release-current "$resolution_root/latest"
   (
     # shellcheck disable=SC1090,SC1091
     TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    [ "$(resolve_active_backend_dir "$legacy_root")" = "$legacy_release" ] || exit 1
-    rm -f "$legacy_root/latest"
-    ln -s release-legacy/ "$legacy_root/latest"
-    [ "$(resolve_active_backend_dir "$legacy_root")" = "$legacy_release" ] || exit 1
-    for unsafe_target in "$legacy_release" ./release-legacy ../release-legacy nested/release-legacy release-legacy//; do
-      rm -f "$legacy_root/latest"
-      ln -s "$unsafe_target" "$legacy_root/latest"
-      run_fails resolve_active_backend_dir "$legacy_root"
+    [ "$(resolve_active_backend_dir "$resolution_root")" = "$resolution_release" ] || exit 1
+    rm -f "$resolution_root/latest"
+    ln -s release-current/ "$resolution_root/latest"
+    [ "$(resolve_active_backend_dir "$resolution_root")" = "$resolution_release" ] || exit 1
+    for unsafe_target in "$resolution_release" ./release-current ../release-current nested/release-current release-current//; do
+      rm -f "$resolution_root/latest"
+      ln -s "$unsafe_target" "$resolution_root/latest"
+      run_fails resolve_active_backend_dir "$resolution_root"
     done
-    mkdir -p "$legacy_root/release-target"
-    ln -s release-target "$legacy_root/release-link"
-    rm -f "$legacy_root/latest"
-    ln -s release-link "$legacy_root/latest"
-    run_fails resolve_active_backend_dir "$legacy_root"
+    mkdir -p "$resolution_root/release-target"
+    ln -s release-target "$resolution_root/release-link"
+    rm -f "$resolution_root/latest"
+    ln -s release-link "$resolution_root/latest"
+    run_fails resolve_active_backend_dir "$resolution_root"
   ) || fail 'active backend resolution accepted an unsafe latest link or missed its immutable release'
-
-  (
-    # shellcheck disable=SC1090,SC1091
-    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    # shellcheck disable=SC2329 # maintenance_init invokes these fixed-root boundary overrides.
-    validate_production_runtime() { return 0; }
-    # shellcheck disable=SC2329 # maintenance_init invokes these fixed-root boundary overrides.
-    resolve_active_backend_dir() {
-      [ "$1" = /opt/skills-telemetry-backend ] || return 1
-      command readlink "$legacy_root/latest" >/dev/null || return 1
-      printf '%s\n' "$legacy_release"
-    }
-    maintenance_init legacy-source
-    [ "$PROJECT_NAME" = skills-telemetry-backend ]
-    [ "$BACKEND_ROOT" = /opt/skills-telemetry-backend ]
-    [ "$BACKUP_ROOT" = /opt/ai-agent-telemetry-backups ]
-    [ "$LOCK_FILE" = /run/lock/skills-telemetry-backend-maintenance.lock ]
-    [ "$CURRENT_BACKEND_DIR" = "$legacy_release" ]
-    [ "$COMPOSE_FILE" = "$legacy_release/docker-compose.yml" ]
-    [ "$ENV_FILE" = "$legacy_release/.env" ]
-    [ "$GENERATED_OVERRIDE_FILE" = "$legacy_release/.maintenance-compose.yml" ]
-    [ "$TRANSACTION_FILE" = /opt/skills-telemetry-backend/.maintenance-transaction ]
-  ) || fail '--legacy-source does not select the fixed legacy source and new backup destination'
 
   (
     # The test resolves the sibling script from its own location.
@@ -904,7 +821,7 @@ run_cli_suite() {
   ) || fail 'backup-backend.sh must expose the shared maintenance functions when sourced'
 
   sandbox=$(mktemp -d /tmp/telemetry-maintenance.XXXXXX)
-  trap 'rm -rf "${legacy_sandbox:-}" "${sandbox:-}"' EXIT HUP INT TERM
+  trap 'rm -rf "${resolution_sandbox:-}" "${sandbox:-}"' EXIT HUP INT TERM
   mkdir -p "$sandbox/backend/active-release" "$sandbox/backups"
   : >"$sandbox/backend/active-release/docker-compose.yml"
   printf '%s\n' 'ACTIVE_RELEASE_ENV=1' >"$sandbox/backend/active-release/.env"
@@ -921,10 +838,6 @@ run_cli_suite() {
     [ "$ENV_FILE" = "$sandbox/backend/active-release/.env" ] || exit 1
     [ "$TRANSACTION_FILE" = "$sandbox/backend/.maintenance-transaction" ] || exit 1
   ) || fail 'ordinary maintenance did not resolve configuration from the active release'
-
-  if grep -F 'skills-telemetry-backup-' "$backup_script" >/dev/null; then
-    fail 'maintenance helper container names retain the retired prefix'
-  fi
 
   (
     # shellcheck disable=SC1090,SC1091
@@ -944,17 +857,6 @@ run_cli_suite() {
     [[ $measure_command == *'du -sb /source | cut -f1'* ]] || exit 1
     grep -Fx 'VOLUME_MEASURE=fixture-volume' "$TELEMETRY_TEST_COMMAND_LOG" >/dev/null
   ) || fail 'volume measurement helper is not read-only and size-only'
-
-  assert_fails_with '--legacy-source may be specified only once' \
-    "$backup_script" --legacy-source --legacy-source
-  assert_fails_with '--legacy-source is supported only by backup-backend.sh' \
-    "$update_script" --legacy-source
-  for override_name in TELEMETRY_TEST_BACKEND_ROOT TELEMETRY_TEST_BACKUP_ROOT TELEMETRY_TEST_PROJECT_NAME \
-    TELEMETRY_TEST_LOCK_FILE; do
-    assert_fails_with '--legacy-source cannot be combined with test-mode identity overrides' env \
-      TELEMETRY_MAINTENANCE_TEST_MODE=1 \
-      "$override_name=/tmp/arbitrary-identity" "$backup_script" --legacy-source
-  done
 
   (
     # The test resolves the sibling script from its own location.
@@ -2222,346 +2124,6 @@ run_resolution_suite() {
   printf '%s\n' 'PASS: maintenance resolution contract'
 }
 
-cleanup_manual_identity_migration_sandbox() {
-  local sandbox=${1:-} legacy_project=${2:-} new_project=${3:-} project
-  local -a containers volumes networks transaction_ids
-
-  if [ -n "$sandbox" ] && [ -f "$sandbox/migration.trace" ]; then
-    mapfile -t transaction_ids < <(sed -n 's/^HELPERS_ABSENT=//p' "$sandbox/migration.trace" | sort -u)
-  fi
-
-  for project in "$legacy_project" "$new_project"; do
-    [ -n "$project" ] || continue
-    mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=$project")
-    [ "${#containers[@]}" -eq 0 ] || docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
-    mapfile -t volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
-    [ "${#volumes[@]}" -eq 0 ] || docker volume rm "${volumes[@]}" >/dev/null 2>&1 || true
-    mapfile -t networks < <(docker network ls -q --filter "label=com.docker.compose.project=$project")
-    [ "${#networks[@]}" -eq 0 ] || docker network rm "${networks[@]}" >/dev/null 2>&1 || true
-    assert_task_resources_absent "$project" "${transaction_ids[@]}"
-  done
-  case "$sandbox" in
-    /tmp/telemetry-manual-migration.*) rm -rf "$sandbox" ;;
-    '') ;;
-    *) fail "refusing to remove unexpected manual migration sandbox: $sandbox" ;;
-  esac
-}
-
-assert_only_migration_project_running() {
-  local running_project=$1 stopped_project=$2
-  local -a running stopped
-
-  mapfile -t running < <(docker ps -q --filter "label=com.docker.compose.project=$running_project")
-  mapfile -t stopped < <(docker ps -q --filter "label=com.docker.compose.project=$stopped_project")
-  [ "${#running[@]}" -eq 5 ] || fail "expected five running containers for $running_project"
-  [ "${#stopped[@]}" -eq 0 ] || fail "project $stopped_project is running during identity migration"
-}
-
-assert_migration_volume_matches_archive() {
-  local backup_dir=$1 archive=$2 actual=$3 helper_image=$4
-
-  docker run --rm --pull never \
-    --mount "type=volume,src=$actual,dst=/actual,readonly" \
-    --mount "type=bind,src=$backup_dir/volumes,dst=/backup,readonly" \
-    "$helper_image" sh -eu -c '
-      mkdir /expected
-      tar -xzf "/backup/$1" -C /expected
-      find /expected -exec stat -c "%n|%F|%a|%u|%g|%s|%N" {} \; |
-        sed "s#/expected##g" | sort >/tmp/expected.meta
-      find /actual -exec stat -c "%n|%F|%a|%u|%g|%s|%N" {} \; |
-        sed "s#/actual##g" | sort >/tmp/actual.meta
-      find /expected -type f -exec sha256sum {} \; |
-        sed "s#/expected##g" | sort >/tmp/expected.sha
-      find /actual -type f -exec sha256sum {} \; |
-        sed "s#/actual##g" | sort >/tmp/actual.sha
-      if ! cmp /tmp/expected.meta /tmp/actual.meta; then
-        diff -u /tmp/expected.meta /tmp/actual.meta >&2 || true
-        exit 1
-      fi
-      if ! cmp /tmp/expected.sha /tmp/actual.sha; then
-        diff -u /tmp/expected.sha /tmp/actual.sha >&2 || true
-        exit 1
-      fi
-    ' sh "$archive" || fail "restored volume $actual differs from $archive"
-}
-
-write_manual_migration_docker() {
-  local path=$1
-
-  cat >"$path" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-printf 'docker %s\n' "$*" >>"$TELEMETRY_TEST_COMMAND_LOG"
-if [ "${1:-}" = run ]; then
-  case " $* " in
-    *'io.qubership.ai-agent-telemetry.maintenance.role=health'*)
-      sample_value=${!#}
-      sample_timestamp=$(date +%s)
-      printf 'METRIC_VALUE_SAMPLE=%s|%s\n' "$sample_timestamp" "$sample_value"
-      printf 'METRIC_RAW_TIMESTAMP_SAMPLE=%s|%s\n' "$sample_timestamp" "$sample_timestamp"
-      exit 0
-      ;;
-  esac
-fi
-exec "$TELEMETRY_REAL_DOCKER" "$@"
-EOF
-  chmod 700 "$path"
-}
-
-write_manual_migration_curl() {
-  local path=$1
-
-  cat >"$path" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-printf 'curl %s\n' "$*" >>"$TELEMETRY_TEST_COMMAND_LOG"
-case " $* " in *' --config - '*) cat >/dev/null ;; esac
-printf '%s\n' '{}'
-EOF
-  chmod 700 "$path"
-}
-
-run_manual_identity_migration_sandbox() {
-  local helper_image=$1 sandbox legacy_root new_root legacy_release new_release backup_root backup_dir
-  local legacy_project new_project docker_dir command_log real_docker logical actual archive legacy_actual
-  local service reference expected_id container output
-  local -a legacy_volumes new_volumes manifest_images
-
-  sandbox=$(mktemp -d /tmp/telemetry-manual-migration.XXXXXX)
-  legacy_project="telemetry_legacy_$RANDOM$RANDOM"
-  new_project="telemetry_new_$RANDOM$RANDOM"
-  trap 'cleanup_manual_identity_migration_sandbox "${sandbox:-}" "${legacy_project:-}" "${new_project:-}"' \
-    EXIT HUP INT TERM
-  legacy_root=$sandbox/legacy-root
-  new_root=$sandbox/new-root
-  legacy_release=$legacy_root/legacy-release
-  new_release=$new_root/new-release
-  backup_root=$sandbox/backups
-  docker_dir=$sandbox/bin
-  command_log=$sandbox/migration.trace
-  real_docker=$(command -v docker)
-  mkdir -p "$legacy_release" "$new_release" "$backup_root" "$docker_dir" "$sandbox/docker-config"
-  : >"$command_log"
-  write_manual_migration_docker "$docker_dir/docker"
-  write_manual_migration_curl "$docker_dir/curl"
-
-  cat >"$legacy_release/.env" <<'EOF'
-SITE_ADDRESS=localhost
-HTTPS_PORT=8443
-INGEST_TOKEN=migration-token
-DASHBOARD_AUTH_USER=migration-viewer
-EOF
-  cat >"$legacy_release/docker-compose.yml" <<EOF
-services:
-  caddy:
-    image: $helper_image
-    command: ["sh", "-c", "while :; do sleep 3600; done"]
-    stop_grace_period: 1s
-    volumes: [caddy-config:/caddy-config, caddy-data:/caddy-data]
-    networks: [backend]
-  collector:
-    image: $helper_image
-    command: ["sh", "-c", "while :; do sleep 3600; done"]
-    stop_grace_period: 1s
-    networks: [backend]
-  grafana:
-    image: $helper_image
-    command: ["sh", "-c", "while :; do sleep 3600; done"]
-    stop_grace_period: 1s
-    volumes: [grafana-data:/grafana-data]
-    networks: [backend]
-  victorialogs:
-    image: $helper_image
-    command: ["sh", "-c", "while :; do sleep 3600; done"]
-    stop_grace_period: 1s
-    volumes: [vlogs-data:/vlogs-data]
-    networks: [backend]
-  victoriametrics:
-    image: $helper_image
-    command: ["sh", "-c", "while :; do sleep 3600; done"]
-    stop_grace_period: 1s
-    volumes: [vmetrics-data:/vmetrics-data]
-    networks: [backend]
-volumes:
-  caddy-config: {}
-  caddy-data: {}
-  grafana-data: {}
-  vlogs-data: {}
-  vmetrics-data: {}
-networks:
-  backend: {}
-EOF
-  cp "$legacy_release/.env" "$new_release/.env"
-  cp "$legacy_release/docker-compose.yml" "$new_release/docker-compose.yml"
-  cp "$legacy_release/.env" "$legacy_root/.env"
-  cp "$legacy_release/docker-compose.yml" "$legacy_root/docker-compose.yml"
-  ln -s legacy-release "$legacy_root/latest"
-  ln -s new-release "$new_root/latest"
-
-  PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
-    TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config" \
-    docker compose --project-name "$legacy_project" --project-directory "$legacy_release" \
-    --env-file "$legacy_release/.env" -f "$legacy_release/docker-compose.yml" up -d --pull never
-  assert_only_migration_project_running "$legacy_project" "$new_project"
-  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
-    PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
-      TELEMETRY_TEST_COMMAND_LOG="$command_log" docker run --rm --pull never \
-      --mount "type=volume,src=${legacy_project}_${logical},dst=/data" "$helper_image" \
-      sh -eu -c "install -d -m 751 -o 1234 -g 2345 /data/state; \
-        printf '%s' '$logical-payload' >/data/state/$logical; \
-        chown 3456:4567 /data/state/$logical; chmod 640 /data/state/$logical"
-  done
-
-  (
-    export PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker"
-    export TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config"
-    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$legacy_root"
-    export TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$legacy_project"
-    export TELEMETRY_TEST_LOCK_FILE="$sandbox/legacy.lock" TELEMETRY_TEST_HEALTH_ATTEMPTS=2
-    export TELEMETRY_TEST_STABILITY_SECONDS=0
-    # shellcheck disable=SC1090,SC1091
-    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    eval "$(declare -f maintenance_init | sed '1s/maintenance_init/original_maintenance_init/')"
-    # shellcheck disable=SC2329 # backup_main invokes this test boundary override.
-    maintenance_init() {
-      [ "${1:-}" = legacy-source ] || return 1
-      original_maintenance_init ordinary || return 1
-      export MAINTENANCE_IDENTITY_MODE=legacy-source
-      CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
-      COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
-      ENV_FILE=$CURRENT_BACKEND_DIR/.env
-      GENERATED_OVERRIDE_FILE=$CURRENT_BACKEND_DIR/.maintenance-compose.yml
-    }
-    backup_main --legacy-source --target-label identity-migration --leave-stopped
-  ) || fail 'manual migration did not create a durable stopped legacy backup'
-  assert_services_stopped "$legacy_project"
-  assert_services_stopped "$new_project"
-  backup_dir=$(single_completed_backup "$backup_root")
-  (cd "$backup_dir" && sha256sum -c SHA256SUMS >/dev/null) ||
-    fail 'manual migration backup checksums do not verify'
-  mapfile -t manifest_images < <(sed -n 's/^IMAGE=//p' "$backup_dir/manifest.txt")
-  [ "${#manifest_images[@]}" -eq 5 ] || fail 'manual migration backup lacks five image identities'
-
-  while IFS='|' read -r logical legacy_actual archive; do
-    [ "$legacy_actual" = "${legacy_project}_${logical}" ] ||
-      fail "backup manifest changed the legacy volume identity for $logical"
-    actual="${new_project}_${logical}"
-    docker volume create --label "com.docker.compose.project=$new_project" \
-      --label "com.docker.compose.volume=$logical" "$actual" >/dev/null
-    docker run --rm --pull never --mount "type=volume,src=$actual,dst=/actual" \
-      --mount "type=bind,src=$backup_dir/volumes,dst=/backup,readonly" \
-      "$helper_image" sh -eu -c 'cd /actual && tar -xzf "/backup/$1"' sh "$archive"
-    assert_migration_volume_matches_archive "$backup_dir" "$archive" "$actual" "$helper_image"
-  done < <(sed -n 's/^VOLUME=//p' "$backup_dir/manifest.txt")
-  mapfile -t legacy_volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$legacy_project")
-  mapfile -t new_volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$new_project")
-  [ "${#legacy_volumes[@]}" -eq 5 ] && [ "${#new_volumes[@]}" -eq 5 ] ||
-    fail 'manual migration did not retain two complete volume data sets'
-
-  PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
-    TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config" \
-    docker compose --project-name "$new_project" --project-directory "$new_release" \
-    --env-file "$new_release/.env" -f "$new_release/docker-compose.yml" up -d --pull never
-  (
-    export PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker"
-    export TELEMETRY_TEST_COMMAND_LOG="$command_log" TELEMETRY_MAINTENANCE_TEST_MODE=1
-    export TELEMETRY_TEST_HEALTH_ATTEMPTS=2 TELEMETRY_TEST_STABILITY_SECONDS=1
-    export TELEMETRY_TEST_CA_CERT="$sandbox/test-ca.pem"
-    : >"$TELEMETRY_TEST_CA_CERT"
-    # shellcheck disable=SC1090,SC1091
-    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    PROJECT_NAME=$new_project
-    BACKEND_ROOT=$new_root
-    BACKUP_ROOT=$backup_root
-    LOCK_FILE=$sandbox/new.lock
-    COMPOSE_FILE=$new_release/docker-compose.yml
-    ENV_FILE=$new_release/.env
-    GENERATED_OVERRIDE_FILE=$new_release/.maintenance-compose.yml
-    TRANSACTION_FILE=$new_root/.maintenance-transaction
-    strict_health_gate "$new_release"
-    strict_health_gate "$new_release"
-  ) || fail 'manual migration new project did not pass strict health and stability probes'
-  assert_only_migration_project_running "$new_project" "$legacy_project"
-  grep -F '/v1/logs' "$command_log" >/dev/null || fail 'manual migration skipped the log probe'
-  grep -F '/v1/metrics' "$command_log" >/dev/null || fail 'manual migration skipped the metric probe'
-  grep -F '/api/dashboards/uid/codex-native-metrics' "$command_log" >/dev/null ||
-    fail 'manual migration skipped the Grafana dashboard probes'
-  printf '%s\n' 'TRACE: manual migration success left only the new identity running'
-
-  if output=$(
-    export PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker"
-    export TELEMETRY_TEST_COMMAND_LOG="$command_log" TELEMETRY_MAINTENANCE_TEST_MODE=1
-    export TELEMETRY_TEST_HEALTH_ATTEMPTS=1 TELEMETRY_TEST_STABILITY_SECONDS=0
-    export TELEMETRY_TEST_FORCE_UNHEALTHY=1
-    # shellcheck disable=SC1090,SC1091
-    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    PROJECT_NAME=$new_project
-    BACKEND_ROOT=$new_root
-    COMPOSE_FILE=$new_release/docker-compose.yml
-    ENV_FILE=$new_release/.env
-    GENERATED_OVERRIDE_FILE=$new_release/.maintenance-compose.yml
-    TRANSACTION_FILE=$new_root/.maintenance-transaction
-    strict_health_gate "$new_release" 2>&1
-  ); then
-    fail 'manual migration accepted an injected new-project health failure'
-  fi
-  [[ $output == *'services did not become healthy'* ]] ||
-    fail "injected new-project health failure lacked a diagnostic: $output"
-  PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
-    TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config" \
-    docker compose --project-name "$new_project" --project-directory "$new_release" \
-    --env-file "$new_release/.env" -f "$new_release/docker-compose.yml" down --remove-orphans
-  assert_services_stopped "$new_project"
-  {
-    printf '%s\n' 'services:'
-    for image_record in "${manifest_images[@]}"; do
-      IFS='|' read -r service reference expected_id <<<"$image_record"
-      printf '  %s:\n    image: %s\n' "$service" "$reference"
-    done
-  } >"$legacy_release/.maintenance-compose.yml"
-  PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker" \
-    TELEMETRY_TEST_COMMAND_LOG="$command_log" DOCKER_CONFIG="$sandbox/docker-config" \
-    docker compose --project-name "$legacy_project" --project-directory "$legacy_release" \
-    --env-file "$legacy_release/.env" -f "$legacy_release/docker-compose.yml" \
-    -f "$legacy_release/.maintenance-compose.yml" up -d --no-build --pull never
-  for image_record in "${manifest_images[@]}"; do
-    IFS='|' read -r service reference expected_id <<<"$image_record"
-    container=$(docker ps -q --filter "label=com.docker.compose.project=$legacy_project" \
-      --filter "label=com.docker.compose.service=$service")
-    [ -n "$container" ] || fail "fallback did not start legacy service $service"
-    [ "$(docker inspect --format '{{.Image}}' "$container")" = "$expected_id" ] ||
-      fail "fallback image ID differs from the manifest for $service"
-  done
-  (
-    export PATH="$docker_dir:$PATH" TELEMETRY_REAL_DOCKER="$real_docker"
-    export TELEMETRY_TEST_COMMAND_LOG="$command_log" TELEMETRY_MAINTENANCE_TEST_MODE=1
-    export TELEMETRY_TEST_HEALTH_ATTEMPTS=2 TELEMETRY_TEST_STABILITY_SECONDS=0
-    export TELEMETRY_TEST_CA_CERT="$sandbox/test-ca.pem"
-    # shellcheck disable=SC1090,SC1091
-    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
-    PROJECT_NAME=$legacy_project
-    BACKEND_ROOT=$legacy_root
-    BACKUP_ROOT=$backup_root
-    LOCK_FILE=$sandbox/legacy.lock
-    COMPOSE_FILE=$legacy_release/docker-compose.yml
-    ENV_FILE=$legacy_release/.env
-    GENERATED_OVERRIDE_FILE=$legacy_release/.maintenance-compose.yml
-    TRANSACTION_FILE=$legacy_root/.maintenance-transaction
-    strict_health_gate "$legacy_release"
-  ) || fail 'manual migration fallback did not restore legacy health'
-  assert_only_migration_project_running "$legacy_project" "$new_project"
-  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
-    assert_volume_file "$legacy_project" "$logical" "/state/$logical"
-    assert_volume_file "$new_project" "$logical" "/state/$logical"
-  done
-  printf '%s\n' 'TRACE: manual migration fallback restored five manifest image IDs and retained both data sets'
-
-  cleanup_manual_identity_migration_sandbox "$sandbox" "$legacy_project" "$new_project"
-  trap - EXIT HUP INT TERM
-}
-
 cleanup_real_activation_sandbox() {
   local sandbox=${1:-} project=${2:-} original_alpine_id=${3:-} previous_release=${4:-} target_release=${5:-}
   local -a containers volumes networks transaction_ids
@@ -2578,8 +2140,8 @@ cleanup_real_activation_sandbox() {
   [ "${#networks[@]}" -eq 0 ] || docker network rm "${networks[@]}" >/dev/null 2>&1 || true
   assert_task_resources_absent "$project" "${transaction_ids[@]}"
   [ -z "$original_alpine_id" ] || docker tag "$original_alpine_id" alpine:3.20 >/dev/null 2>&1 || true
-  docker image rm "task5-mutable:$project" "skills-telemetry-backend-grafana:$previous_release" \
-    "skills-telemetry-backend-grafana:$target_release" "alpine:task5-original-$project" >/dev/null 2>&1 || true
+  docker image rm "task5-mutable:$project" "$project-grafana:$previous_release" \
+    "$project-grafana:$target_release" "alpine:task5-original-$project" >/dev/null 2>&1 || true
   [ -z "$sandbox" ] || rm -rf "$sandbox"
 }
 
@@ -2599,7 +2161,6 @@ run_activation_real_suite() {
     fail 'real-Docker activation setup requires the pinned Alpine helper image'
   docker image inspect "$json_image" >/dev/null 2>&1 ||
     fail 'real-Docker activation setup requires the pinned JSON helper image'
-  run_manual_identity_migration_sandbox "$alpine_digest"
   real_docker=$(command -v docker)
   original_alpine_id=$(docker image inspect --format '{{.Id}}' "$alpine_digest")
   docker tag "$original_alpine_id" alpine:3.20
@@ -3672,64 +3233,6 @@ PY
   printf '%s\n' 'PASS: maintenance retention contract'
 }
 
-run_runbook_suite() {
-  local runbook=$backend_dir/MIGRATE_LEGACY_BACKEND.md required forbidden service
-
-  [ -f "$runbook" ] || fail 'manual identity migration runbook is missing'
-  for required in \
-    'LEGACY_PROJECT=skills-telemetry-backend' \
-    'NEW_PROJECT=ai-agent-telemetry-backend' \
-    'LEGACY_ROOT=/opt/skills-telemetry-backend' \
-    'NEW_ROOT=/opt/ai-agent-telemetry-backend' \
-    'BACKUP_ROOT=/opt/ai-agent-telemetry-backups' \
-    'RELEASE_TAG=<release-tag>' \
-    'sha256sum -c SHA256SUMS' \
-    'ai-agent-telemetry-backend.tar.gz: OK' \
-    'backup-backend.sh: OK' \
-    'checksum-verified backup asset' \
-    '--legacy-source' \
-    '--target-label identity-migration --leave-stopped' \
-    "com.docker.compose.project=\$NEW_PROJECT" \
-    "com.docker.compose.volume=\$logical" \
-    'find /expected -exec stat' \
-    'find /actual -exec stat' \
-    "strict_health_gate \"\$NEW_RELEASE\"" \
-    'docker inspect --format {{.Image}}' \
-    'backup-backend.sh --target-label pre-late-fallback' \
-    'docker volume rm'; do
-    grep -F -- "$required" "$runbook" >/dev/null ||
-      fail "manual identity migration runbook lacks required contract: $required"
-  done
-  for service in caddy collector grafana victorialogs victoriametrics; do
-    grep -F -- "IMAGE=$service|" "$runbook" >/dev/null ||
-      fail "manual identity migration fallback omits manifest image identity: $service"
-  done
-  for required in \
-    'An operator must remain present' \
-    'At most one Compose project may run' \
-    'Verify the result:' \
-    'Inspect an interrupted migration' \
-    'legacy source tree, volumes, backup, and image identities' \
-    'Keep the legacy source tree' \
-    'Remove the legacy deployment later'; do
-    grep -F -- "$required" "$runbook" >/dev/null ||
-      fail "manual identity migration runbook lacks required safety statement: $required"
-  done
-  for forbidden in \
-    'migrate-backend.sh' \
-    '.migration-marker' \
-    '.migration-tombstone' \
-    '.migration-cleanup-state' \
-    'automatic legacy deletion' \
-    'signed backup asset' \
-    'legacy release, containers, and volumes'; do
-    if grep -F -- "$forbidden" "$runbook" >/dev/null; then
-      fail "manual identity migration runbook includes forbidden automation: $forbidden"
-    fi
-  done
-  printf '%s\n' 'PASS: manual identity migration runbook contract'
-}
-
 case "${1:-}" in
   cli)
     run_cli_suite
@@ -3755,10 +3258,7 @@ case "${1:-}" in
   retention)
     run_retention_suite
     ;;
-  runbook)
-    run_runbook_suite
-    ;;
   *)
-    fail 'usage: maintenance-contract.sh <activation|activation-real|backup|cli|recovery|resolution|restore-portability|retention|runbook>'
+    fail 'usage: maintenance-contract.sh <activation|activation-real|backup|cli|recovery|resolution|restore-portability|retention>'
     ;;
 esac

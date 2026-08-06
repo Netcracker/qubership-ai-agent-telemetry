@@ -255,15 +255,12 @@ Repeat the process for **VictoriaMetrics**, use `https://<SITE_ADDRESS>:<HTTPS_P
 Production maintenance uses the ordinary Compose project
 `ai-agent-telemetry-backend`, backend root
 `/opt/ai-agent-telemetry-backend`, and backup root
-`/opt/ai-agent-telemetry-backups`. If a server still runs the legacy
-`skills-telemetry-backend` project from `/opt/skills-telemetry-backend`, follow
-the [legacy identity migration runbook](MIGRATE_LEGACY_BACKEND.md) before using
-the ordinary backup and update commands. The migration keeps the legacy
-deployment available for an operator-controlled fallback and later cleanup.
+`/opt/ai-agent-telemetry-backups`. Install a first release as described in the
+[release guide](https://github.com/Netcracker/qubership-ai-agent-telemetry/blob/main/docs/release.md#first-backend-installation),
+then use the standalone backup and update commands for subsequent maintenance.
 
 | Task | Command |
 | --- | --- |
-| Run the complete local backend test | `sh tests/smoke.sh` |
 | Stop the stack and preserve data | `docker compose down` |
 | Stop the stack and delete all data | `docker compose down -v` |
 | View Grafana logs | `docker compose logs -f grafana` |

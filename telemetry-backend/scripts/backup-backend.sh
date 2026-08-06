@@ -8,9 +8,6 @@ readonly PROJECT_NAME_DEFAULT=ai-agent-telemetry-backend
 readonly BACKEND_ROOT_DEFAULT=/opt/ai-agent-telemetry-backend
 readonly BACKUP_ROOT_DEFAULT=/opt/ai-agent-telemetry-backups
 readonly LOCK_FILE_DEFAULT=/run/lock/ai-agent-telemetry-backend-maintenance.lock
-readonly LEGACY_PROJECT_NAME=skills-telemetry-backend
-readonly LEGACY_BACKEND_ROOT=/opt/skills-telemetry-backend
-readonly LEGACY_LOCK_FILE=/run/lock/skills-telemetry-backend-maintenance.lock
 HELPER_IMAGE='docker.io/library/alpine:3.20@sha256:'
 HELPER_IMAGE+='d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
 readonly HELPER_IMAGE
@@ -85,26 +82,11 @@ validate_production_runtime() {
 }
 
 maintenance_init() {
-  local identity_mode=${1:-ordinary}
   local test_mode=${TELEMETRY_MAINTENANCE_TEST_MODE:-} kill_at=${TELEMETRY_TEST_KILL_AT:-}
 
   umask 077
   : "$HELPER_IMAGE" "$JSON_IMAGE" "$TRANSACTION_LABEL" "$ROLE_LABEL" "$LARGE_BACKUP_BYTES"
-  case "$identity_mode" in
-    ordinary) ;;
-    legacy-source)
-      if [ "${TELEMETRY_TEST_BACKEND_ROOT+x}" = x ] || [ "${TELEMETRY_TEST_BACKUP_ROOT+x}" = x ] ||
-        [ "${TELEMETRY_TEST_PROJECT_NAME+x}" = x ] || [ "${TELEMETRY_TEST_LOCK_FILE+x}" = x ]; then
-        maintenance_error '--legacy-source cannot be combined with test-mode identity overrides'
-        return 1
-      fi
-      ;;
-    *)
-      maintenance_error "unsupported maintenance identity mode: $identity_mode"
-      return 1
-      ;;
-  esac
-  if [ -n "$test_mode" ] && [ "$identity_mode" = ordinary ]; then
+  if [ -n "$test_mode" ]; then
     [ "$test_mode" = 1 ] || {
       maintenance_error 'TELEMETRY_MAINTENANCE_TEST_MODE must be 1 when set'
       return 1
@@ -131,17 +113,10 @@ maintenance_init() {
       }
     fi
   else
-    if [ "$identity_mode" = legacy-source ]; then
-      BACKEND_ROOT=$LEGACY_BACKEND_ROOT
-      BACKUP_ROOT=$BACKUP_ROOT_DEFAULT
-      LOCK_FILE=$LEGACY_LOCK_FILE
-      PROJECT_NAME=$LEGACY_PROJECT_NAME
-    else
-      BACKEND_ROOT=$BACKEND_ROOT_DEFAULT
-      BACKUP_ROOT=$BACKUP_ROOT_DEFAULT
-      LOCK_FILE=$LOCK_FILE_DEFAULT
-      PROJECT_NAME=$PROJECT_NAME_DEFAULT
-    fi
+    BACKEND_ROOT=$BACKEND_ROOT_DEFAULT
+    BACKUP_ROOT=$BACKUP_ROOT_DEFAULT
+    LOCK_FILE=$LOCK_FILE_DEFAULT
+    PROJECT_NAME=$PROJECT_NAME_DEFAULT
     [ -z "$kill_at" ] && [ -z "${TELEMETRY_TEST_BACKUP_HELPER_DELAY_SECONDS:-}" ] || {
       maintenance_error 'test-only maintenance controls require TELEMETRY_MAINTENANCE_TEST_MODE=1'
       return 1
@@ -150,7 +125,6 @@ maintenance_init() {
   fi
 
   validate_project_name "$PROJECT_NAME" || return 1
-  MAINTENANCE_IDENTITY_MODE=$identity_mode
   CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
   COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
   ENV_FILE=$CURRENT_BACKEND_DIR/.env
@@ -1690,10 +1664,9 @@ capture_backup_image_records() {
 
 backup_main() {
   local target_label=manual leave_stopped=0 allow_large_backup=0
-  local identity_mode=ordinary legacy_source_seen=0
   local completed_dir backup_work_dir backup_parent transaction_id target_release previous_release volume_bytes total_bytes
   local logical_volume actual_volume archive_name ordinal failed=0 helper_id helper_status helper_delay=0 helper_name
-  local handoff=0 supervised_legacy=0 release_dir logical_volume_output image_output image_record service reference
+  local handoff=0 release_dir logical_volume_output image_output image_record service reference
   local image_id extra
   local created_at compose_version
   local -a logical_volumes actual_volumes image_records previous_image_entries
@@ -1716,15 +1689,6 @@ backup_main() {
         allow_large_backup=1
         shift
         ;;
-      --legacy-source)
-        [ "$legacy_source_seen" -eq 0 ] || {
-          maintenance_error '--legacy-source may be specified only once'
-          return 1
-        }
-        legacy_source_seen=1
-        identity_mode=legacy-source
-        shift
-        ;;
       *)
         maintenance_error "unknown option: $1"
         return 1
@@ -1733,7 +1697,7 @@ backup_main() {
   done
 
   validate_target_label "$target_label" || return 1
-  maintenance_init "$identity_mode" || return 1
+  maintenance_init || return 1
   if [ "${TELEMETRY_UPDATE_LOCK_HELD:-}" = 1 ]; then
     validate_inherited_maintenance_lock || return 1
   else
@@ -1752,67 +1716,38 @@ backup_main() {
     sleep "$TELEMETRY_TEST_HOLD_LOCK_SECONDS"
   fi
   if [ "$leave_stopped" -eq 1 ]; then
-    if [ "$MAINTENANCE_IDENTITY_MODE" = legacy-source ]; then
-      [ "${TELEMETRY_UPDATE_LOCK_HELD:-}" != 1 ] || {
-        maintenance_error '--legacy-source cannot use an updater-owned maintenance lock'
-        return 1
-      }
-      recover_transaction || return 1
-      supervised_legacy=1
-      transaction_id="backup-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM"
-      release_dir=$CURRENT_BACKEND_DIR
-      previous_release=$(basename -- "$release_dir") || return 1
-      validate_target_label "$previous_release" || return 1
-      [ "$release_dir" = "$BACKEND_ROOT/$previous_release" ] &&
-        [ "$(resolve_active_backend_dir "$BACKEND_ROOT")" = "$release_dir" ] || {
-        maintenance_error "active release directory is missing or unsafe: $release_dir"
-        return 1
-      }
-    else
-      [ "${TELEMETRY_UPDATE_LOCK_HELD:-}" = 1 ] || {
-        maintenance_error '--leave-stopped is available only for an updater handoff or --legacy-source'
-        return 1
-      }
-      [ "$(read_transaction OPERATION 2>/dev/null || true)" = update ] &&
-        [ "$(read_transaction PHASE 2>/dev/null || true)" = backup-offline ] || {
-        maintenance_error '--leave-stopped requires an update transaction in backup-offline phase'
-        return 1
-      }
-      transaction_id=$(read_transaction TRANSACTION_ID 2>/dev/null || true)
-      target_release=$(read_transaction TARGET_RELEASE 2>/dev/null || true)
-      previous_release=$(read_transaction PREVIOUS_RELEASE 2>/dev/null || true)
-      [ -n "$transaction_id" ] && validate_target_label "$target_release" && [ -n "$previous_release" ] || {
-        maintenance_error '--leave-stopped requires a complete updater-owned transaction'
-        return 1
-      }
-      handoff=1
-      release_dir=$BACKEND_ROOT/$previous_release
-    fi
+    [ "${TELEMETRY_UPDATE_LOCK_HELD:-}" = 1 ] || {
+      maintenance_error '--leave-stopped is available only for an updater handoff'
+      return 1
+    }
+    [ "$(read_transaction OPERATION 2>/dev/null || true)" = update ] &&
+      [ "$(read_transaction PHASE 2>/dev/null || true)" = backup-offline ] || {
+      maintenance_error '--leave-stopped requires an update transaction in backup-offline phase'
+      return 1
+    }
+    transaction_id=$(read_transaction TRANSACTION_ID 2>/dev/null || true)
+    target_release=$(read_transaction TARGET_RELEASE 2>/dev/null || true)
+    previous_release=$(read_transaction PREVIOUS_RELEASE 2>/dev/null || true)
+    [ -n "$transaction_id" ] && validate_target_label "$target_release" && [ -n "$previous_release" ] || {
+      maintenance_error '--leave-stopped requires a complete updater-owned transaction'
+      return 1
+    }
+    handoff=1
+    release_dir=$BACKEND_ROOT/$previous_release
   else
     recover_transaction || return 1
     transaction_id="backup-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM"
-    if [ "$MAINTENANCE_IDENTITY_MODE" = legacy-source ]; then
-      release_dir=$CURRENT_BACKEND_DIR
-      previous_release=$(basename -- "$release_dir") || return 1
-      validate_target_label "$previous_release" || return 1
-      [ "$release_dir" = "$BACKEND_ROOT/$previous_release" ] &&
-        [ "$(resolve_active_backend_dir "$BACKEND_ROOT")" = "$release_dir" ] || {
-        maintenance_error "active release directory is missing or unsafe: $release_dir"
-        return 1
-      }
-    else
-      [ -L "$BACKEND_ROOT/latest" ] || {
-        maintenance_error "active release link is missing: $BACKEND_ROOT/latest"
-        return 1
-      }
-      previous_release=$(readlink -- "$BACKEND_ROOT/latest") || return 1
-      validate_target_label "$previous_release" || return 1
-      release_dir=$BACKEND_ROOT/$previous_release
-      [ -d "$release_dir" ] && [ ! -L "$release_dir" ] || {
-        maintenance_error "active release directory is missing or unsafe: $release_dir"
-        return 1
-      }
-    fi
+    [ -L "$BACKEND_ROOT/latest" ] || {
+      maintenance_error "active release link is missing: $BACKEND_ROOT/latest"
+      return 1
+    }
+    previous_release=$(readlink -- "$BACKEND_ROOT/latest") || return 1
+    validate_target_label "$previous_release" || return 1
+    release_dir=$BACKEND_ROOT/$previous_release
+    [ -d "$release_dir" ] && [ ! -L "$release_dir" ] || {
+      maintenance_error "active release directory is missing or unsafe: $release_dir"
+      return 1
+    }
   fi
   mkdir -p -- "$BACKUP_ROOT" || return 1
   pin_active_images "$release_dir" || return 1
@@ -1996,10 +1931,6 @@ backup_main() {
   assert_transaction_helpers_absent "$transaction_id" || return 1
   if [ "$handoff" -eq 1 ]; then
     rewrite_transaction_state activation-prepared "$completed_dir" || return 1
-    return 0
-  fi
-  if [ "$supervised_legacy" -eq 1 ]; then
-    clear_transaction || return 1
     return 0
   fi
   if restart_original_stack "$release_dir"; then
