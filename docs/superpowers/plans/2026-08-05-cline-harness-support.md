@@ -17,6 +17,8 @@ VictoriaLogs.
 
 ---
 
+## Tasks
+
 ### Task 1: Add the bounded Cline event adapter
 
 **Files:**

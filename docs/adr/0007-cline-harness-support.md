@@ -1,20 +1,33 @@
 # Support Cline as a telemetry harness
 
 ## Status
+
 Accepted
+
+<!-- markdownlint-disable MD001 -->
+
 #### Date
+
 2026-08-06
+
 #### Owner
+
 denifilatoff
+
 #### Participants and approvers
+
 Denis Filatov (@denifilatoff)
+
 #### Related ADRs
+
 - [0001-skill-detection-via-hooks-and-transcripts.md](0001-skill-detection-via-hooks-and-transcripts.md) defines
   native event and transcript-based skill detection.
 - [0002-bare-binary-on-path.md](0002-bare-binary-on-path.md) defines the command that native hooks run.
 - [0005-cli-managed-global-hooks.md](0005-cli-managed-global-hooks.md) defines machine-wide hook ownership.
 - [0006-generic-event-schema-and-privacy.md](0006-generic-event-schema-and-privacy.md) defines the event allowlist and
   privacy boundary.
+
+<!-- markdownlint-enable MD001 -->
 
 ## Context
 
