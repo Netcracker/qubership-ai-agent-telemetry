@@ -122,7 +122,7 @@ restore_backup_into_second_sandbox() {
   docker_dir=$root/bin
   restore_log=$root/restore-docker.log
   real_docker=$(command -v docker)
-  mkdir -p "$docker_dir"
+  mkdir -p "$docker_dir" "$root/docker-config"
   cat >"$docker_dir/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -135,7 +135,8 @@ fi
 exec "$RESTORE_REAL_DOCKER" "$@"
 EOF
   chmod 700 "$docker_dir/docker"
-  if ! output=$(PATH="$docker_dir:$PATH" RESTORE_DOCKER_LOG="$restore_log" RESTORE_REAL_DOCKER="$real_docker" \
+  if ! output=$(PATH="$docker_dir:$PATH" DOCKER_CONFIG="$root/docker-config" \
+    RESTORE_DOCKER_LOG="$restore_log" RESTORE_REAL_DOCKER="$real_docker" \
     RESTORE_IMAGE_MISMATCH="$mismatch" TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$root" \
     TELEMETRY_TEST_BACKUP_ROOT="$(dirname -- "$backup_dir")" TELEMETRY_TEST_PROJECT_NAME="$project" \
     TELEMETRY_TEST_SKIP_REMOTE_PROBES=1 TELEMETRY_TEST_HEALTH_ATTEMPTS=5 \
@@ -182,10 +183,11 @@ run_backup_suite() {
   restore_root=$sandbox/restore
   project="telemetry_backup_$RANDOM$RANDOM"
   event_log=$sandbox/events.log
-  mkdir -p "$sandbox/backend" "$backup_root"
+  export BUILDX_NO_DEFAULT_ATTESTATIONS=1 DOCKER_CONFIG=$sandbox/docker-config
+  mkdir -p "$sandbox/backend" "$backup_root" "$DOCKER_CONFIG"
   cp "$backend_dir/docker-compose.yml" "$sandbox/backend/docker-compose.yml"
   cp "$backend_dir/.env.example" "$sandbox/backend/.env"
-  cat >"$sandbox/backend/docker-compose.yml" <<'EOF'
+  cat >"$sandbox/backend/docker-compose.yml" <<EOF
 services:
   caddy:
     image: alpine:3.20
@@ -197,7 +199,7 @@ services:
     command: ["sh", "-c", "while :; do sleep 3600; done"]
     stop_grace_period: 1s
   grafana:
-    image: alpine:3.20
+    image: ${project}-grafana:previous
     build:
       context: .
       dockerfile: Dockerfile
@@ -227,7 +229,7 @@ EOF
   install -D -m 755 "$backup_script" "$sandbox/backend/previous/scripts/backup-backend.sh"
   ln -s previous "$sandbox/backend/latest"
   docker compose --project-name "$project" --project-directory "$sandbox/backend/previous" \
-    --env-file "$sandbox/backend/previous/.env" -f "$sandbox/backend/previous/docker-compose.yml" up -d
+    --env-file "$sandbox/backend/previous/.env" -f "$sandbox/backend/previous/docker-compose.yml" up -d --build
   for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
     docker run --rm --mount "type=volume,src=${project}_${logical},dst=/data" docker.io/library/alpine:3.20 \
       sh -eu -c "mkdir -p /data/sentinel && printf '%s' '$logical' > /data/sentinel/$logical"
@@ -296,11 +298,6 @@ EOF
   printf 'IMAGE=%s\n' "$original_image_record" >>"$invalid_backup/manifest.txt"
   assert_fails_with 'FAILED' "$invalid_backup/restore-backend.sh" "$invalid_backup" \
     "$sandbox/restore-invalid-checksum/release"
-  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
-    assert_event_before "VOLUME_MEASURE=${project}_${logical}" COMPOSE_DOWN "$event_log"
-    assert_event_before COMPOSE_DOWN "VOLUME_ARCHIVE=${project}_${logical}" "$event_log"
-    assert_event_before "VOLUME_ARCHIVE=${project}_${logical}" TRANSACTION_CLEAR "$event_log"
-  done
   unsafe_event_log=$sandbox/unsafe-events.log
   for unsafe_link in missing absolute multi-component; do
     rm -f "$sandbox/backend/latest"
@@ -482,6 +479,7 @@ EOF
   mismatch_root=$sandbox/restore-mismatch
   restore_project=$(restore_backup_into_second_sandbox "$backup_dir" "$mismatch_root" 1)
   cleanup_restore_project "$mismatch_root" "$restore_project"
+  printf '%s\n' 'TRACE: fallback image mismatch rejected'
   restore_project=$(restore_backup_into_second_sandbox "$backup_dir" "$restore_root")
   [ "$restore_project" = "$project" ] || fail 'restore changed the manifest project identity'
   for image_record in "${manifest_images[@]}"; do
@@ -489,12 +487,18 @@ EOF
     printf '%s=%s\n' "$service" "$image_id"
   done >"$sandbox/restored-images"
   assert_container_image_ids "$restore_project" "$sandbox/restored-images"
+  printf '%s\n' 'TRACE: fallback restored five exact image IDs'
   for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
     assert_volume_file "$restore_project" "$logical" "/sentinel/$logical"
   done
   docker compose --project-name "$project" --project-directory "$sandbox/backend" --env-file "$sandbox/backend/.env" \
     -f "$sandbox/backend/docker-compose.yml" up -d --no-build --pull never
   assert_services_running "$project" "$sandbox/backend"
+  for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
+    assert_event_before "VOLUME_MEASURE=${project}_${logical}" COMPOSE_DOWN "$event_log"
+    assert_event_before COMPOSE_DOWN "VOLUME_ARCHIVE=${project}_${logical}" "$event_log"
+    assert_event_before "VOLUME_ARCHIVE=${project}_${logical}" TRANSACTION_CLEAR "$event_log"
+  done
   cleanup_backup_sandbox "$sandbox" "$project" "$restore_project"
   trap - EXIT HUP INT TERM
   printf 'PASS: maintenance backup contract\n'
