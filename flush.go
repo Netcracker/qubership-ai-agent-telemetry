@@ -56,13 +56,22 @@ func (b *batchingExporter) Export(ctx context.Context, records []sdklog.Record) 
 }
 
 func (b *batchingExporter) Shutdown(ctx context.Context) error {
-	flushErr := b.flush(ctx)
-	shutErr := b.inner.Shutdown(ctx)
+	var flushErr error
+	if err := b.flush(ctx); err != nil {
+		flushErr = fmt.Errorf("export events: %w", err)
+	}
+	var shutErr error
+	if err := b.inner.Shutdown(ctx); err != nil {
+		shutErr = fmt.Errorf("shut down exporter: %w", err)
+	}
 	return errors.Join(flushErr, shutErr)
 }
 
 func (b *batchingExporter) ForceFlush(ctx context.Context) error {
-	return b.flush(ctx)
+	if err := b.flush(ctx); err != nil {
+		return err
+	}
+	return b.inner.ForceFlush(ctx)
 }
 
 func (b *batchingExporter) flush(ctx context.Context) error {
@@ -297,8 +306,15 @@ func deliverEvents(
 	// Shutdown flushes the exporter; the batching decorator exports once here.
 	shutdownErr := provider.Shutdown(ctx)
 	deliveryErr := exportIssues.err()
+	// Breaking the emit loop on an already-expired context leaves an empty
+	// buffer, so Shutdown succeeds. Treat the exhausted budget as failure.
+	if deliveryErr == nil {
+		if err := ctx.Err(); err != nil {
+			deliveryErr = fmt.Errorf("export events: %w", err)
+		}
+	}
 	if shutdownErr != nil {
-		deliveryErr = errors.Join(deliveryErr, fmt.Errorf("shut down exporter: %w", shutdownErr))
+		deliveryErr = errors.Join(deliveryErr, shutdownErr)
 	}
 	if deliveryErr != nil {
 		if strict {
