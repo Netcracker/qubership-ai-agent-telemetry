@@ -3111,21 +3111,23 @@ run_retention_suite() {
   local leaf_race leaf_candidate leaf_hook leaf_saved leaf_tombstone
   local final_operation_race final_operation_candidate final_operation_hook final_operation_saved final_operation_tombstone
   local hardlink_race hardlink_candidate hardlink_outside
-  local partial_stop partial_candidate partial_state partial_tombstone
-  local payload_stop payload_candidate payload_state payload_tombstone
+  local partial_stop partial_candidate partial_state
+  local payload_stop payload_candidate payload_state
   local tombstoned_stop tombstoned_candidate tombstoned_state tombstoned_tombstone
   local completed_stop completed_candidate completed_state completed_tombstone
   local malicious_original malicious_quarantine malicious_claim malicious_state_name
-  local claimed_stop claimed_candidate claimed_state deleting_stop deleting_candidate deleting_state deleting_tombstone
+  local claimed_stop claimed_candidate claimed_state deleting_stop deleting_candidate deleting_state
   local corrupt_state corrupt_old unknown_claim
-  local state_phase state_boundary unique_temp unique_quarantine unique_state_temp unique_claim unique_tombstone
+  local state_phase state_boundary unique_temp unique_quarantine unique_state_temp unique_claim
+  local ledger_cleanup ledger_entry
 
   prepare_retention_fixture() {
     local fixture_root=$1
 
-    mkdir -p "$fixture_root/backend" "$fixture_root/backups"
-    : >"$fixture_root/backend/docker-compose.yml"
-    : >"$fixture_root/backend/.env"
+    mkdir -p "$fixture_root/backend/release" "$fixture_root/backups"
+    : >"$fixture_root/backend/release/docker-compose.yml"
+    : >"$fixture_root/backend/release/.env"
+    ln -s release "$fixture_root/backend/latest"
   }
 
   run_prune() {
@@ -3139,7 +3141,7 @@ run_retention_suite() {
   }
 
   assert_state_write_recovery() {
-    local boundary=$1 phase=$2 fixture_root candidate temp_state ledger tombstone output
+    local boundary=$1 phase=$2 fixture_root candidate temp_state ledger output
     local stop_at="state-$boundary-$phase"
 
     fixture_root=$sandbox/state-write-$boundary-$phase
@@ -3164,15 +3166,14 @@ run_retention_suite() {
     run_prune "$fixture_root" 1 "$candidate"
     [ -z "$(compgen -G "$fixture_root/backups/.retention-state-*" || true)" ] ||
       fail "$stop_at recovery retained canonical or temporary state"
-    ledger=$(compgen -G "$fixture_root/backups/.maintenance-retention-ledger-interrupted-*" || true)
-    [ -n "$ledger" ] || fail "$stop_at recovery did not durably ledger the interrupted state file"
+    ledger=$(compgen -G "$fixture_root/backups/.maintenance-retention-ledger-*" || true)
+    [ -z "$ledger" ] || fail "$stop_at recovery retained an interrupted state ledger"
     if [ "$phase" = restored ]; then
       [ -d "$candidate" ] && [ -s "$candidate/payload" ] ||
         fail "$stop_at recovery did not finish the restored claim"
     else
-      tombstone=$(compgen -G "$fixture_root/backups/.retention-tombstone-*" || true)
-      [ -n "$tombstone" ] && [ ! -s "$tombstone/payload" ] ||
-        fail "$stop_at recovery did not finish payload reclamation"
+      [ -z "$(compgen -G "$fixture_root/backups/.retention-*" || true)" ] ||
+        fail "$stop_at recovery retained structural deletion residue"
     fi
   }
 
@@ -3218,6 +3219,18 @@ run_retention_suite() {
     fail 'retention deleted an incomplete or malformed entry'
   [ -L "$symlink_backup" ] && [ -f "$regular_backup" ] ||
     fail 'retention deleted a symlink or non-directory entry'
+  [ -z "$(compgen -G "$backup_root/.retention-*" || true)" ] ||
+    fail 'retention left a claimed backup or tombstone after explicit deletion'
+  [ -z "$(compgen -G "$backup_root/.maintenance-retention-ledger-*" || true)" ] ||
+    fail 'retention left ledger residue after explicit deletion'
+
+  ledger_cleanup=$sandbox/ledger-cleanup
+  prepare_retention_fixture "$ledger_cleanup"
+  ledger_entry=$ledger_cleanup/backups/.maintenance-retention-ledger-cleared-123-0123456789abcdef0123456789abcdef
+  : >"$ledger_entry"
+  chmod 600 "$ledger_entry"
+  run_prune "$ledger_cleanup" 1 ''
+  [ ! -e "$ledger_entry" ] || fail 'retention did not remove a durable ledger residue during recovery'
 
   newest_race=$sandbox/newest-race
   prepare_retention_fixture "$newest_race"
@@ -3351,11 +3364,10 @@ EOF
     fail 'retention completed after an accepted payload inode moved behind the traversal cursor'
   [ -z "$cursor_tombstone" ] || fail 'retention tombstoned a claim whose accepted payload was not reclaimed'
   run_prune "$cursor_race" 1 ''
-  cursor_tombstone=$(compgen -G "$cursor_race/backups/.retention-tombstone-*" || true)
-  [ -n "$cursor_tombstone" ] && [ ! -s "$cursor_tombstone/a/payload" ] ||
-    fail 'retention did not reclaim a moved payload inode during deterministic reconciliation'
-  [ -z "$(compgen -G "$cursor_race/backups/.retention-state-*" || true)" ] ||
-    fail 'retention retained state after reconciling a moved payload inode'
+  [ -z "$(compgen -G "$cursor_race/backups/.retention-*" || true)" ] ||
+    fail 'retention retained structural residue after reconciling a moved payload inode'
+  [ -z "$(compgen -G "$cursor_race/backups/.maintenance-retention-ledger-*" || true)" ] ||
+    fail 'retention retained ledger residue after reconciling a moved payload inode'
 
   leaf_race=$sandbox/leaf-race
   prepare_retention_fixture "$leaf_race"
@@ -3471,8 +3483,8 @@ EOF
   [ ! -e "$deleting_candidate" ] || fail 'retention did not resume an interrupted deletion'
   [ -z "$(compgen -G "$deleting_stop/backups/.retention-state-*" || true)" ] ||
     fail 'retention did not clear resumed deletion state'
-  deleting_tombstone=$(compgen -G "$deleting_stop/backups/.retention-tombstone-*" || true)
-  [ -n "$deleting_tombstone" ] || fail 'retention did not retain a safe tombstone after resumed deletion'
+  [ -z "$(compgen -G "$deleting_stop/backups/.retention-*" || true)" ] ||
+    fail 'retention retained structural residue after resumed deletion'
 
   partial_stop=$sandbox/partial-stop
   prepare_retention_fixture "$partial_stop"
@@ -3486,11 +3498,8 @@ EOF
   partial_state=$(compgen -G "$partial_stop/backups/.retention-state-*" || true)
   [ -n "$partial_state" ] || fail 'partial traversal interruption did not retain deleting state'
   run_prune "$partial_stop" 1 ''
-  partial_tombstone=$(compgen -G "$partial_stop/backups/.retention-tombstone-*" || true)
-  [ -n "$partial_tombstone" ] && [ ! -s "$partial_tombstone/first" ] && \
-    [ ! -s "$partial_tombstone/second" ] || fail 'retention did not resume partial payload reclamation'
-  [ -z "$(compgen -G "$partial_stop/backups/.retention-state-*" || true)" ] ||
-    fail 'retention did not clear state after resuming partial traversal'
+  [ -z "$(compgen -G "$partial_stop/backups/.retention-*" || true)" ] ||
+    fail 'retention retained structural residue after resuming partial traversal'
 
   payload_stop=$sandbox/payload-stop
   prepare_retention_fixture "$payload_stop"
@@ -3503,11 +3512,8 @@ EOF
   payload_state=$(compgen -G "$payload_stop/backups/.retention-state-*" || true)
   [ -n "$payload_state" ] || fail 'payload-complete interruption did not retain durable state'
   run_prune "$payload_stop" 1 ''
-  payload_tombstone=$(compgen -G "$payload_stop/backups/.retention-tombstone-*" || true)
-  [ -n "$payload_tombstone" ] && [ ! -s "$payload_tombstone/payload" ] ||
-    fail 'retention did not resume a payload-complete claim'
-  [ -z "$(compgen -G "$payload_stop/backups/.retention-state-*" || true)" ] ||
-    fail 'retention did not clear resumed payload-complete state'
+  [ -z "$(compgen -G "$payload_stop/backups/.retention-*" || true)" ] ||
+    fail 'retention retained structural residue after resuming a payload-complete claim'
 
   tombstoned_stop=$sandbox/tombstoned-stop
   prepare_retention_fixture "$tombstoned_stop"
@@ -3519,12 +3525,11 @@ EOF
   output=$(TELEMETRY_TEST_RETENTION_STOP_AT=tombstoned run_prune "$tombstoned_stop" 1 '' 2>&1 || true)
   tombstoned_state=$(compgen -G "$tombstoned_stop/backups/.retention-state-*" || true)
   tombstoned_tombstone=$(compgen -G "$tombstoned_stop/backups/.retention-tombstone-*" || true)
-  [ -n "$tombstoned_state" ] && [ -n "$tombstoned_tombstone" ] && [ ! -s "$tombstoned_tombstone/payload" ] ||
+  [ -n "$tombstoned_state" ] && [ -n "$tombstoned_tombstone" ] && [ ! -e "$tombstoned_tombstone/payload" ] ||
     fail 'tombstoned interruption did not retain its older durable state'
   run_prune "$tombstoned_stop" 1 ''
-  [ -z "$(compgen -G "$tombstoned_stop/backups/.retention-state-*" || true)" ] ||
-    fail 'retention did not reconcile a tombstoned claim with older state'
-  [ -d "$tombstoned_tombstone" ] || fail 'retention removed the reconciled safe tombstone'
+  [ -z "$(compgen -G "$tombstoned_stop/backups/.retention-*" || true)" ] ||
+    fail 'retention retained structural residue after reconciling a tombstoned claim'
 
   completed_stop=$sandbox/completed-stop
   prepare_retention_fixture "$completed_stop"
@@ -3536,12 +3541,11 @@ EOF
   output=$(TELEMETRY_TEST_RETENTION_STOP_AT=completed run_prune "$completed_stop" 1 '' 2>&1 || true)
   completed_state=$(compgen -G "$completed_stop/backups/.retention-state-*" || true)
   completed_tombstone=$(compgen -G "$completed_stop/backups/.retention-tombstone-*" || true)
-  [ -n "$completed_state" ] && [ -n "$completed_tombstone" ] && [ ! -s "$completed_tombstone/payload" ] ||
+  [ -n "$completed_state" ] && [ -n "$completed_tombstone" ] && [ ! -e "$completed_tombstone/payload" ] ||
     fail 'completed interruption did not leave a durable payload outcome and state'
   run_prune "$completed_stop" 1 ''
-  [ -z "$(compgen -G "$completed_stop/backups/.retention-state-*" || true)" ] ||
-    fail 'retention did not reconcile completed deletion state'
-  [ -d "$completed_tombstone" ] || fail 'retention removed the safe completed tombstone'
+  [ -z "$(compgen -G "$completed_stop/backups/.retention-*" || true)" ] ||
+    fail 'retention retained structural residue after reconciling completed deletion state'
 
   for state_phase in payload-complete completed restored; do
     for state_boundary in fsync exchange; do
@@ -3576,11 +3580,8 @@ with open(sys.argv[2], "xb") as target:
 os.chmod(sys.argv[2], 0o600)
 PY
   run_prune "$unique_temp" 1 ''
-  unique_tombstone=$(compgen -G "$unique_temp/backups/.retention-tombstone-*" || true)
-  [ -n "$unique_tombstone" ] && [ ! -s "$unique_tombstone/payload" ] ||
-    fail 'retention did not promote and reconcile a unique valid temporary state'
-  [ -z "$(compgen -G "$unique_temp/backups/.retention-state-*" || true)" ] ||
-    fail 'retention retained state after promoting a unique valid temporary state'
+  [ -z "$(compgen -G "$unique_temp/backups/.retention-*" || true)" ] ||
+    fail 'retention retained structural residue after promoting a unique valid temporary state'
 
   malicious_original=$sandbox/malicious-original
   prepare_retention_fixture "$malicious_original"

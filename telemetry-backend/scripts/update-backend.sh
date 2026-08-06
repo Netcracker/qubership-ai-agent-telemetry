@@ -751,6 +751,7 @@ import calendar
 import base64
 import ctypes
 import datetime
+import errno
 import json
 import os
 import re
@@ -766,6 +767,9 @@ QUARANTINE_NAME = re.compile(r"\.retention-([1-9][0-9]*)-([0-9a-f]{32})\Z")
 STATE_NAME = re.compile(r"\.retention-state-([1-9][0-9]*)-([0-9a-f]{32})\Z")
 TEMP_STATE_NAME = re.compile(r"\.retention-state-tmp-([1-9][0-9]*)-([0-9a-f]{32})\Z")
 TOMBSTONE_NAME = re.compile(r"\.retention-tombstone-([1-9][0-9]*)-([0-9a-f]{32})\Z")
+LEDGER_NAME = re.compile(
+    r"\.maintenance-retention-ledger-(?:obsolete|cleared|interrupted)-([1-9][0-9]*)-([0-9a-f]{32})\Z"
+)
 TEST_STOP_AT = sys.argv[9]
 
 
@@ -926,11 +930,45 @@ def tombstone_name(quarantine):
     return f".retention-tombstone-{match.group(1)}-{match.group(2)}"
 
 
+def remove_empty_tombstone(root_fd, tombstone, expected):
+    try:
+        entry = os.stat(tombstone, dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    if not stat.S_ISDIR(entry.st_mode) or (entry.st_dev, entry.st_ino) != (expected.st_dev, expected.st_ino):
+        raise RetentionError(f"retention tombstone changed identity: {os.fsencode(tombstone)!r}")
+    try:
+        os.rmdir(tombstone, dir_fd=root_fd)
+    except OSError as error:
+        if error.errno in {errno.ENOTEMPTY, errno.EEXIST}:
+            return False
+        raise
+    sync_root(root_fd)
+    return True
+
+
 def sync_root(root_fd):
     try:
         os.fsync(root_fd)
     except OSError as error:
         raise RetentionError(f"cannot synchronize retention state: {error}") from error
+
+
+def unlink_regular_entry(root_fd, name, expected=None):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or stat.S_IMODE(opened.st_mode) != 0o600:
+            raise RetentionError(f"unsafe retention ledger entry: {os.fsencode(name)!r}")
+        if expected is not None and (opened.st_dev, opened.st_ino) != (expected.st_dev, expected.st_ino):
+            raise RetentionError(f"retention ledger changed identity: {os.fsencode(name)!r}")
+        current = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+            raise RetentionError(f"retention ledger name changed identity: {os.fsencode(name)!r}")
+        os.unlink(name, dir_fd=root_fd)
+    finally:
+        os.close(fd)
+    sync_root(root_fd)
 
 
 def state_payload(quarantine, original, opened, phase):
@@ -983,6 +1021,8 @@ def write_state(root_fd, name, state):
                 raise RetentionError(f"retention state changed identity during update: {os.fsencode(name)!r}")
             rename_no_replace(root_fd, temporary, residue)
         sync_root(root_fd)
+        if existing is not None:
+            unlink_regular_entry(root_fd, residue, existing)
     except RetentionError:
         raise
     except OSError as error:
@@ -1004,6 +1044,7 @@ def remove_state(root_fd, name):
         if (moved.st_dev, moved.st_ino) != (opened.st_dev, opened.st_ino):
             raise RetentionError(f"retention state changed identity during cleanup: {os.fsencode(name)!r}")
         sync_root(root_fd)
+        unlink_regular_entry(root_fd, residue, opened)
     except RetentionError:
         raise
     except OSError as error:
@@ -1120,6 +1161,15 @@ def ledger_temporary_state(root_fd, temporary_name, opened):
     if (moved.st_dev, moved.st_ino) != (opened.st_dev, opened.st_ino):
         raise RetentionError(f"temporary retention state changed identity during archival: {os.fsencode(temporary_name)!r}")
     sync_root(root_fd)
+    unlink_regular_entry(root_fd, residue, opened)
+
+
+def cleanup_ledger_residues(root_fd, names):
+    candidates = [name for name in names if os.fsencode(name).startswith(b".maintenance-retention-ledger-")]
+    for name in candidates:
+        if LEDGER_NAME.fullmatch(name) is None:
+            raise RetentionError(f"invalid retention ledger name: {os.fsencode(name)!r}")
+        unlink_regular_entry(root_fd, name)
 
 
 def reconcile_temporary_states(root_path, root_fd, root_stat, names):
@@ -1274,6 +1324,7 @@ def delete_claim(root_path, root_fd, root_stat, quarantine, state_file, state, o
         if set(accepted) != handled:
             raise RetentionError("accepted backup payload was not fully reclaimed during traversal")
         audit_claimed_tree(candidate_fd, expected_mount, accepted, handled)
+        remove_empty_directories(candidate_fd, expected_mount)
         state["phase"] = "payload-complete"
         write_state(root_fd, state_file, state)
         if stop_at == "payload-complete":
@@ -1296,6 +1347,8 @@ def delete_claim(root_path, root_fd, root_stat, quarantine, state_file, state, o
         write_state(root_fd, state_file, state)
         if stop_at == "completed":
             os._exit(88)
+        if not remove_empty_tombstone(root_fd, tombstone, opened):
+            report(f"completed backup tombstone is not empty and was retained: {original[1]!r}")
         remove_state(root_fd, state_file)
     except OSError as error:
         report(f"cannot delete claimed backup {original[1]!r}: {error}")
@@ -1380,6 +1433,7 @@ def remove_claimed_tree(directory_fd, expected_mount, entryremove_hook, root_pat
                     raise RetentionError(f"opened backup child changed identity: {os.fsencode(name)!r}")
                 remove_claimed_tree(child_fd, expected_mount, entryremove_hook, root_path, quarantine, child_relative,
                                     stop_at, partial_stopped, accepted, handled)
+                os.fsync(child_fd)
             finally:
                 os.close(child_fd)
         elif stat.S_ISREG(before.st_mode):
@@ -1413,6 +1467,11 @@ def remove_claimed_tree(directory_fd, expected_mount, entryremove_hook, root_pat
                         synced_mount != expected_mount or synced.st_size != 0:
                     raise RetentionError(f"backup file was not safely reclaimed: {os.fsencode(name)!r}")
                 handled.add(key)
+                current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == \
+                        (opened.st_dev, opened.st_ino):
+                    os.unlink(name, dir_fd=directory_fd)
+                    os.fsync(directory_fd)
                 if stop_at == "partial" and not partial_stopped[0]:
                     partial_stopped[0] = True
                     os._exit(88)
@@ -1453,6 +1512,33 @@ def audit_claimed_tree(directory_fd, expected_mount, accepted, handled):
                         raise RetentionError(f"accepted backup payload remains after traversal: {os.fsencode(name)!r}")
             finally:
                 os.close(file_fd)
+
+
+def remove_empty_directories(directory_fd, expected_mount):
+    for name in sorted(os.listdir(directory_fd), key=os.fsencode):
+        before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(before.st_mode):
+            continue
+        child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        try:
+            opened = os.fstat(child_fd)
+            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                raise RetentionError(f"backup child changed before directory removal: {os.fsencode(name)!r}")
+            if mount_id(child_fd) != expected_mount:
+                raise RetentionError(f"backup contains a nested mount: {os.fsencode(name)!r}")
+            remove_empty_directories(child_fd, expected_mount)
+            os.fsync(child_fd)
+        finally:
+            os.close(child_fd)
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if stat.S_ISDIR(current.st_mode) and (current.st_dev, current.st_ino) == (before.st_dev, before.st_ino):
+            try:
+                os.rmdir(name, dir_fd=directory_fd)
+            except OSError as error:
+                if error.errno not in {errno.ENOTEMPTY, errno.EEXIST}:
+                    raise
+            else:
+                os.fsync(directory_fd)
 
 
 def reconcile_claim(root_path, root_fd, root_stat, state_file, state, original_name):
@@ -1510,9 +1596,16 @@ def reconcile_claim(root_path, root_fd, root_stat, state_file, state, original_n
         return
 
     if state["phase"] == "completed":
-        if claimed is not None or existing is not None or completed is None or not stat.S_ISDIR(completed.st_mode) or \
-                (completed.st_dev, completed.st_ino) != (state["dev"], state["ino"]):
+        if claimed is not None or existing is not None:
             raise RetentionError(f"completed retention claim has an inconsistent outcome: {os.fsencode(tombstone)!r}")
+        if completed is not None:
+            if not stat.S_ISDIR(completed.st_mode) or \
+                    (completed.st_dev, completed.st_ino) != (state["dev"], state["ino"]):
+                raise RetentionError(
+                    f"completed retention claim has an inconsistent outcome: {os.fsencode(tombstone)!r}"
+                )
+            if not remove_empty_tombstone(root_fd, tombstone, completed):
+                report(f"completed backup tombstone is not empty and was retained: {os.fsencode(original)!r}")
         sync_root(root_fd)
         remove_state(root_fd, state_file)
         return
@@ -1523,6 +1616,8 @@ def reconcile_claim(root_path, root_fd, root_stat, state_file, state, original_n
             sync_root(root_fd)
             state["phase"] = "completed"
             write_state(root_fd, state_file, state)
+            if not remove_empty_tombstone(root_fd, tombstone, completed):
+                report(f"completed backup tombstone is not empty and was retained: {os.fsencode(original)!r}")
             remove_state(root_fd, state_file)
             return
         if existing is None:
@@ -1551,6 +1646,7 @@ def reconcile_claim(root_path, root_fd, root_stat, state_file, state, original_n
             if set(accepted) != handled:
                 raise RetentionError("accepted backup payload was not fully reclaimed during reconciliation")
             audit_claimed_tree(candidate_fd, expected_mount, accepted, handled)
+            remove_empty_directories(candidate_fd, expected_mount)
             state["phase"] = "payload-complete"
             write_state(root_fd, state_file, state)
         finally:
@@ -1566,6 +1662,8 @@ def reconcile_claim(root_path, root_fd, root_stat, state_file, state, original_n
         sync_root(root_fd)
         state["phase"] = "completed"
         write_state(root_fd, state_file, state)
+        if not remove_empty_tombstone(root_fd, tombstone, completed):
+            report(f"completed backup tombstone is not empty and was retained: {os.fsencode(original)!r}")
         remove_state(root_fd, state_file)
     except OSError as error:
         raise RetentionError(f"cannot resume deletion of claimed backup: {error}") from error
@@ -1576,6 +1674,11 @@ def reconcile_claims(root_path, root_fd, root_stat):
         names = os.listdir(root_fd)
     except OSError as error:
         raise RetentionError(f"cannot list retention state: {error}") from error
+    cleanup_ledger_residues(root_fd, names)
+    try:
+        names = os.listdir(root_fd)
+    except OSError as error:
+        raise RetentionError(f"cannot list retention state after ledger cleanup: {error}") from error
     reconcile_temporary_states(root_path, root_fd, root_stat, names)
     try:
         names = os.listdir(root_fd)
