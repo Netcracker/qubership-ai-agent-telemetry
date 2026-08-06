@@ -61,6 +61,7 @@ type clinePayload struct {
 	WorkspaceRoots []string `json:"workspaceRoots"`
 	PostToolUse    struct {
 		ToolName   string `json:"toolName"`
+		Tool       string `json:"tool"`
 		Success    bool   `json:"success"`
 		Parameters struct {
 			Skill      string `json:"skill"`
@@ -78,7 +79,8 @@ func clineAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]Telemet
 	if p.HookName != "PostToolUse" && p.HookName != "tool_result" {
 		return nil, nil
 	}
-	if !p.PostToolUse.Success || p.PostToolUse.ToolName != "skills" && p.PostToolUse.ToolName != "use_skill" {
+	toolName := firstNonEmpty(p.PostToolUse.ToolName, p.PostToolUse.Tool)
+	if !p.PostToolUse.Success || toolName != "skills" && toolName != "use_skill" {
 		return nil, nil
 	}
 

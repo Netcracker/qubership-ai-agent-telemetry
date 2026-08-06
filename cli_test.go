@@ -622,6 +622,15 @@ func TestCobraIngestUsesRawArgumentsAndRemainsFailOpen(t *testing.T) {
 }
 
 func TestCobraIngestAcceptsClineHook(t *testing.T) {
+	testCobraIngestAcceptsClineHook(t, "toolName")
+}
+
+func TestCobraIngestAcceptsClineToolField(t *testing.T) {
+	testCobraIngestAcceptsClineHook(t, "tool")
+}
+
+func testCobraIngestAcceptsClineHook(t *testing.T, toolField string) {
+	t.Helper()
 	cacheHome := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cacheHome)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -645,7 +654,7 @@ func TestCobraIngestAcceptsClineHook(t *testing.T) {
 		"taskId":         "cline-session",
 		"workspaceRoots": []string{repoRoot},
 		"postToolUse": map[string]any{
-			"toolName": "use_skill", "parameters": map[string]any{"skill_name": "cline-hook-probe"}, "success": true,
+			toolField: "use_skill", "parameters": map[string]any{"skill_name": "cline-hook-probe"}, "success": true,
 		},
 	})
 	if err != nil {

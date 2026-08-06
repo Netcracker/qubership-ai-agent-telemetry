@@ -345,6 +345,7 @@ func TestDetectClineSkill(t *testing.T) {
 	tests := []struct {
 		name       string
 		hookName   string
+		toolField  string
 		toolName   string
 		parameters map[string]any
 		success    bool
@@ -353,6 +354,15 @@ func TestDetectClineSkill(t *testing.T) {
 		{
 			name:       "VS Code use_skill",
 			hookName:   "PostToolUse",
+			toolName:   "use_skill",
+			parameters: map[string]any{"skill_name": "cline-hook-probe"},
+			success:    true,
+			wantSkill:  "cline-hook-probe",
+		},
+		{
+			name:       "tool field compatibility",
+			hookName:   "PostToolUse",
+			toolField:  "tool",
 			toolName:   "use_skill",
 			parameters: map[string]any{"skill_name": "cline-hook-probe"},
 			success:    true,
@@ -382,12 +392,16 @@ func TestDetectClineSkill(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			toolField := tt.toolField
+			if toolField == "" {
+				toolField = "toolName"
+			}
 			stdin, err := json.Marshal(map[string]any{
 				"hookName":       tt.hookName,
 				"taskId":         "cline-session-1",
 				"workspaceRoots": []string{"", "/repo"},
 				"postToolUse": map[string]any{
-					"toolName":   tt.toolName,
+					toolField:    tt.toolName,
 					"parameters": tt.parameters,
 					"success":    tt.success,
 				},
