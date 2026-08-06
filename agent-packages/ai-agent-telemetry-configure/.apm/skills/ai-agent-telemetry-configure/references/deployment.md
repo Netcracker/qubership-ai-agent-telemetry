@@ -7,8 +7,8 @@ rather than hardcoding any one deployment.
 
 Use the canonical release bootstrap to install the managed CLI and all components. The bootstrap
 downloads and verifies the current lifecycle CLI, which installs APM and
-`qubership-global-essentials`, telemetry, Git hooks, and the Claude Code, Codex, and Cursor
-integrations by default. The managed binary is installed at `~/.local/bin/ai-agent-telemetry`
+`qubership-global-essentials`, telemetry, Git hooks, and the Claude Code, Cline, Codex, and
+Cursor integrations by default. The managed binary is installed at `~/.local/bin/ai-agent-telemetry`
 (`.exe` on Windows), and the lifecycle adds `~/.local/bin` to `PATH`.
 
 ```sh

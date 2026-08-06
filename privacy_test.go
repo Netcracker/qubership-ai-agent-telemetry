@@ -46,6 +46,10 @@ func TestPrivacyRawHooksExcludePrivateFieldsFromOutboxAndOTLP(t *testing.T) {
 		{name: "codex MCP", agent: "codex", input: codexPrivacyMCPHook},
 		{name: "cursor skill", agent: "cursor", input: cursorPrivacySkillHook},
 		{name: "cursor MCP", agent: "cursor", input: cursorPrivacyMCPHook},
+		{name: "cline skill", agent: "cline", input: clinePrivacySkillHook},
+		{name: "cline skill tool field", agent: "cline", input: func(t *testing.T) []byte {
+			return clinePrivacySkillHookWithToolField(t, "tool")
+		}},
 	}
 
 	for _, tt := range tests {
@@ -359,5 +363,34 @@ func cursorPrivacyMCPHook(t *testing.T) []byte {
 		"workspace_roots": []string{forbiddenSentinels[9]},
 		"tool_name":       "get_issue",
 		"duration":        duration,
+	}))
+}
+
+func clinePrivacySkillHook(t *testing.T) []byte {
+	return clinePrivacySkillHookWithToolField(t, "toolName")
+}
+
+func clinePrivacySkillHookWithToolField(t *testing.T, toolField string) []byte {
+	postToolUse := map[string]any{
+		"parameters": map[string]any{
+			"skill_name": "privacy-skill",
+			"args":       forbiddenSentinels[1],
+			"input":      forbiddenSentinels[2],
+		},
+		"result":  forbiddenSentinels[3],
+		"success": true,
+	}
+	postToolUse[toolField] = "use_skill"
+	return privacyJSON(t, privacyHookFields(map[string]any{
+		"hookName":       "PostToolUse",
+		"taskId":         "cline-skill-session",
+		"workspaceRoots": []string{forbiddenSentinels[9]},
+		"userId":         "person@example.com",
+		"model":          map[string]any{"slug": forbiddenSentinels[7]},
+		"workspaceInfo": map[string]any{
+			"rootPath":             forbiddenSentinels[9],
+			"associatedRemoteUrls": []string{"https://person@example.com/private.git"},
+		},
+		"postToolUse": postToolUse,
 	}))
 }

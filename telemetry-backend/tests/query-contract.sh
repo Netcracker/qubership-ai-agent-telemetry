@@ -35,11 +35,11 @@ assert_query() {
   [ "$actual" = "$expected" ] || fail "$name=$actual, want $expected"
 }
 
-assert_query active_installs 3 "$selector | stats count_uniq(machine.id) active_installs"
-assert_query active_repositories 3 "$selector | stats count_uniq(repo.remote) active_repositories"
-assert_query distinct_events 6 "$selector | stats count_uniq(event.id) distinct_events"
-assert_query raw_id_events 7 "$selector | stats count(event.id) raw_id_events"
-assert_query skill_events 2 "$selector _msg:=\"skill_executed\" | stats count_uniq(event.id) skill_events"
+assert_query active_installs 4 "$selector | stats count_uniq(machine.id) active_installs"
+assert_query active_repositories 4 "$selector | stats count_uniq(repo.remote) active_repositories"
+assert_query distinct_events 7 "$selector | stats count_uniq(event.id) distinct_events"
+assert_query raw_id_events 8 "$selector | stats count(event.id) raw_id_events"
+assert_query skill_events 3 "$selector _msg:=\"skill_executed\" | stats count_uniq(event.id) skill_events"
 assert_query mcp_events 3 "$selector _msg:=\"mcp_tool_executed\" | stats count_uniq(event.id) mcp_events"
 assert_query command_events 1 "$selector _msg:=\"command_invoked\" | stats count_uniq(event.id) command_events"
 assert_query mcp_succeeded 1 "$selector _msg:=\"mcp_tool_executed\" | stats count_uniq(event.id) if (mcp.outcome:=\"succeeded\") mcp_succeeded"

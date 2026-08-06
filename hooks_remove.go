@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"runtime"
 )
 
 func uninstallHooks(home string, targets []hookTarget, warnings io.Writer) []hookInstallResult {
@@ -22,6 +23,11 @@ func uninstallHooks(home string, targets []hookTarget, warnings io.Writer) []hoo
 		path := hookPath(home, target)
 		if path == "" {
 			results = append(results, hookInstallResult{Target: target, Err: errUserHomeUnavailable})
+			continue
+		}
+		if target == hookCline {
+			changed, err := removeClineHook(path, runtime.GOOS, warnings)
+			results = append(results, hookInstallResult{Target: target, Path: path, Changed: changed, Err: err})
 			continue
 		}
 		remove := removeClaudeHook

@@ -340,6 +340,178 @@ func TestDetectCursorMCP(t *testing.T) {
 	}
 }
 
+func TestDetectClineSkill(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 34, 56, 0, time.UTC)
+	tests := []struct {
+		name       string
+		hookName   string
+		toolField  string
+		toolName   string
+		parameters map[string]any
+		success    bool
+		wantSkill  string
+	}{
+		{
+			name:       "VS Code use_skill",
+			hookName:   "PostToolUse",
+			toolName:   "use_skill",
+			parameters: map[string]any{"skill_name": "cline-hook-probe"},
+			success:    true,
+			wantSkill:  "cline-hook-probe",
+		},
+		{
+			name:       "tool field compatibility",
+			hookName:   "PostToolUse",
+			toolField:  "tool",
+			toolName:   "use_skill",
+			parameters: map[string]any{"skill_name": "cline-hook-probe"},
+			success:    true,
+			wantSkill:  "cline-hook-probe",
+		},
+		{
+			name:       "CLI skills",
+			hookName:   "tool_result",
+			toolName:   "skills",
+			parameters: map[string]any{"skill": "cline-hook-probe"},
+			success:    true,
+			wantSkill:  "cline-hook-probe",
+		},
+		{
+			name:       "camel case compatibility",
+			hookName:   "PostToolUse",
+			toolName:   "skills",
+			parameters: map[string]any{"skillName": "cline-hook-probe"},
+			success:    true,
+			wantSkill:  "cline-hook-probe",
+		},
+		{name: "unsuccessful", hookName: "PostToolUse", toolName: "use_skill", parameters: map[string]any{"skill_name": "cline-hook-probe"}},
+		{name: "unrelated hook", hookName: "PreToolUse", toolName: "use_skill", parameters: map[string]any{"skill_name": "cline-hook-probe"}, success: true},
+		{name: "unrelated tool", hookName: "PostToolUse", toolName: "read_file", parameters: map[string]any{"skill_name": "cline-hook-probe"}, success: true},
+		{name: "missing skill", hookName: "PostToolUse", toolName: "use_skill", parameters: map[string]any{}, success: true},
+		{name: "invalid skill", hookName: "PostToolUse", toolName: "use_skill", parameters: map[string]any{"skill_name": "not a skill"}, success: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			toolField := tt.toolField
+			if toolField == "" {
+				toolField = "toolName"
+			}
+			stdin, err := json.Marshal(map[string]any{
+				"hookName":       tt.hookName,
+				"taskId":         "cline-session-1",
+				"workspaceRoots": []string{"", "/repo"},
+				"postToolUse": map[string]any{
+					toolField:    tt.toolName,
+					"parameters": tt.parameters,
+					"success":    tt.success,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolverCalls := 0
+			events, err := detect("cline", stdin, func(cwd string) string {
+				resolverCalls++
+				if cwd != "/repo" {
+					t.Fatalf("resolver got cwd %q, want /repo", cwd)
+				}
+				return "git@github.com:Netcracker/project.git"
+			}, now)
+			if err != nil {
+				t.Fatalf("detect: %v", err)
+			}
+			if tt.wantSkill == "" {
+				if len(events) != 0 || resolverCalls != 0 {
+					t.Fatalf("events = %#v, resolver calls = %d; want no event and no repository lookup", events, resolverCalls)
+				}
+				return
+			}
+			if len(events) != 1 {
+				t.Fatalf("events = %#v, want one", events)
+			}
+			event := events[0]
+			if event.Agent != "cline" || event.SessionID != "cline-session-1" || event.RepoDir != "/repo" ||
+				event.RepoRemote != "git@github.com:Netcracker/project.git" || skillName(t, event) != tt.wantSkill {
+				t.Fatalf("event = %#v", event)
+			}
+			if resolverCalls != 1 {
+				t.Fatalf("resolver calls = %d, want 1", resolverCalls)
+			}
+		})
+	}
+}
+
+func TestDetectClineRejectsMalformedInput(t *testing.T) {
+	for _, input := range [][]byte{nil, []byte("{not json"), []byte(`[]`)} {
+		events, err := detect("cline", input, func(string) string {
+			t.Fatal("repository resolver called for malformed input")
+			return ""
+		}, time.Now().UTC())
+		if err != nil {
+			t.Fatalf("detect: %v", err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("events = %#v, want none", events)
+		}
+	}
+}
+
+func TestDetectClineMultiRootAttribution(t *testing.T) {
+	tests := []struct {
+		name    string
+		remotes map[string]string
+		want    bool
+	}{
+		{
+			name: "same normalized repository",
+			remotes: map[string]string{
+				"/repo-a": "git@github.com:Netcracker/project.git",
+				"/repo-b": "https://github.com/Netcracker/project.git",
+			},
+			want: true,
+		},
+		{
+			name: "ambiguous repositories",
+			remotes: map[string]string{
+				"/repo-a": "git@github.com:Netcracker/project-a.git",
+				"/repo-b": "git@github.com:Netcracker/project-b.git",
+			},
+		},
+		{
+			name: "one unresolved repository",
+			remotes: map[string]string{
+				"/repo-a": "git@github.com:Netcracker/project.git",
+				"/repo-b": "",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdin := []byte(`{"hookName":"PostToolUse","taskId":"cline-session","workspaceRoots":["/repo-a","/repo-b"],` +
+				`"postToolUse":{"toolName":"skills","parameters":{"skill":"probe"},"success":true}}`)
+			var resolved []string
+			events, err := detect("cline", stdin, func(cwd string) string {
+				resolved = append(resolved, cwd)
+				return tt.remotes[cwd]
+			}, time.Now().UTC())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(resolved, []string{"/repo-a", "/repo-b"}) {
+				t.Fatalf("resolved roots = %v", resolved)
+			}
+			if tt.want {
+				if len(events) != 1 || events[0].RepoDir != "/repo-a" ||
+					events[0].RepoRemote != "git@github.com:Netcracker/project.git" {
+					t.Fatalf("events = %#v", events)
+				}
+			} else if len(events) != 0 {
+				t.Fatalf("events = %#v, want none", events)
+			}
+		})
+	}
+}
+
 func TestDetectRoutesExistingSkill(t *testing.T) {
 	tests := []struct {
 		agent     string

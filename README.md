@@ -1,14 +1,14 @@
 # ai-agent-telemetry
 
-Records skill runs, command invocations, and MCP tool executions in Codex, Claude Code, and Cursor sessions, then
-ships the events to an OpenTelemetry collector. Collection is bounded by the installed hook and
+Records skill runs, command invocations, and MCP tool executions in Claude Code, Cline, Codex, and Cursor sessions.
+It sends the events to an OpenTelemetry collector. Collection is bounded by the installed hook and
 the machine repository policy. The default `configure` policy records only repositories
 under the Netcracker GitHub organization unless you set a different repository scope.
 
 ## TL;DR
 
-Run the installer once. It installs the CLI and configures hooks for Claude Code, Codex, and Cursor. Preflight may
-prompt for missing collector settings or ask you to install or update required Git and Java tools.
+Run the installer once. It installs the CLI and configures hooks for Claude Code, Cline, Codex, and Cursor. Preflight
+may prompt for missing collector settings or ask you to install or update required Git and Java tools.
 
 ```sh
 # macOS / Linux
@@ -47,7 +47,7 @@ native event where available and a session transcript otherwise. See
 never blocks the agent.
 
 The installer puts the CLI on `PATH`, saves the machine settings, and registers hooks for all
-three harnesses. Each hook calls the same bare command (`ai-agent-telemetry`) on every supported
+four harnesses. Each hook calls the same bare command (`ai-agent-telemetry`) on every supported
 OS. For the CLI internals and file layout, see [the ai-agent-telemetry CLI](docs/cli.md).
 
 ## Data
@@ -55,7 +55,7 @@ OS. For the CLI internals and file layout, see [the ai-agent-telemetry CLI](docs
 Each OpenTelemetry log record has an event name as its body and these common log attributes:
 
 - `event.id` — a time-sortable event identifier that stays unchanged across delivery retries.
-- `agent` — the harness (`codex`, `claude`, `cursor`).
+- `agent`: the harness (`claude`, `cline`, `codex`, or `cursor`).
 - `session.id` — the agent's session identifier.
 - `repo.remote` — the normalized git remote identity. The only repository label.
 
@@ -232,6 +232,16 @@ To repair hooks without changing the collector settings or repository policy, ru
 ai-agent-telemetry hooks install
 ai-agent-telemetry hooks install --target=claude,codex
 ```
+
+Cline uses one global file hook for its VS Code and JetBrains extensions, compatible VS Code hosts such as Cursor,
+and Cline CLI. On macOS and Linux, the installer manages `~/Documents/Cline/Hooks/PostToolUse`; on Windows, it manages
+`~/Documents/Cline/Hooks/PostToolUse.ps1`. If an unrelated file or symbolic link already occupies that path, the
+installer reports a conflict and preserves it. The hook exits successfully with no stdout or stderr. This removes
+telemetry output from Cline's hook card, but Cline still displays its own `Hook: PostToolUse` status. Cline 4.1.4 has
+no separate setting to hide that status while keeping the hook enabled. Cline skill deployment maps to APM's
+`agent-skills` target.
+
+See [the Cline harness decision](docs/adr/0007-cline-harness-support.md) for the client scope and trade-offs.
 
 ### Optional setup skill
 
