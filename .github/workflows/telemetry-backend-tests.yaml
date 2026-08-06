@@ -49,6 +49,8 @@ jobs:
         run: |
           bash telemetry-backend/tests/maintenance-contract.sh cli
           bash telemetry-backend/tests/maintenance-contract.sh resolution
+          bash telemetry-backend/tests/maintenance-contract.sh activation
+          bash telemetry-backend/tests/maintenance-contract.sh recovery
           bash telemetry-backend/tests/maintenance-contract.sh restore-portability
           bash telemetry-backend/tests/maintenance-contract.sh retention
 
