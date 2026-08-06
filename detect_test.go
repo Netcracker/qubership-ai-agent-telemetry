@@ -463,6 +463,13 @@ func TestDetectClineMultiRootAttribution(t *testing.T) {
 				"/repo-b": "git@github.com:Netcracker/project-b.git",
 			},
 		},
+		{
+			name: "one unresolved repository",
+			remotes: map[string]string{
+				"/repo-a": "git@github.com:Netcracker/project.git",
+				"/repo-b": "",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

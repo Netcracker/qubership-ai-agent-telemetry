@@ -33,6 +33,7 @@ Event coverage is harness-specific:
 | Harness | Skill execution | Command invocation | MCP tool execution |
 | --- | --- | --- | --- |
 | Claude Code | Supported | Supported | Supported |
+| Cline | Supported | Not supported | Not supported |
 | Codex | Supported | Not supported | Supported |
 | Cursor | Supported | Not supported | Supported |
 
@@ -50,7 +51,7 @@ Windows) — the uniform install location on every OS. The installer in
 **Call the binary by its bare name first — `ai-agent-telemetry <cmd>` — and escalate only by what
 fails.** Bare name is the one form that works everywhere that matters: it is the only command
 shape the Codex execpolicy sandbox lets out (a path as `argv[0]` stays sandboxed), and it
-resolves on Claude Code and Cursor whenever `~/.local/bin` is already on `PATH` — the normal
+resolves on Claude Code, Cline, and Cursor whenever `~/.local/bin` is already on `PATH` — the normal
 steady state. Lead with it; reach for a full path only after bare name fails *and* you have ruled
 out the sandbox.
 
@@ -86,13 +87,16 @@ user environment, but only a brand-new process inherits it). Tell the user, in t
 
 - **Claude Desktop / GUI app** — fully quit the application (not just close the window or open a
   new chat) and reopen it. On Windows, quit from the tray if it keeps running in the background.
+- **Cline in VS Code** — fully quit every VS Code window and reopen VS Code. Reloading the window
+  is not enough when the extension host inherited an old `PATH`.
 - **Terminal / CLI** — end the session and **close the terminal tab or window**, then open a new
   one. Reopening in the same tab can keep the stale environment; a fresh tab is the safe move.
 
 How to confirm the restart actually took: after it, `ai-agent-telemetry` resolves by bare name
-(`Get-Command ai-agent-telemetry` / `command -v ai-agent-telemetry` succeeds) **and** a fresh skill
-run advances `last_flush_attempt` in `status`. If the bare name still does not resolve, the
-process was not truly recreated — repeat the full quit / close-the-tab step.
+(`Get-Command ai-agent-telemetry` / `command -v ai-agent-telemetry` succeeds). A fresh skill run
+must then advance `last_flush_attempt` or increase `buffered` without a delivery error. If the bare
+name still does not resolve, the process was not truly recreated — repeat the full quit or
+close-the-tab step.
 
 If `~/.local/bin/ai-agent-telemetry` is absent, run the installer (`references/deployment.md`).
 Read every `ai-agent-telemetry <cmd>` below as a bare-name call, falling back to the full path only
@@ -220,6 +224,7 @@ the lifecycle hands control to the verified new image before replacing the manag
 | 401 / 403 | token missing or rejected | `configure`, enter the token at the no-echo prompt |
 | spool growing, flush failing | one of the above | fix the reported cause, then `selftest` |
 | `selftest` passes but real skill runs send nothing | the global hook is missing, invalid, or not reloaded | run `hooks install`, inspect `status --verbose`, and fully restart the harness |
+| **Cline only:** hook is missing, invalid, or conflicts with an existing file | the single global `PostToolUse` hook is not CLI-managed | run `hooks install --target=cline`, inspect `status --verbose`, and preserve unrelated files or symlinks for owner review |
 | **Cursor only:** hook is missing or invalid | `.cursor/hooks.json` is absent, malformed, or structurally incompatible | run `hooks install --target=cursor`; repair malformed JSON manually only after reviewing the reported path |
 | **Codex UI shows an old hook command** | the global file is stale or Codex has not reviewed the changed command | run `hooks install --target=codex`, inspect the displayed command, approve it if prompted, and fully restart Codex |
 | **Codex only:** `status` / `selftest` report `endpoint: (unset)` / `not configured` | Codex sandbox hides `~/.config` and blocks egress — not a missing configuration | run `hooks install --target=codex`, then restart Codex (see [references/codex-sandbox.md](references/codex-sandbox.md)) |
@@ -246,11 +251,17 @@ path and parse error when available:
 | Harness | Active hook file |
 | --- | --- |
 | Claude Code | `~/.claude/settings.json` |
+| Cline on macOS and Linux | `~/Documents/Cline/Hooks/PostToolUse` |
+| Cline on Windows | `~/Documents/Cline/Hooks/PostToolUse.ps1` |
 | Codex | `~/.codex/hooks.json` |
 | Cursor | `~/.cursor/hooks.json` |
 
 - Claude Code requires `PreToolUse`/`Skill`, `UserPromptExpansion`, and
   `PostToolUse` plus `PostToolUseFailure`/`mcp__.*`.
+- Cline requires its single global `PostToolUse` file. The CLI owns only its
+  exact managed content. It migrates previous managed content, but preserves
+  modified or unrelated files and symlinks as conflicts. Do not merge or
+  replace them automatically.
 - Codex requires `Stop` and `PostToolUse`/`mcp__.*`.
 - Cursor requires `afterAgentResponse`, `afterMCPExecution`, and a numeric
   top-level `version`.
@@ -319,11 +330,12 @@ The current `ai-agent-telemetry-configure` invocation is the skill test event.
 Record `buffered`, `last_flush_attempt`, and delivery diagnostics after the
 level 1 selftest.
 
-Claude Code emits the skill event before this skill runs, and the level 1
-`selftest` flushes any queued Claude skill event. Without telemetry-store read
-access, the available Claude evidence is therefore the installed native hook
-plus passing transport verification. Offer an optional server-side query for
-proof of the individual skill event.
+Claude Code emits the skill event before this skill runs. Cline emits it from
+`PostToolUse` immediately after `use_skill`, before the skill instructions run.
+The level 1 `selftest` flushes either queued event. Without telemetry-store read
+access, the available evidence for Claude Code and Cline is the installed native
+hook plus passing transport verification. Offer an optional server-side query
+for proof of the individual skill event.
 
 Codex and Cursor run their skill-detection hook after the response, so ask the
 user to send one more telemetry-check message after this response. On that
@@ -343,6 +355,16 @@ If the user already has read access to the telemetry store, offer a
 server-side query as additional evidence. Do not request store credentials in
 the conversation. Store access is optional.
 
+For Cline, set the VictoriaLogs time range to start just before this invocation,
+then run this exact query:
+
+```logsql
+service.name:="ai-agent-telemetry" agent:="cline" _msg:="skill_executed" skill.name:="ai-agent-telemetry-configure"
+```
+
+Individual-event proof requires a matching record in that current-run time
+range. Do not count older matches as proof of the current run.
+
 Test MCP telemetry only with a read-only tool that is already configured and
 appropriate for the user's request. Never mutate external state solely to
 create a telemetry event. Test `command_invoked` only in Claude Code and only
@@ -350,5 +372,5 @@ with an available harmless slash command.
 
 Do not report success until level 1 passes and the native hook is installed.
 For a requested Codex or Cursor real-event test, do not report that part as
-complete until one follow-up outcome passes. For Claude Code, do not claim
-individual-event proof without a successful store query.
+complete until one follow-up outcome passes. For Claude Code or Cline, do not
+claim individual-event proof without a successful store query.

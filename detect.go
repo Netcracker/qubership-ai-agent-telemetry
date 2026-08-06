@@ -121,7 +121,7 @@ func clineRepository(roots []string, remote remoteResolver) (string, string, boo
 		raw := resolveRemote(remote, root)
 		normalized := normalizeRawRemote(raw)
 		if normalized == "" {
-			continue
+			return "", "", false
 		}
 		if _, exists := unique[normalized]; !exists {
 			unique[normalized] = resolvedRepository{root: root, raw: raw}
