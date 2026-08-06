@@ -133,13 +133,33 @@ cleanup_backup_sandbox() {
   local root=$1 project=$2 restore_project=$3
   local -a sandbox_volumes restore_volumes
 
-  docker compose --project-name "$project" --project-directory "$root" -f "$root/backend/docker-compose.yml" \
+  docker compose --project-name "$project" --project-directory "$root/backend/previous" \
+    -f "$root/backend/previous/docker-compose.yml" \
     down --remove-orphans >/dev/null 2>&1 || true
   mapfile -t sandbox_volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
   [ "${#sandbox_volumes[@]}" -eq 0 ] || docker volume rm "${sandbox_volumes[@]}" >/dev/null 2>&1 || true
   mapfile -t restore_volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$restore_project")
   [ "${#restore_volumes[@]}" -eq 0 ] || docker volume rm "${restore_volumes[@]}" >/dev/null 2>&1 || true
   rm -rf "$root"
+}
+
+assert_backup_helper_names() {
+  local command_log=$1 ordinal measure_name archive_name transaction_prefix
+  local -a measure_names archive_names
+
+  mapfile -t measure_names < <(sed -n 's/^VOLUME_MEASURE_HELPER=//p' "$command_log")
+  mapfile -t archive_names < <(sed -n 's/^VOLUME_ARCHIVE_HELPER=//p' "$command_log")
+  [ "${#measure_names[@]}" -eq 5 ] || fail 'backup did not log exactly five volume measurement helper names'
+  [ "${#archive_names[@]}" -eq 5 ] || fail 'backup did not log exactly five volume archive helper names'
+  for ordinal in 0 1 2 3 4; do
+    measure_name=${measure_names[ordinal]}
+    archive_name=${archive_names[ordinal]}
+    [[ $measure_name =~ ^ai-agent-telemetry-backup-backup-[0-9]{14}-[0-9]+-[0-9]+-measure-$ordinal$ ]] ||
+      fail "volume measurement helper has an unexpected name: $measure_name"
+    transaction_prefix=${measure_name%-measure-"$ordinal"}
+    [ "$archive_name" = "$transaction_prefix-$ordinal" ] ||
+      fail "volume archive helper has an unexpected name: $archive_name"
+  done
 }
 
 restore_backup_into_second_sandbox() {
@@ -171,7 +191,7 @@ EOF
     TELEMETRY_TEST_BACKUP_ROOT="$(dirname -- "$backup_dir")" TELEMETRY_TEST_PROJECT_NAME="$project" \
     TELEMETRY_TEST_SKIP_REMOTE_PROBES=1 TELEMETRY_TEST_HEALTH_ATTEMPTS=5 \
     TELEMETRY_TEST_STABILITY_SECONDS=0 "$backup_dir/restore-backend.sh" "$backup_dir" "$root/release" 2>&1); then
-    [ "$mismatch" -eq 1 ] && [[ $output == *'image identity differs from the manifest'* ]] ||
+    [ "$mismatch" -eq 1 ] && [[ $output == *'image identity differs from the prepared image'* ]] ||
       fail "restore helper failed unexpectedly: $output"
     printf '%s\n' "$project"
     return 0
@@ -322,10 +342,9 @@ run_backup_suite() {
   project="telemetry_backup_$RANDOM$RANDOM"
   event_log=$sandbox/events.log
   export BUILDX_NO_DEFAULT_ATTESTATIONS=1 DOCKER_CONFIG=$sandbox/docker-config
-  mkdir -p "$sandbox/backend" "$backup_root" "$DOCKER_CONFIG"
-  cp "$backend_dir/docker-compose.yml" "$sandbox/backend/docker-compose.yml"
-  cp "$backend_dir/.env.example" "$sandbox/backend/.env"
-  cat >"$sandbox/backend/docker-compose.yml" <<EOF
+  mkdir -p "$sandbox/backend/previous" "$backup_root" "$DOCKER_CONFIG"
+  cp "$backend_dir/.env.example" "$sandbox/backend/previous/.env"
+  cat >"$sandbox/backend/previous/docker-compose.yml" <<EOF
 services:
   caddy:
     image: alpine:3.20
@@ -361,8 +380,6 @@ volumes:
   vlogs-data: {}
   vmetrics-data: {}
 EOF
-  mkdir -p "$sandbox/backend/previous"
-  cp "$sandbox/backend/docker-compose.yml" "$sandbox/backend/.env" "$sandbox/backend/previous/"
   printf '%s\n' 'FROM alpine:3.20' >"$sandbox/backend/previous/Dockerfile"
   install -D -m 755 "$backup_script" "$sandbox/backend/previous/scripts/backup-backend.sh"
   ln -s previous "$sandbox/backend/latest"
@@ -378,7 +395,15 @@ EOF
     TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project" \
     TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$event_log" \
     "$backup_script" --target-label contract
+  assert_backup_helper_names "$event_log"
   backup_dir=$(single_completed_backup "$backup_root")
+  [ "$(sed -n 's/^SOURCE_RELEASE=//p' "$backup_dir/manifest.txt")" = "$sandbox/backend/previous" ] ||
+    fail 'backup manifest did not identify the active release as its source'
+  cmp -s "$sandbox/backend/previous/.env" "$backup_dir/backend.env" ||
+    fail 'backup environment did not come from the active release'
+  tar -xOf "$backup_dir/telemetry-backend-source.tar.gz" ./docker-compose.yml |
+    cmp - "$sandbox/backend/previous/docker-compose.yml" ||
+    fail 'backup source archive did not come from the active release'
   mapfile -t manifest_images < <(sed -n 's/^IMAGE=//p' "$backup_dir/manifest.txt")
   [ "${#manifest_images[@]}" -eq 5 ] || fail 'backup manifest must contain exactly five image records'
   manifest_services=()
@@ -538,6 +563,7 @@ EOF
     export TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$legacy_event_log"
     backup_main --legacy-source --target-label legacy-cutover --leave-stopped
   ) || fail 'supervised legacy backup did not complete successfully'
+  assert_backup_helper_names "$legacy_event_log"
   assert_services_stopped "$project"
   [ ! -f "$sandbox/backend/.maintenance-transaction" ] ||
     fail 'successful supervised legacy backup retained its durable transaction'
@@ -617,9 +643,9 @@ EOF
     export TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project"
     export TELEMETRY_TEST_HEALTH_ATTEMPTS=1 TELEMETRY_TEST_FORCE_UNHEALTHY=1
     maintenance_init
-    run_fails strict_health_gate "$sandbox/backend"
+    run_fails strict_health_gate "$sandbox/backend/previous"
     unset TELEMETRY_TEST_FORCE_UNHEALTHY
-    strict_health_gate "$sandbox/backend"
+    strict_health_gate "$sandbox/backend/previous"
   ) || fail 'health gate did not reject and then recover an unhealthy service'
 
   (
@@ -630,8 +656,10 @@ EOF
     export TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" TELEMETRY_TEST_COMMAND_LOG="$event_log"
     export TELEMETRY_TEST_LARGE_BACKUP_BYTES=1
     mkdir -p "$sandbox/backend/previous-release" "$sandbox/backend/next-release"
-    cp "$sandbox/backend/docker-compose.yml" "$sandbox/backend/.env" "$sandbox/backend/previous-release/"
-    cp "$sandbox/backend/docker-compose.yml" "$sandbox/backend/.env" "$sandbox/backend/next-release/"
+    cp "$sandbox/backend/previous/docker-compose.yml" "$sandbox/backend/previous/.env" \
+      "$sandbox/backend/previous-release/"
+    cp "$sandbox/backend/previous/docker-compose.yml" "$sandbox/backend/previous/.env" \
+      "$sandbox/backend/next-release/"
     maintenance_init
     entries=('FORMAT_VERSION=1' 'TRANSACTION_ID=updater-transaction' 'OPERATION=update' \
       'PHASE=backup-offline' 'TARGET_RELEASE=next-release' 'PREVIOUS_RELEASE=previous-release' 'BACKUP_PATH=')
@@ -655,8 +683,9 @@ EOF
     [ "$(read_transaction PREVIOUS_IMAGE_CADDY)" = "$previous_caddy_id" ] || exit 1
     exec {handoff_fd}>&-
   ) || fail 'validated update handoff did not preserve its transaction'
-  docker compose --project-name "$project" --project-directory "$sandbox/backend" --env-file "$sandbox/backend/.env" \
-    -f "$sandbox/backend/docker-compose.yml" up -d --no-build --pull never
+  docker compose --project-name "$project" --project-directory "$sandbox/backend/previous" \
+    --env-file "$sandbox/backend/previous/.env" -f "$sandbox/backend/previous/docker-compose.yml" \
+    up -d --no-build --pull never
   (
     # shellcheck disable=SC1090,SC2030,SC2031
     TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
@@ -672,14 +701,14 @@ EOF
     clear_transaction
   ) || fail 'invalid update handoff was accepted or changed its transaction'
 
-  rm -f "$sandbox/backend/.env"
+  rm -f "$sandbox/backend/previous/.env"
   if output=$(TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
     TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project" \
     "$backup_script" --target-label missing-env 2>&1); then
     fail 'backup accepted a missing environment file'
   fi
   [[ $output == *'environment file is missing'* ]] || fail 'missing environment file failed for the wrong reason'
-  cp "$backend_dir/.env.example" "$sandbox/backend/.env"
+  cp "$backend_dir/.env.example" "$sandbox/backend/previous/.env"
 
   docker volume create --label "com.docker.compose.project=$project" \
     --label 'com.docker.compose.volume=grafana-data' "${project}_grafana-data-duplicate" >/dev/null
@@ -697,14 +726,14 @@ EOF
   run_fails env TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
     TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project" \
     TELEMETRY_TEST_FAIL_BACKUP_HELPER=1 "$backup_script" --target-label helper-failure
-  assert_services_running "$project" "$sandbox/backend"
+  assert_services_running "$project" "$sandbox/backend/previous"
   compgen -G "$backup_root/pre-helper-failure-*.incomplete" >/dev/null ||
     fail 'failed helper did not preserve an incomplete backup'
 
   run_fails env TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
     TELEMETRY_TEST_BACKUP_ROOT="$backup_root" TELEMETRY_TEST_PROJECT_NAME="$project" \
     TELEMETRY_TEST_CORRUPT_BACKUP_CHECKSUM=1 "$backup_script" --target-label checksum-failure
-  assert_services_running "$project" "$sandbox/backend"
+  assert_services_running "$project" "$sandbox/backend/previous"
   compgen -G "$backup_root/pre-checksum-failure-*.incomplete" >/dev/null ||
     fail 'failed checksum verification did not preserve an incomplete backup'
 
@@ -731,9 +760,10 @@ EOF
     fail 'large backup proceeded without confirmation'
   fi
   [[ $output == *'--allow-large-backup'* ]] || fail 'large backup failed for the wrong reason'
-  assert_services_running "$project" "$sandbox/backend"
-  docker compose --project-name "$project" --project-directory "$sandbox/backend" --env-file "$sandbox/backend/.env" \
-    -f "$sandbox/backend/docker-compose.yml" down --remove-orphans
+  assert_services_running "$project" "$sandbox/backend/previous"
+  docker compose --project-name "$project" --project-directory "$sandbox/backend/previous" \
+    --env-file "$sandbox/backend/previous/.env" -f "$sandbox/backend/previous/docker-compose.yml" \
+    down --remove-orphans
   mapfile -t source_volumes < <(docker volume ls -q --filter "label=com.docker.compose.project=$project")
   [ "${#source_volumes[@]}" -eq 5 ] || fail 'source project did not expose five exact volumes for restore'
   docker volume rm "${source_volumes[@]}" >/dev/null
@@ -781,9 +811,10 @@ EOF
   for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
     assert_volume_file "$restore_project" "$logical" "/sentinel/$logical"
   done
-  docker compose --project-name "$project" --project-directory "$sandbox/backend" --env-file "$sandbox/backend/.env" \
-    -f "$sandbox/backend/docker-compose.yml" up -d --no-build --pull never
-  assert_services_running "$project" "$sandbox/backend"
+  docker compose --project-name "$project" --project-directory "$sandbox/backend/previous" \
+    --env-file "$sandbox/backend/previous/.env" -f "$sandbox/backend/previous/docker-compose.yml" \
+    up -d --no-build --pull never
+  assert_services_running "$project" "$sandbox/backend/previous"
   for logical in caddy-config caddy-data grafana-data vlogs-data vmetrics-data; do
     assert_event_before "VOLUME_MEASURE=${project}_${logical}" COMPOSE_DOWN "$event_log"
     assert_event_before COMPOSE_STOPPED "VOLUME_ARCHIVE=${project}_${logical}" "$event_log"
@@ -874,9 +905,26 @@ run_cli_suite() {
 
   sandbox=$(mktemp -d /tmp/telemetry-maintenance.XXXXXX)
   trap 'rm -rf "${legacy_sandbox:-}" "${sandbox:-}"' EXIT HUP INT TERM
-  mkdir -p "$sandbox/backend" "$sandbox/backups"
-  : >"$sandbox/backend/docker-compose.yml"
-  : >"$sandbox/backend/.env"
+  mkdir -p "$sandbox/backend/active-release" "$sandbox/backups"
+  : >"$sandbox/backend/active-release/docker-compose.yml"
+  printf '%s\n' 'ACTIVE_RELEASE_ENV=1' >"$sandbox/backend/active-release/.env"
+  ln -s active-release "$sandbox/backend/latest"
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT=$sandbox/backend
+    maintenance_init || exit 1
+    [ "$BACKEND_ROOT" = "$sandbox/backend" ] || exit 1
+    [ "$CURRENT_BACKEND_DIR" = "$sandbox/backend/active-release" ] || exit 1
+    [ "$COMPOSE_FILE" = "$sandbox/backend/active-release/docker-compose.yml" ] || exit 1
+    [ "$ENV_FILE" = "$sandbox/backend/active-release/.env" ] || exit 1
+    [ "$TRANSACTION_FILE" = "$sandbox/backend/.maintenance-transaction" ] || exit 1
+  ) || fail 'ordinary maintenance did not resolve configuration from the active release'
+
+  if grep -F 'skills-telemetry-backup-' "$backup_script" >/dev/null; then
+    fail 'maintenance helper container names retain the retired prefix'
+  fi
 
   (
     # shellcheck disable=SC1090,SC1091
@@ -891,6 +939,7 @@ run_cli_suite() {
     }
     [ "$(measure_volume_bytes fixture-volume measure-contract 0)" = 123 ] || exit 1
     measure_command=$(<"$sandbox/measure-command")
+    [[ $measure_command == *'--name ai-agent-telemetry-backup-measure-contract-measure-0'* ]] || exit 1
     [[ $measure_command == *'type=volume,src=fixture-volume,dst=/source,readonly'* ]] || exit 1
     [[ $measure_command == *'du -sb /source | cut -f1'* ]] || exit 1
     grep -Fx 'VOLUME_MEASURE=fixture-volume' "$TELEMETRY_TEST_COMMAND_LOG" >/dev/null
@@ -1354,7 +1403,6 @@ run_cli_suite() {
   run_fails "$backup_script" --target-label '../escape'
   run_fails "$backup_script" --unknown-option
 
-  ln -s 'existing-release' "$sandbox/backend/latest"
   active_before=$(readlink "$sandbox/backend/latest")
   env TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
     TELEMETRY_TEST_LOCK_FILE="$sandbox/maintenance.lock" \
@@ -1508,8 +1556,6 @@ EOF
       : >"$backend_root/$release/.deployment-manifest"
     fi
   done
-  cp "$backend_root/previous/docker-compose.yml" "$backend_root/docker-compose.yml"
-  cp "$backend_root/previous/.env" "$backend_root/.env"
   ln -s target "$backend_root/latest"
   write_activation_docker "$docker_dir/docker"
   cat >"$docker_dir/curl" <<'EOF'
@@ -2603,8 +2649,6 @@ volumes:
   vlogs-data: {}
   vmetrics-data: {}
 EOF
-  cp "$backend_root/$previous_release/docker-compose.yml" "$backend_root/docker-compose.yml"
-  cp "$backend_root/$previous_release/.env" "$backend_root/.env"
   ln -s "$previous_release" "$backend_root/latest"
   docker compose --project-name "$project" --project-directory "$backend_root/$previous_release" \
     --env-file "$backend_root/$previous_release/.env" -f "$backend_root/$previous_release/docker-compose.yml" \
@@ -2905,8 +2949,6 @@ EOF
       done
     } >"$backend_root/$release/.maintenance-compose.yml"
   done
-  cp "$backend_root/$previous_release/docker-compose.yml" "$backend_root/docker-compose.yml"
-  cp "$backend_root/$previous_release/.env" "$backend_root/.env"
   {
     printf '%s\n' 'format=1' 'kind=commit' 'requested_ref=recovery-fixture'
     printf '%s\n' 'resolved_identity=1111111111111111111111111111111111111111'

@@ -151,10 +151,7 @@ maintenance_init() {
 
   validate_project_name "$PROJECT_NAME" || return 1
   MAINTENANCE_IDENTITY_MODE=$identity_mode
-  CURRENT_BACKEND_DIR=$BACKEND_ROOT
-  if [ "$identity_mode" = legacy-source ]; then
-    CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
-  fi
+  CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT") || return 1
   COMPOSE_FILE=$CURRENT_BACKEND_DIR/docker-compose.yml
   ENV_FILE=$CURRENT_BACKEND_DIR/.env
   GENERATED_OVERRIDE_FILE=$CURRENT_BACKEND_DIR/.maintenance-compose.yml
@@ -1544,9 +1541,11 @@ EOF
 }
 
 measure_volume_bytes() {
-  local volume_name=$1 transaction_id=$2 ordinal=$3 volume_bytes
+  local volume_name=$1 transaction_id=$2 ordinal=$3 volume_bytes helper_name
 
-  volume_bytes=$(docker run --rm --name "skills-telemetry-backup-${transaction_id}-measure-${ordinal}" \
+  helper_name="ai-agent-telemetry-backup-${transaction_id}-measure-${ordinal}"
+  record_test_event "VOLUME_MEASURE_HELPER=$helper_name" || return 1
+  volume_bytes=$(docker run --rm --name "$helper_name" \
     --label "$TRANSACTION_LABEL=$transaction_id" --label "$ROLE_LABEL=backup" \
     --mount "type=volume,src=$volume_name,dst=/source,readonly" "$HELPER_IMAGE" \
     sh -eu -c 'du -sb /source | cut -f1') || return 1
@@ -1693,7 +1692,7 @@ backup_main() {
   local target_label=manual leave_stopped=0 allow_large_backup=0
   local identity_mode=ordinary legacy_source_seen=0
   local completed_dir backup_work_dir backup_parent transaction_id target_release previous_release volume_bytes total_bytes
-  local logical_volume actual_volume archive_name ordinal failed=0 helper_id helper_status helper_delay=0
+  local logical_volume actual_volume archive_name ordinal failed=0 helper_id helper_status helper_delay=0 helper_name
   local handoff=0 supervised_legacy=0 release_dir logical_volume_output image_output image_record service reference
   local image_id extra
   local created_at compose_version
@@ -1929,7 +1928,12 @@ backup_main() {
       if [ "${TELEMETRY_MAINTENANCE_TEST_MODE:-}" = 1 ]; then
         helper_delay=${TELEMETRY_TEST_BACKUP_HELPER_DELAY_SECONDS:-0}
       fi
-      if ! helper_id=$(docker run -d --name "skills-telemetry-backup-${transaction_id}-${ordinal}" \
+      helper_name="ai-agent-telemetry-backup-${transaction_id}-${ordinal}"
+      record_test_event "VOLUME_ARCHIVE_HELPER=$helper_name" || {
+        failed=1
+        break
+      }
+      if ! helper_id=$(docker run -d --name "$helper_name" \
         --label "$TRANSACTION_LABEL=$transaction_id" --label "$ROLE_LABEL=backup" \
         --env "BACKUP_FILE=$archive_name" --env "HELPER_DELAY_SECONDS=$helper_delay" \
         --mount "type=volume,src=$actual_volume,dst=/source,readonly" \
