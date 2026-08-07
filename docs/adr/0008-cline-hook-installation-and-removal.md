@@ -109,8 +109,7 @@ UTF-16BE. This accommodates normal PowerShell editor output. Encoding support ap
 an incomplete final UTF-16 code unit does not hide complete preceding lines. Automatic deletion still requires a
 byte-for-byte match with an explicitly supported generated template.
 
-The error directs the user to the
-[manual conflict-resolution guide](https://github.com/Netcracker/qubership-ai-agent-telemetry/blob/main/docs/manual-uninstall.md).
+The error directs the user to the [manual conflict-resolution guide](../manual-uninstall.md).
 The guide covers two paths:
 
 - If the user wants to keep commands added to the hook, remove only the telemetry invocation and the telemetry
