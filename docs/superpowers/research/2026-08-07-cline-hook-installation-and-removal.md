@@ -264,6 +264,11 @@ Installation creates only a missing canonical path and treats only the exact cur
 deletes exact current or supported legacy templates, classifies a mismatched regular file through the exact ownership
 comment, and preserves every other entry as user-owned.
 
+Installation and status reject symbolic links and non-regular entries before reading them. For deletion, uninstall
+moves an exact candidate to a unique path in the same directory and rechecks the isolated entry. This binds the byte
+comparison to the entry being removed. A concurrent replacement is restored without overwriting the canonical path or
+retained at a reported temporary preservation path if restoration is not safe.
+
 Lifecycle tests cover the blocking conflict and the supported two-run procedure: the first uninstall preserves the
 CLI and telemetry data; after the user removes the telemetry invocation and ownership comment, the second uninstall
 preserves the remaining user hook and completes telemetry cleanup.

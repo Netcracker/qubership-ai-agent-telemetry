@@ -479,3 +479,34 @@ func TestRemoveClineHookPreservesSymlinkWithoutReadingTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoveClineHookRechecksQuarantinedEntryBeforeDelete(t *testing.T) {
+	home := t.TempDir()
+	path := clineHookPath(home, "darwin")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, clineHookContent("darwin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	matched, err := os.ReadFile(path)
+	if err != nil || !isKnownClineHookContent(matched, "darwin") {
+		t.Fatalf("initial hook did not match: %q, %v", matched, err)
+	}
+
+	replacement := []byte("#!/bin/sh\necho user-owned\n")
+	if err := os.WriteFile(path, replacement, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := removeClineHookAfterMatch(path, "darwin")
+	if err == nil || changed || !strings.Contains(err.Error(), "changed during removal") {
+		t.Fatalf("changed = %v, err = %v; want replacement preserved", changed, err)
+	}
+	if got, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(got, replacement) {
+		t.Fatalf("replacement hook = %q, %v; want byte-for-byte restoration", got, readErr)
+	}
+	leftovers, globErr := filepath.Glob(filepath.Join(filepath.Dir(path), ".PostToolUse.ai-agent-telemetry-remove-*"))
+	if globErr != nil || len(leftovers) != 0 {
+		t.Fatalf("temporary preservation paths = %v, %v; want none after restoration", leftovers, globErr)
+	}
+}

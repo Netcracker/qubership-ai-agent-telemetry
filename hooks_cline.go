@@ -93,6 +93,9 @@ func installClineHook(home, goos string) (string, bool, error) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return path, false, fmt.Errorf("existing Cline hook is a symbolic link and was preserved: %s", path)
 	}
+	if !info.Mode().IsRegular() {
+		return path, false, fmt.Errorf("existing Cline hook is not a regular file and was preserved: %s", path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return path, false, err
@@ -156,6 +159,9 @@ func inspectClineHook(path, goos string) (hookState, string) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return hookInvalid, fmt.Sprintf("Cline hook is a symbolic link: %s", path)
 	}
+	if !info.Mode().IsRegular() {
+		return hookInvalid, fmt.Sprintf("Cline hook is not a regular file: %s", path)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return hookInvalid, err.Error()
@@ -198,10 +204,74 @@ func removeClineHook(path, goos string, warnings io.Writer) (bool, error) {
 		warnPreservedUserOwnedClineHook(warnings, path)
 		return false, nil
 	}
-	if err := os.Remove(path); err != nil {
-		return false, err
+	return removeClineHookAfterMatch(path, goos)
+}
+
+func removeClineHookAfterMatch(path, goos string) (bool, error) {
+	quarantine, err := quarantineClineHook(path)
+	if err != nil {
+		return false, fmt.Errorf("cannot isolate the matched Cline hook before removal: %w", err)
+	}
+	info, err := os.Lstat(quarantine)
+	if err != nil {
+		return false, fmt.Errorf("cannot recheck isolated Cline hook %s: %w", quarantine, err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf(
+			"Cline hook changed during removal; the replacement was preserved at %s and was not deleted", quarantine)
+	}
+	data, err := os.ReadFile(quarantine)
+	if err != nil {
+		return false, fmt.Errorf("cannot recheck isolated Cline hook; preserved it at %s: %w", quarantine, err)
+	}
+	if !isKnownClineHookContent(data, goos) {
+		if err := restoreQuarantinedClineHook(path, quarantine); err != nil {
+			return false, err
+		}
+		return false, fmt.Errorf("Cline hook changed during removal and was restored without deletion: %s", path)
+	}
+	if err := os.Remove(quarantine); err != nil {
+		return false, fmt.Errorf("cannot remove matched Cline hook preserved at %s: %w", quarantine, err)
 	}
 	return true, nil
+}
+
+func quarantineClineHook(path string) (string, error) {
+	temporary, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".ai-agent-telemetry-remove-*")
+	if err != nil {
+		return "", err
+	}
+	temporaryPath := temporary.Name()
+	temporaryInfo, statErr := temporary.Stat()
+	if statErr != nil {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+		return "", statErr
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return "", err
+	}
+	if err := os.Rename(path, temporaryPath); err != nil {
+		if current, statErr := os.Lstat(temporaryPath); statErr == nil && os.SameFile(temporaryInfo, current) {
+			_ = os.Remove(temporaryPath)
+		}
+		return "", err
+	}
+	return temporaryPath, nil
+}
+
+func restoreQuarantinedClineHook(path, quarantine string) error {
+	if err := os.Link(quarantine, path); err != nil {
+		return fmt.Errorf(
+			"Cline hook changed during removal; preserved the replacement at %s because it could not be restored to %s: %w",
+			quarantine, path, err)
+	}
+	if err := os.Remove(quarantine); err != nil {
+		return fmt.Errorf("restored changed Cline hook to %s but could not remove its temporary link %s: %w",
+			path, quarantine, err)
+	}
+	return nil
 }
 
 func isKnownClineHookContent(data []byte, goos string) bool {
