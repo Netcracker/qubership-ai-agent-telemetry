@@ -28,6 +28,7 @@ Denis Filatov (@denifilatoff)
   privacy boundary.
 - [0008-cline-hook-installation-and-removal.md](0008-cline-hook-installation-and-removal.md) supersedes the installation
   migration and removal rules in this record.
+- [0009-cline-mcp-tool-telemetry.md](0009-cline-mcp-tool-telemetry.md) extends this harness with MCP tool telemetry.
 
 <!-- markdownlint-enable MD001 -->
 

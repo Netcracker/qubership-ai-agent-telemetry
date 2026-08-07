@@ -255,10 +255,13 @@ template. An exact legacy template appears as `outdated`; replace it with the co
 the user follows the [manual conflict-resolution procedure](docs/manual-uninstall.md). The hook exits successfully with
 no stdout or stderr. This removes telemetry output from Cline's hook card, but Cline still displays its own
 `Hook: PostToolUse` status. Cline 4.1.4 has no separate setting to hide that status while keeping the hook enabled.
-Cline skill deployment maps to APM's `agent-skills` target.
+Cline skill deployment maps to APM's `agent-skills` target. The same hook records completed MCP tool calls with exact
+server and tool names, success or failure, and duration when Cline supplies it. Cline command invocations remain
+unsupported because the available hook runs after Cline replaces the command token with its expanded instructions.
 
 See [the Cline harness decision](docs/adr/0007-cline-harness-support.md) and
 [the hook lifecycle decision](docs/adr/0008-cline-hook-installation-and-removal.md) for the client scope and trade-offs.
+[The Cline MCP decision](docs/adr/0009-cline-mcp-tool-telemetry.md) defines MCP identity and outcome handling.
 
 ### Optional setup skill
 
