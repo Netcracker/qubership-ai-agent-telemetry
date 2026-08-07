@@ -18,7 +18,7 @@ const (
 	clineManualUninstall = "https://github.com/Netcracker/qubership-ai-agent-telemetry/blob/main/docs/manual-uninstall.md"
 )
 
-var errClineHookOwnershipConflict = errors.New("Cline hook cleanup is incomplete")
+var errClineHookOwnershipConflict = errors.New("cline hook cleanup is incomplete")
 
 type clineHookEntryKind uint8
 
@@ -278,7 +278,7 @@ func removeClineHookAfterMatch(path, goos string) (bool, error) {
 	defer func() { _ = entry.close() }()
 	if entry.kind != clineEntryRegular {
 		return false, fmt.Errorf(
-			"Cline hook changed during removal; the replacement was preserved at %s and was not deleted", quarantine)
+			"cline hook changed during removal; the replacement was preserved at %s and was not deleted", quarantine)
 	}
 	if !isKnownClineHookContent(entry.data, goos) {
 		if err := entry.close(); err != nil {
@@ -287,7 +287,7 @@ func removeClineHookAfterMatch(path, goos string) (bool, error) {
 		if err := restoreQuarantinedClineHook(path, quarantine); err != nil {
 			return false, err
 		}
-		return false, fmt.Errorf("Cline hook changed during removal and was restored without deletion: %s", path)
+		return false, fmt.Errorf("cline hook changed during removal and was restored without deletion: %s", path)
 	}
 	if err := entry.close(); err != nil {
 		return false, fmt.Errorf("cannot close matched Cline hook preserved at %s: %w", quarantine, err)
