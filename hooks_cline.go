@@ -364,7 +364,7 @@ func decodeClineHookText(data []byte) string {
 	}
 	littleEndian := bytes.HasPrefix(data, []byte{0xff, 0xfe})
 	bigEndian := bytes.HasPrefix(data, []byte{0xfe, 0xff})
-	if !littleEndian && !bigEndian || len(data) < 2 || (len(data)-2)%2 != 0 {
+	if !littleEndian && !bigEndian || len(data) < 2 {
 		return string(data)
 	}
 	encoded := data[2:]

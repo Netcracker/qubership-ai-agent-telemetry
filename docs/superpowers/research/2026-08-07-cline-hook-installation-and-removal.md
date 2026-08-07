@@ -275,8 +275,9 @@ an adversarial process running as the same user that tracks the random temporary
 descriptor after comparison. Portable filesystems provide no atomic compare-by-content-and-unlink operation.
 
 Ownership-comment classification decodes plain UTF-8, UTF-8 with a byte-order mark, and BOM-declared UTF-16LE or
-UTF-16BE so normal PowerShell editor output remains recognizable. This decoding does not relax deletion: only the raw
-bytes of a current or explicitly supported legacy template authorize removal.
+UTF-16BE so normal PowerShell editor output remains recognizable. A trailing incomplete UTF-16 code unit does not hide
+complete preceding lines. This decoding does not relax deletion: only the raw bytes of a current or explicitly
+supported legacy template authorize removal.
 
 Lifecycle tests cover the blocking conflict and the supported two-run procedure: the first uninstall preserves the
 CLI and telemetry data; after the user removes the telemetry invocation and ownership comment, the second uninstall

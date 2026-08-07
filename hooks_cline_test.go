@@ -22,6 +22,16 @@ func TestClineHookPathByPlatform(t *testing.T) {
 	}
 }
 
+func encodeUTF16Test(text string, order binary.ByteOrder, bom []byte) []byte {
+	data := append([]byte(nil), bom...)
+	for _, word := range utf16.Encode([]rune(text)) {
+		encoded := make([]byte, 2)
+		order.PutUint16(encoded, word)
+		data = append(data, encoded...)
+	}
+	return data
+}
+
 func TestInstallClineHookByPlatform(t *testing.T) {
 	tests := []struct {
 		goos     string
@@ -339,19 +349,17 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 
 	t.Run("encoded ownership comments remain managed conflicts", func(t *testing.T) {
 		text := "# " + clineHookOwner + "\r\ncustom-hook-command\r\n"
-		utf16Words := utf16.Encode([]rune(text))
-		utf16LE := []byte{0xff, 0xfe}
-		for _, word := range utf16Words {
-			encoded := make([]byte, 2)
-			binary.LittleEndian.PutUint16(encoded, word)
-			utf16LE = append(utf16LE, encoded...)
-		}
+		utf16LE := encodeUTF16Test(text, binary.LittleEndian, []byte{0xff, 0xfe})
+		utf16BE := encodeUTF16Test(text, binary.BigEndian, []byte{0xfe, 0xff})
 		tests := []struct {
 			name string
 			data []byte
 		}{
 			{name: "UTF-8 BOM", data: append([]byte{0xef, 0xbb, 0xbf}, []byte(text)...)},
 			{name: "UTF-16LE BOM", data: utf16LE},
+			{name: "UTF-16BE BOM", data: utf16BE},
+			{name: "UTF-16LE incomplete tail", data: append(append([]byte(nil), utf16LE...), 0x23)},
+			{name: "UTF-16BE incomplete tail", data: append(append([]byte(nil), utf16BE...), 0x23)},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
