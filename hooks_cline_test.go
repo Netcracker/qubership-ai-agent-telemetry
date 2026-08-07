@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 func TestClineHookPathByPlatform(t *testing.T) {
@@ -332,6 +334,43 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 		}
 		if got, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(got, original) {
 			t.Fatalf("unrelated hook changed: %q, %v", got, readErr)
+		}
+	})
+
+	t.Run("encoded ownership comments remain managed conflicts", func(t *testing.T) {
+		text := "# " + clineHookOwner + "\r\ncustom-hook-command\r\n"
+		utf16Words := utf16.Encode([]rune(text))
+		utf16LE := []byte{0xff, 0xfe}
+		for _, word := range utf16Words {
+			encoded := make([]byte, 2)
+			binary.LittleEndian.PutUint16(encoded, word)
+			utf16LE = append(utf16LE, encoded...)
+		}
+		tests := []struct {
+			name string
+			data []byte
+		}{
+			{name: "UTF-8 BOM", data: append([]byte{0xef, 0xbb, 0xbf}, []byte(text)...)},
+			{name: "UTF-16LE BOM", data: utf16LE},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				home := t.TempDir()
+				path := clineHookPath(home, "windows")
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, tt.data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				changed, err := removeClineHook(path, "windows", &bytes.Buffer{})
+				if err == nil || changed || !strings.Contains(err.Error(), "cleanup is incomplete") {
+					t.Fatalf("changed = %v, err = %v; want encoded ownership conflict", changed, err)
+				}
+				if got, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(got, tt.data) {
+					t.Fatalf("encoded hook changed: %q, %v", got, readErr)
+				}
+			})
 		}
 	})
 

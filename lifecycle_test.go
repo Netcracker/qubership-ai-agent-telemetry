@@ -207,8 +207,9 @@ func TestRunLifecycleTelemetryFailurePreventsCLIRemoval(t *testing.T) {
 
 func TestRunLifecyclePreservesCLIAndTelemetryDataForModifiedClineHook(t *testing.T) {
 	tests := []struct {
-		name string
-		opts lifecycleOptions
+		name       string
+		opts       lifecycleOptions
+		bomContent bool
 	}{
 		{
 			name: "full uninstall",
@@ -220,6 +221,11 @@ func TestRunLifecyclePreservesCLIAndTelemetryDataForModifiedClineHook(t *testing
 				Action: actionUninstall, Components: []componentName{componentTelemetry}, Purge: true, RemoveCLI: true,
 			},
 		},
+		{
+			name:       "UTF-8 BOM ownership comment",
+			opts:       lifecycleOptions{Action: actionUninstall, Purge: true},
+			bomContent: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -230,6 +236,9 @@ func TestRunLifecyclePreservesCLIAndTelemetryDataForModifiedClineHook(t *testing
 			}
 			clinePath := hookPath(home, hookCline)
 			modified := append(clineHookContent(runtime.GOOS), []byte("# local change\n")...)
+			if tt.bomContent {
+				modified = append([]byte{0xef, 0xbb, 0xbf}, []byte("# "+clineHookOwner+"\ncustom-hook-command\n")...)
+			}
 			if err := os.WriteFile(clinePath, modified, clineHookMode(runtime.GOOS)); err != nil {
 				t.Fatal(err)
 			}

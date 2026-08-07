@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"unicode/utf16"
 )
 
 const (
@@ -51,6 +54,9 @@ func readClineHookEntry(path string) (clineHookEntry, error) {
 		}
 		if lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
 			return clineHookEntry{kind: clineEntrySymlink, info: info}, nil
+		}
+		if lstatErr == nil && !info.Mode().IsRegular() {
+			return clineHookEntry{kind: clineEntryOther, info: info}, nil
 		}
 		return clineHookEntry{}, err
 	}
@@ -343,14 +349,34 @@ func isKnownClineHookContent(data []byte, goos string) bool {
 }
 
 func clineHookHasOwnerComment(data []byte) bool {
-	want := []byte("# " + clineHookOwner)
-	for _, line := range bytes.Split(data, []byte{'\n'}) {
-		line = bytes.TrimSuffix(line, []byte{'\r'})
-		if bytes.Equal(line, want) {
+	want := "# " + clineHookOwner
+	for _, line := range strings.Split(decodeClineHookText(data), "\n") {
+		if strings.TrimSuffix(line, "\r") == want {
 			return true
 		}
 	}
 	return false
+}
+
+func decodeClineHookText(data []byte) string {
+	if bytes.HasPrefix(data, []byte{0xef, 0xbb, 0xbf}) {
+		return string(data[3:])
+	}
+	littleEndian := bytes.HasPrefix(data, []byte{0xff, 0xfe})
+	bigEndian := bytes.HasPrefix(data, []byte{0xfe, 0xff})
+	if !littleEndian && !bigEndian || len(data) < 2 || (len(data)-2)%2 != 0 {
+		return string(data)
+	}
+	encoded := data[2:]
+	words := make([]uint16, len(encoded)/2)
+	for i := range words {
+		if littleEndian {
+			words[i] = binary.LittleEndian.Uint16(encoded[i*2:])
+		} else {
+			words[i] = binary.BigEndian.Uint16(encoded[i*2:])
+		}
+	}
+	return string(utf16.Decode(words))
 }
 
 func warnClineHookOwnershipConflict(warnings io.Writer, path string) {

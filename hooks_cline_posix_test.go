@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,5 +86,32 @@ func TestClineHookOperationsRejectFIFOWithoutReadingIt(t *testing.T) {
 				t.Fatal("operation blocked while opening a FIFO")
 			}
 		})
+	}
+}
+
+func TestRemoveClineHookPreservesUnixSocketAsUserOwned(t *testing.T) {
+	home, err := os.MkdirTemp("/tmp", "cline-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	path := clineHookPath(home, "darwin")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	var warnings bytes.Buffer
+	changed, err := removeClineHook(path, "darwin", &warnings)
+	if err != nil || changed || !strings.Contains(warnings.String(), "preserved user-owned Cline hook") {
+		t.Fatalf("changed = %v, err = %v, warnings = %q; want socket preserved without blocking",
+			changed, err, warnings.String())
+	}
+	if info, statErr := os.Lstat(path); statErr != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("socket changed: info = %v, err = %v", info, statErr)
 	}
 }

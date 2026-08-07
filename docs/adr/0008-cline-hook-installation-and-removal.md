@@ -104,6 +104,10 @@ The error names the preserved hook path and says that the file does not match a 
 know whether the file was edited or replaced. It also names the managed CLI path that remains installed and explains
 that a requested purge did not run.
 
+The ownership-comment classifier accepts plain UTF-8, UTF-8 with a byte-order mark, and BOM-declared UTF-16LE or
+UTF-16BE. This accommodates normal PowerShell editor output. Encoding support applies only to conflict classification;
+automatic deletion still requires a byte-for-byte match with an explicitly supported generated template.
+
 The error directs the user to the
 [manual conflict-resolution guide](https://github.com/Netcracker/qubership-ai-agent-telemetry/blob/main/docs/manual-uninstall.md).
 The guide covers two paths:
