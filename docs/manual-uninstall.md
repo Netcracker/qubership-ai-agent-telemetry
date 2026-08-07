@@ -1,4 +1,21 @@
-# Resolve a modified Cline hook during uninstall
+# Resolve Cline hook conflicts
+
+## Replace a recognized legacy hook
+
+The CLI reports a Cline hook as `outdated` only when its bytes exactly match a supported legacy template embedded in
+the CLI. Neither the user nor an agent needs to inspect or recognize the script. Replace that hook with two explicit
+operations:
+
+```sh
+ai-agent-telemetry hooks uninstall --target=cline
+ai-agent-telemetry hooks install --target=cline
+```
+
+The first command removes the recognized legacy template. The second creates the current template at the now-missing
+path. Do not use this procedure for `invalid`, unrecognized, modified, symbolic-link, or non-regular entries. Preserve
+those entries and resolve their ownership first.
+
+## Resolve a modified hook during uninstall
 
 Use this procedure when uninstall preserves the Cline `PostToolUse` file because it contains the telemetry ownership
 comment but no longer matches a generated version.

@@ -205,9 +205,10 @@ ai-agent-telemetry status    # read config and global hook registration; sends n
 ai-agent-telemetry selftest  # send a probe and confirm collector delivery
 ```
 
-`status` reports each hook as `installed`, `missing`, or `invalid`; `status --verbose` adds the
-native file path and parse error. `selftest` proves the CLI can deliver to the collector, but it
-cannot prove that a harness loaded or invoked its hook. Check both before relying on telemetry.
+`status` reports each hook as `installed`, `missing`, `outdated`, or `invalid`; `status --verbose` adds the
+native file path and diagnostic. A Cline hook is `outdated` only when it exactly matches a supported legacy template.
+`selftest` proves the CLI can deliver to the collector, but it cannot prove that a harness loaded or invoked its hook.
+Check both before relying on telemetry.
 
 ### 3. Activate and verify Cline
 
@@ -249,9 +250,10 @@ Cline uses one global file hook for its VS Code and JetBrains extensions, compat
 and Cline CLI. On macOS and Linux, the installer manages `~/Documents/Cline/Hooks/PostToolUse`; on Windows, it manages
 `~/Documents/Cline/Hooks/PostToolUse.ps1`. Installation creates only a missing path; any existing entry other than the
 exact current template is preserved as a conflict. Uninstall deletes only an exact current or supported legacy
-template. A mismatched file with the telemetry ownership comment blocks the remaining telemetry cleanup until the
-user follows the [manual conflict-resolution procedure](docs/manual-uninstall.md). The hook exits successfully with no
-stdout or stderr. This removes telemetry output from Cline's hook card, but Cline still displays its own
+template. An exact legacy template appears as `outdated`; replace it with the commands reported by
+`status --verbose`. A mismatched file with the telemetry ownership comment blocks the remaining telemetry cleanup until
+the user follows the [manual conflict-resolution procedure](docs/manual-uninstall.md). The hook exits successfully with
+no stdout or stderr. This removes telemetry output from Cline's hook card, but Cline still displays its own
 `Hook: PostToolUse` status. Cline 4.1.4 has no separate setting to hide that status while keeping the hook enabled.
 Cline skill deployment maps to APM's `agent-skills` target.
 

@@ -70,6 +70,10 @@ Installation is create-only:
 4. Do not automatically rewrite an existing legacy managed template. The user can uninstall it and install the current
    template as two explicit operations.
 
+Status reports an exact supported legacy template as `outdated` and supplies those two commands. This classification
+comes from byte comparison inside the CLI. The user and the configuration skill do not inspect or recognize script
+syntax. Any content that does not match the current template or a supported legacy template remains `invalid`.
+
 The generated hook comments state that `ai-agent-telemetry` manages the entire file. They tell users not to append
 another hook in place. To keep custom commands during uninstall, the user must remove the telemetry invocation and the
 ownership comment first.
@@ -105,8 +109,9 @@ know whether the file was edited or replaced. It also names the managed CLI path
 that a requested purge did not run.
 
 The ownership-comment classifier accepts plain UTF-8, UTF-8 with a byte-order mark, and BOM-declared UTF-16LE or
-UTF-16BE. This accommodates normal PowerShell editor output. Encoding support applies only to conflict classification;
-an incomplete final UTF-16 code unit does not hide complete preceding lines. Automatic deletion still requires a
+UTF-16BE. It ignores trailing spaces, tabs, and a carriage return on the ownership-comment line. This accommodates
+normal editor output. Encoding support and whitespace normalization apply only to conflict classification; an
+incomplete final UTF-16 code unit does not hide complete preceding lines. Automatic deletion still requires a
 byte-for-byte match with an explicitly supported generated template.
 
 The error directs the user to the [manual conflict-resolution guide](../manual-uninstall.md).
@@ -130,6 +135,10 @@ Exact comparison is the smallest ownership proof that authorizes deletion. A con
 result but adds sidecar state and recovery cases. A marker helps explain ownership to the user but does not prove that
 the rest of the file is unchanged. Structural recognition and command tokenization accept more variations at the cost
 of incomplete language parsing.
+
+Create-only installation also applies to recognized legacy templates. Recognition makes exact deletion safe, but it
+does not grant an install or update command permission to rewrite an occupied path. The explicit uninstall and install
+sequence keeps that mutation visible while avoiding any request for the user or an agent to identify a legacy script.
 
 The ownership comment closes issue 57 without guessing about executable content. An ordinary edit leaves the comment
 in place, so cleanup fails and the lifecycle keeps the CLI available. A user who removes the telemetry invocation also
@@ -155,6 +164,7 @@ would break other child hooks. That lifecycle is broader and harder to remove th
 - The implementation has no shell or PowerShell tokenizer and no hash or receipt state for Cline hooks.
 - Windows and POSIX use the same ownership rule despite different generated scripts and filenames.
 - Updating a legacy hook requires an explicit uninstall and reinstall instead of an automatic rewrite.
+- Status distinguishes an exact supported legacy hook as `outdated`; the configuration skill acts on that state only.
 - A foreign hook without the telemetry ownership comment is preserved and does not block telemetry removal.
 - Users can keep their commands by removing only the telemetry invocation and ownership comment before rerunning
   uninstall.

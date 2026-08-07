@@ -165,6 +165,13 @@ func installClineHook(home, goos string) (string, bool, error) {
 		return path, false, fmt.Errorf("existing Cline hook is not a regular file and was preserved: %s", path)
 	}
 	if !bytes.Equal(entry.data, want) {
+		if isLegacyClineHookContent(entry.data, goos) {
+			return path, false, fmt.Errorf(
+				"legacy managed Cline hook was preserved at %s; run "+
+					"`ai-agent-telemetry hooks uninstall --target=cline`, then "+
+					"`ai-agent-telemetry hooks install --target=cline`; see %s",
+				path, clineManualUninstall)
+		}
 		return path, false, fmt.Errorf(
 			"existing Cline hook does not exactly match the current managed version and was preserved: %s; "+
 				"resolve the conflict before installing; see %s", path, clineManualUninstall)
@@ -228,6 +235,10 @@ func inspectClineHook(path, goos string) (hookState, string) {
 	}
 	if !isKnownClineHookContent(entry.data, goos) {
 		return hookInvalid, "hook is not managed by ai-agent-telemetry"
+	}
+	if isLegacyClineHookContent(entry.data, goos) {
+		return hookOutdated, "legacy managed hook; run `ai-agent-telemetry hooks uninstall --target=cline`, " +
+			"then `ai-agent-telemetry hooks install --target=cline`"
 	}
 	if runtime.GOOS != "windows" && entry.info.Mode().Perm() != clineHookMode(goos) {
 		return hookInvalid, fmt.Sprintf("mode is %04o, want %04o", entry.info.Mode().Perm(), clineHookMode(goos))
@@ -340,6 +351,10 @@ func isKnownClineHookContent(data []byte, goos string) bool {
 	if bytes.Equal(data, clineHookContent(goos)) {
 		return true
 	}
+	return isLegacyClineHookContent(data, goos)
+}
+
+func isLegacyClineHookContent(data []byte, goos string) bool {
 	for _, legacy := range clineLegacyHookContents(goos) {
 		if bytes.Equal(data, legacy) {
 			return true
@@ -351,7 +366,7 @@ func isKnownClineHookContent(data []byte, goos string) bool {
 func clineHookHasOwnerComment(data []byte) bool {
 	want := "# " + clineHookOwner
 	for _, line := range strings.Split(decodeClineHookText(data), "\n") {
-		if strings.TrimSuffix(line, "\r") == want {
+		if strings.TrimRight(line, " \t\r") == want {
 			return true
 		}
 	}

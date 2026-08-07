@@ -123,6 +123,24 @@ func TestInstallClineHookRepairsOwnedMode(t *testing.T) {
 	}
 }
 
+func TestInspectClineLegacyHookIsOutdatedDespiteOwnedMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX permission bits")
+	}
+	home := t.TempDir()
+	path := clineHookPath(home, "darwin")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, clineLegacyHookContents("darwin")[0], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, detail := inspectClineHook(path, "darwin")
+	if state != hookOutdated || !strings.Contains(detail, "hooks uninstall --target=cline") {
+		t.Fatalf("status = %s, detail = %q; want actionable outdated state", state, detail)
+	}
+}
+
 func TestClinePOSIXHookIsSilentAndFailsOpenWhenTelemetryCLIIsMissing(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX hooks cannot execute on Windows")
@@ -177,8 +195,15 @@ func TestInstallClineHookPreservesPreviousManagedContent(t *testing.T) {
 			}
 
 			_, changed, err := installClineHook(home, tt.goos)
-			if err == nil || changed || !strings.Contains(err.Error(), "preserved") {
+			if err == nil || changed || !strings.Contains(err.Error(), "preserved") ||
+				!strings.Contains(err.Error(), "hooks uninstall --target=cline") ||
+				!strings.Contains(err.Error(), "hooks install --target=cline") {
 				t.Fatalf("install changed = %v, err = %v; want legacy hook preserved as a conflict", changed, err)
+			}
+			state, detail := inspectClineHook(path, tt.goos)
+			if state != hookOutdated || !strings.Contains(detail, "hooks uninstall --target=cline") ||
+				!strings.Contains(detail, "hooks install --target=cline") {
+				t.Fatalf("status = %s, detail = %q; want actionable outdated state", state, detail)
 			}
 			got, err := os.ReadFile(path)
 			if err != nil {
@@ -349,6 +374,7 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 
 	t.Run("encoded ownership comments remain managed conflicts", func(t *testing.T) {
 		text := "# " + clineHookOwner + "\r\ncustom-hook-command\r\n"
+		textWithWhitespace := "# " + clineHookOwner + " \t\r\ncustom-hook-command\r\n"
 		utf16LE := encodeUTF16Test(text, binary.LittleEndian, []byte{0xff, 0xfe})
 		utf16BE := encodeUTF16Test(text, binary.BigEndian, []byte{0xfe, 0xff})
 		tests := []struct {
@@ -356,8 +382,11 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 			data []byte
 		}{
 			{name: "UTF-8 BOM", data: append([]byte{0xef, 0xbb, 0xbf}, []byte(text)...)},
+			{name: "UTF-8 trailing whitespace", data: []byte(textWithWhitespace)},
 			{name: "UTF-16LE BOM", data: utf16LE},
 			{name: "UTF-16BE BOM", data: utf16BE},
+			{name: "UTF-16LE trailing whitespace", data: encodeUTF16Test(textWithWhitespace, binary.LittleEndian, []byte{0xff, 0xfe})},
+			{name: "UTF-16BE trailing whitespace", data: encodeUTF16Test(textWithWhitespace, binary.BigEndian, []byte{0xfe, 0xff})},
 			{name: "UTF-16LE incomplete tail", data: append(append([]byte(nil), utf16LE...), 0x23)},
 			{name: "UTF-16BE incomplete tail", data: append(append([]byte(nil), utf16BE...), 0x23)},
 		}

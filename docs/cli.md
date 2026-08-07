@@ -114,8 +114,9 @@ The CLI manages one user-level native file per harness on every supported operat
 
 The Cline hook exits successfully with no stdout or stderr. This removes telemetry output from the Cline tool-call
 display, but Cline still renders its own `Hook: PostToolUse` status card. Cline 4.1.4 has no separate setting to hide
-that card while keeping the hook enabled. Installation never rewrites a legacy or mismatched hook; remove an exact
-legacy hook first, then install the current template as a separate operation.
+that card while keeping the hook enabled. Installation never rewrites a legacy or mismatched hook. The CLI reports an
+exact supported legacy template as `outdated` and gives the explicit `hooks uninstall` then `hooks install` commands.
+An `invalid` hook is preserved and does not qualify for this replacement procedure.
 
 Normal installation registers all four harnesses; no separate hook command is required. For a custom
 target list, `configure` accepts `--hooks=all`, `--hooks=none`, or a comma-separated subset. The
@@ -155,7 +156,8 @@ targets and returns a nonzero exit code after reporting every failure.
 roll back the configuration. If a later hook installation fails, the configuration remains written and `configure`
 returns exit code `1`.
 
-`status` reports `installed`, `missing`, or `invalid` for each harness. It verifies registration
+`status` reports `installed`, `missing`, `outdated`, or `invalid` for each harness. `outdated` is specific to a Cline
+file whose bytes exactly match a supported legacy template. It verifies registration
 and required policy files, not execution or trust. `selftest` verifies collector delivery, not hook
 registration.
 

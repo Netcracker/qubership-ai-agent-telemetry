@@ -224,7 +224,9 @@ the lifecycle hands control to the verified new image before replacing the manag
 | 401 / 403 | token missing or rejected | `configure`, enter the token at the no-echo prompt |
 | spool growing, flush failing | one of the above | fix the reported cause, then `selftest` |
 | `selftest` passes but real skill runs send nothing | the global hook is missing, invalid, or not reloaded | run `hooks install`, inspect `status --verbose`, and fully restart the harness |
-| **Cline only:** hook is missing, invalid, or conflicts with an existing file | the single global `PostToolUse` hook is not CLI-managed | run `hooks install --target=cline`, inspect `status --verbose`, and preserve unrelated files or symlinks for owner review |
+| **Cline only:** hook is `outdated` | its bytes exactly match a supported legacy template embedded in the CLI | run the exact legacy replacement procedure under "Confirm the global hooks" |
+| **Cline only:** hook is `invalid` and the detail reports only a wrong mode | the current managed template has incorrect POSIX permissions | run `hooks install --target=cline`, then require `cline: installed` |
+| **Cline only:** any other `invalid` state or install conflict | the `PostToolUse` entry is modified, unrelated, or not a regular file | preserve it; do not uninstall, overwrite, or infer ownership from script text |
 | **Cursor only:** hook is missing or invalid | `.cursor/hooks.json` is absent, malformed, or structurally incompatible | run `hooks install --target=cursor`; repair malformed JSON manually only after reviewing the reported path |
 | **Codex UI shows an old hook command** | the global file is stale or Codex has not reviewed the changed command | run `hooks install --target=codex`, inspect the displayed command, approve it if prompted, and fully restart Codex |
 | **Codex only:** `status` / `selftest` report `endpoint: (unset)` / `not configured` | Codex sandbox hides `~/.config` and blocks egress — not a missing configuration | run `hooks install --target=codex`, then restart Codex (see [references/codex-sandbox.md](references/codex-sandbox.md)) |
@@ -245,8 +247,8 @@ ai-agent-telemetry status --verbose
 ```
 
 `hooks install` is noninteractive and does not read or change the endpoint, token, CA, or
-repository policy. `status --verbose` reports `installed`, `missing`, or `invalid`, plus the native
-path and parse error when available:
+repository policy. `status --verbose` reports `installed`, `missing`, `outdated`, or `invalid`, plus the native
+path and diagnostic when available:
 
 | Harness | Active hook file |
 | --- | --- |
@@ -259,9 +261,9 @@ path and parse error when available:
 - Claude Code requires `PreToolUse`/`Skill`, `UserPromptExpansion`, and
   `PostToolUse` plus `PostToolUseFailure`/`mcp__.*`.
 - Cline requires its single global `PostToolUse` file. The CLI owns only its
-  exact managed content. It migrates previous managed content, but preserves
-  modified or unrelated files and symlinks as conflicts. Do not merge or
-  replace them automatically.
+  exact managed content. It reports an exact supported legacy template as
+  `outdated`, but preserves modified or unrelated files and symlinks as
+  conflicts. Do not merge or replace them automatically.
 - Codex requires `Stop` and `PostToolUse`/`mcp__.*`.
 - Cursor requires `afterAgentResponse`, `afterMCPExecution`, and a numeric
   top-level `version`.
@@ -272,6 +274,26 @@ matrix. The Codex target also requires
 
 A malformed or structurally incompatible file is left byte-for-byte unchanged. Review the path
 and error before repairing user-owned JSON, then rerun the two commands above.
+
+### Cline legacy hook replacement
+
+Do not ask the user to identify a legacy template and do not inspect shell or PowerShell syntax to make this decision.
+The CLI embeds the supported legacy templates and reports `cline: outdated` only after an exact byte comparison. When
+`status --verbose` reports that state, run:
+
+```sh
+ai-agent-telemetry hooks uninstall --target=cline
+ai-agent-telemetry hooks install --target=cline
+ai-agent-telemetry status --verbose
+```
+
+Require the final Cline state to be `installed`. The first command is safe in this branch because the CLI repeats its
+exact ownership check before deletion. If `invalid` reports only `mode is ..., want ...`, run
+`ai-agent-telemetry hooks install --target=cline`; the CLI reached that diagnostic only after matching the current
+managed bytes and can repair the mode safely. For every other `invalid` state, generic install conflict, or preserved
+uninstall, stop without editing or deleting the entry. Direct the user to the
+[Cline conflict guide](https://github.com/Netcracker/qubership-ai-agent-telemetry/blob/main/docs/manual-uninstall.md).
+Never use `rm`, `Remove-Item`, a content search, or visual similarity as a substitute for the CLI's `outdated` state.
 
 ### Codex changed-command review
 
