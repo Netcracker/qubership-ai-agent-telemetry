@@ -441,6 +441,217 @@ func TestDetectClineSkill(t *testing.T) {
 	}
 }
 
+func TestDetectClineMCP(t *testing.T) {
+	now := time.Date(2026, 8, 7, 12, 34, 56, 0, time.UTC)
+	tests := []struct {
+		name          string
+		hookName      string
+		toolField     string
+		toolName      string
+		parameters    map[string]any
+		success       any
+		durationField string
+		duration      any
+		wantOutcome   MCPOutcome
+		wantDuration  *int64
+		wantServer    string
+		wantTool      string
+	}{
+		{
+			name:          "classic success with execution time",
+			hookName:      "PostToolUse",
+			toolName:      "use_mcp_tool",
+			parameters:    map[string]any{"server_name": "github", "tool_name": "get_issue"},
+			success:       true,
+			durationField: "executionTimeMs",
+			duration:      42,
+			wantOutcome:   mcpSucceeded,
+			wantDuration:  durationPtr(42),
+		},
+		{
+			name:          "CLI failure with duration alias",
+			hookName:      "tool_result",
+			toolField:     "tool",
+			toolName:      "use_mcp_tool",
+			parameters:    map[string]any{"server_name": "github", "tool_name": "get_issue"},
+			success:       false,
+			durationField: "durationMs",
+			duration:      17,
+			wantOutcome:   mcpFailed,
+			wantDuration:  durationPtr(17),
+		},
+		{
+			name:        "direct SDK success",
+			hookName:    "PostToolUse",
+			toolName:    "github__get_issue",
+			success:     true,
+			wantOutcome: mcpSucceeded,
+		},
+		{
+			name:        "direct SDK failure",
+			hookName:    "PostToolUse",
+			toolName:    "github__get_issue",
+			success:     false,
+			wantOutcome: mcpFailed,
+		},
+		{
+			name:          "zero duration retained",
+			hookName:      "PostToolUse",
+			toolName:      "github__get_issue",
+			success:       true,
+			durationField: "executionTimeMs",
+			duration:      0,
+			wantOutcome:   mcpSucceeded,
+			wantDuration:  durationPtr(0),
+		},
+		{
+			name:          "negative duration omitted",
+			hookName:      "PostToolUse",
+			toolName:      "github__get_issue",
+			success:       true,
+			durationField: "executionTimeMs",
+			duration:      -1,
+			wantOutcome:   mcpSucceeded,
+		},
+		{
+			name:          "null execution time omitted",
+			hookName:      "PostToolUse",
+			toolName:      "github__get_issue",
+			success:       true,
+			durationField: "executionTimeMs",
+			duration:      nil,
+			wantOutcome:   mcpSucceeded,
+		},
+		{
+			name:          "null duration alias omitted",
+			hookName:      "PostToolUse",
+			toolName:      "github__get_issue",
+			success:       true,
+			durationField: "durationMs",
+			duration:      nil,
+			wantOutcome:   mcpSucceeded,
+		},
+		{
+			name:          "fractional duration omitted",
+			hookName:      "PostToolUse",
+			toolName:      "github__get_issue",
+			success:       true,
+			durationField: "executionTimeMs",
+			duration:      1.5,
+			wantOutcome:   mcpSucceeded,
+		},
+		{
+			name:          "overflowing duration omitted",
+			hookName:      "PostToolUse",
+			toolName:      "github__get_issue",
+			success:       true,
+			durationField: "executionTimeMs",
+			duration:      json.Number("9223372036854775808"),
+			wantOutcome:   mcpSucceeded,
+		},
+		{name: "missing success", hookName: "PostToolUse", toolName: "github__get_issue"},
+		{name: "non-boolean success", hookName: "PostToolUse", toolName: "github__get_issue", success: "true"},
+		{
+			name:       "missing classic server",
+			hookName:   "PostToolUse",
+			toolName:   "use_mcp_tool",
+			parameters: map[string]any{"tool_name": "get_issue"},
+			success:    true,
+		},
+		{
+			name:       "invalid classic tool",
+			hookName:   "PostToolUse",
+			toolName:   "use_mcp_tool",
+			parameters: map[string]any{"server_name": "github", "tool_name": "get issue"},
+			success:    true,
+		},
+		{name: "direct name without separator", hookName: "PostToolUse", toolName: "get_issue", success: true},
+		{name: "direct name with extra separator", hookName: "PostToolUse", toolName: "git__hub__get_issue", success: true},
+		{
+			name:        "direct name at transform limit",
+			hookName:    "PostToolUse",
+			toolName:    strings.Repeat("a", 53) + "__get_issue",
+			success:     true,
+			wantOutcome: mcpSucceeded,
+			wantServer:  strings.Repeat("a", 53),
+			wantTool:    "get_issue",
+		},
+		{
+			name:     "direct name over transform limit",
+			hookName: "PostToolUse",
+			toolName: strings.Repeat("a", 54) + "__get_issue",
+			success:  true,
+		},
+		{
+			name:     "direct name with transform suffix",
+			hookName: "PostToolUse",
+			toolName: "github_0123abcd__get_issue",
+			success:  true,
+		},
+		{name: "unrelated tool", hookName: "PostToolUse", toolName: "read_file", success: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			toolField := tt.toolField
+			if toolField == "" {
+				toolField = "toolName"
+			}
+			postToolUse := map[string]any{toolField: tt.toolName}
+			if tt.parameters != nil {
+				postToolUse["parameters"] = tt.parameters
+			}
+			if tt.success != nil {
+				postToolUse["success"] = tt.success
+			}
+			if tt.durationField != "" {
+				postToolUse[tt.durationField] = tt.duration
+			}
+			stdin, err := json.Marshal(map[string]any{
+				"hookName":       tt.hookName,
+				"taskId":         "cline-session-1",
+				"workspaceRoots": []string{"/repo"},
+				"postToolUse":    postToolUse,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolverCalls := 0
+			events, err := detect("cline", stdin, func(cwd string) string {
+				resolverCalls++
+				if cwd != "/repo" {
+					t.Fatalf("resolver got cwd %q, want /repo", cwd)
+				}
+				return "git@github.com:Netcracker/project.git"
+			}, now)
+			if err != nil {
+				t.Fatalf("detect: %v", err)
+			}
+			if tt.wantOutcome == "" {
+				if len(events) != 0 || resolverCalls != 0 {
+					t.Fatalf("events = %#v, resolver calls = %d; want no event and no lookup", events, resolverCalls)
+				}
+				return
+			}
+			if len(events) != 1 || resolverCalls != 1 {
+				t.Fatalf("events = %#v, resolver calls = %d; want one event and one lookup", events, resolverCalls)
+			}
+			event := events[0]
+			payload, ok := event.Payload.(MCPPayload)
+			if !ok {
+				t.Fatalf("payload = %T, want MCPPayload", event.Payload)
+			}
+			wantServer := firstNonEmpty(tt.wantServer, "github")
+			wantTool := firstNonEmpty(tt.wantTool, "get_issue")
+			if event.Agent != "cline" || event.SessionID != "cline-session-1" || event.RepoDir != "/repo" ||
+				event.RepoRemote != "git@github.com:Netcracker/project.git" || payload.ServerName != wantServer ||
+				payload.ToolName != wantTool || payload.Outcome != tt.wantOutcome ||
+				!reflect.DeepEqual(payload.DurationMS, tt.wantDuration) {
+				t.Fatalf("event = %#v", event)
+			}
+		})
+	}
+}
+
 func TestDetectClineRejectsMalformedInput(t *testing.T) {
 	for _, input := range [][]byte{nil, []byte("{not json"), []byte(`[]`)} {
 		events, err := detect("cline", input, func(string) string {

@@ -90,6 +90,8 @@ stale_timestamp=$(((hour - 2 * 86400) * 1000000000 + 900000000))
 printf 's/__TS_9__/%s/g\n' "$stale_timestamp" >>"$event_sed_script"
 cline_timestamp=$((hour * 1000000000 + 1000000000))
 printf 's/__TS_10__/%s/g\n' "$cline_timestamp" >>"$event_sed_script"
+cline_mcp_timestamp=$((hour * 1000000000 + 1100000000))
+printf 's/__TS_11__/%s/g\n' "$cline_mcp_timestamp" >>"$event_sed_script"
 sed -f "$event_sed_script" "$fixture" >"$rendered_fixture"
 
 metric_fixture_time=$((now - 60))
@@ -119,10 +121,10 @@ while :; do
     --data-urlencode "end=$((hour + 3600))" \
     "$base_url/select/logsql/query" |
     jq -sr 'if length == 1 then .[0].total // empty else empty end')
-  [ "$total" = 9 ] && break
+  [ "$total" = 10 ] && break
   attempt=$((attempt + 1))
   [ "$attempt" -lt 30 ] || {
-    printf 'FAIL: fixture events did not reach VictoriaLogs (found %s, want 9)\n' "$total" >&2
+    printf 'FAIL: fixture events did not reach VictoriaLogs (found %s, want 10)\n' "$total" >&2
     exit 1
   }
   sleep 1
