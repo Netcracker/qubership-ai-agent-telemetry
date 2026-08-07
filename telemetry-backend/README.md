@@ -161,7 +161,7 @@ harnesses that might export OTLP metrics.
 | Codex | Supported | Supported | Live pilot and backend fixture | Supported |
 | Claude Code | Supported | Supported | Live pilot and backend fixture | Supported |
 | Cursor | Supported | Not documented | Existing hook coverage | Supported |
-| Cline | Not supported | Supported | Backend fixture | Not supported |
+| Cline | Supported | Supported | Backend fixture | Not supported |
 
 `Backend fixture` means that a manually authored OTLP payload passes through the authenticated backend pipeline.
 It does not validate a client binary, configuration syntax, environment variable support, header encoding, or actual
