@@ -17,6 +17,68 @@ const (
 
 var errClineHookOwnershipConflict = errors.New("Cline hook cleanup is incomplete")
 
+type clineHookEntryKind uint8
+
+const (
+	clineEntryMissing clineHookEntryKind = iota
+	clineEntryRegular
+	clineEntrySymlink
+	clineEntryOther
+)
+
+type clineHookEntry struct {
+	kind clineHookEntryKind
+	file *os.File
+	info os.FileInfo
+	data []byte
+}
+
+func (entry *clineHookEntry) close() error {
+	if entry.file == nil {
+		return nil
+	}
+	err := entry.file.Close()
+	entry.file = nil
+	return err
+}
+
+func readClineHookEntry(path string) (clineHookEntry, error) {
+	file, err := openClineHookNoFollow(path)
+	if err != nil {
+		info, lstatErr := os.Lstat(path)
+		if errors.Is(lstatErr, os.ErrNotExist) {
+			return clineHookEntry{kind: clineEntryMissing}, nil
+		}
+		if lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return clineHookEntry{kind: clineEntrySymlink, info: info}, nil
+		}
+		return clineHookEntry{}, err
+	}
+	entry := clineHookEntry{file: file}
+	info, err := file.Stat()
+	if err != nil {
+		_ = entry.close()
+		return clineHookEntry{}, err
+	}
+	entry.info = info
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		entry.kind = clineEntrySymlink
+		return entry, nil
+	case !info.Mode().IsRegular():
+		entry.kind = clineEntryOther
+		return entry, nil
+	default:
+		entry.kind = clineEntryRegular
+	}
+	entry.data, err = io.ReadAll(file)
+	if err != nil {
+		_ = entry.close()
+		return clineHookEntry{}, err
+	}
+	return entry, nil
+}
+
 func clineHookPath(home, goos string) string {
 	if home == "" {
 		return ""
@@ -80,35 +142,31 @@ func installClineHook(home, goos string) (string, bool, error) {
 	}
 	want := clineHookContent(goos)
 	wantMode := clineHookMode(goos)
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
+	entry, err := readClineHookEntry(path)
+	if err != nil {
+		return path, false, err
+	}
+	defer func() { _ = entry.close() }()
+	switch entry.kind {
+	case clineEntryMissing:
 		if err := writeClineHookExclusively(path, want, wantMode); err != nil {
 			return path, false, err
 		}
 		return path, true, nil
-	}
-	if err != nil {
-		return path, false, err
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
+	case clineEntrySymlink:
 		return path, false, fmt.Errorf("existing Cline hook is a symbolic link and was preserved: %s", path)
-	}
-	if !info.Mode().IsRegular() {
+	case clineEntryOther:
 		return path, false, fmt.Errorf("existing Cline hook is not a regular file and was preserved: %s", path)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return path, false, err
-	}
-	if !bytes.Equal(data, want) {
+	if !bytes.Equal(entry.data, want) {
 		return path, false, fmt.Errorf(
 			"existing Cline hook does not exactly match the current managed version and was preserved: %s; "+
 				"resolve the conflict before installing; see %s", path, clineManualUninstall)
 	}
-	if runtime.GOOS == "windows" || info.Mode().Perm() == wantMode {
+	if runtime.GOOS == "windows" || entry.info.Mode().Perm() == wantMode {
 		return path, false, nil
 	}
-	if err := os.Chmod(path, wantMode); err != nil {
+	if err := entry.file.Chmod(wantMode); err != nil {
 		return path, false, err
 	}
 	return path, true, nil
@@ -149,60 +207,55 @@ func writeClineHookExclusively(path string, data []byte, mode os.FileMode) error
 }
 
 func inspectClineHook(path, goos string) (hookState, string) {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return hookMissing, ""
-	}
+	entry, err := readClineHookEntry(path)
 	if err != nil {
 		return hookInvalid, err.Error()
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
+	defer func() { _ = entry.close() }()
+	switch entry.kind {
+	case clineEntryMissing:
+		return hookMissing, ""
+	case clineEntrySymlink:
 		return hookInvalid, fmt.Sprintf("Cline hook is a symbolic link: %s", path)
-	}
-	if !info.Mode().IsRegular() {
+	case clineEntryOther:
 		return hookInvalid, fmt.Sprintf("Cline hook is not a regular file: %s", path)
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return hookInvalid, err.Error()
-	}
-	if !isKnownClineHookContent(data, goos) {
+	if !isKnownClineHookContent(entry.data, goos) {
 		return hookInvalid, "hook is not managed by ai-agent-telemetry"
 	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != clineHookMode(goos) {
-		return hookInvalid, fmt.Sprintf("mode is %04o, want %04o", info.Mode().Perm(), clineHookMode(goos))
+	if runtime.GOOS != "windows" && entry.info.Mode().Perm() != clineHookMode(goos) {
+		return hookInvalid, fmt.Sprintf("mode is %04o, want %04o", entry.info.Mode().Perm(), clineHookMode(goos))
 	}
 	return hookInstalled, ""
 }
 
 func removeClineHook(path, goos string, warnings io.Writer) (bool, error) {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
+	entry, err := readClineHookEntry(path)
 	if err != nil {
 		return false, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
+	defer func() { _ = entry.close() }()
+	switch entry.kind {
+	case clineEntryMissing:
+		return false, nil
+	case clineEntrySymlink:
+		warnPreservedUserOwnedClineHook(warnings, path)
+		return false, nil
+	case clineEntryOther:
 		warnPreservedUserOwnedClineHook(warnings, path)
 		return false, nil
 	}
-	if !info.Mode().IsRegular() {
-		warnPreservedUserOwnedClineHook(warnings, path)
-		return false, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false, err
-	}
-	if !isKnownClineHookContent(data, goos) {
-		if clineHookHasOwnerComment(data) {
+	if !isKnownClineHookContent(entry.data, goos) {
+		if clineHookHasOwnerComment(entry.data) {
 			warnClineHookOwnershipConflict(warnings, path)
 			return false, fmt.Errorf("%w: preserved hook does not match a generated version: %s",
 				errClineHookOwnershipConflict, path)
 		}
 		warnPreservedUserOwnedClineHook(warnings, path)
 		return false, nil
+	}
+	if err := entry.close(); err != nil {
+		return false, err
 	}
 	return removeClineHookAfterMatch(path, goos)
 }
@@ -212,23 +265,26 @@ func removeClineHookAfterMatch(path, goos string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("cannot isolate the matched Cline hook before removal: %w", err)
 	}
-	info, err := os.Lstat(quarantine)
+	entry, err := readClineHookEntry(quarantine)
 	if err != nil {
 		return false, fmt.Errorf("cannot recheck isolated Cline hook %s: %w", quarantine, err)
 	}
-	if !info.Mode().IsRegular() {
+	defer func() { _ = entry.close() }()
+	if entry.kind != clineEntryRegular {
 		return false, fmt.Errorf(
 			"Cline hook changed during removal; the replacement was preserved at %s and was not deleted", quarantine)
 	}
-	data, err := os.ReadFile(quarantine)
-	if err != nil {
-		return false, fmt.Errorf("cannot recheck isolated Cline hook; preserved it at %s: %w", quarantine, err)
-	}
-	if !isKnownClineHookContent(data, goos) {
+	if !isKnownClineHookContent(entry.data, goos) {
+		if err := entry.close(); err != nil {
+			return false, fmt.Errorf("cannot close changed Cline hook preserved at %s: %w", quarantine, err)
+		}
 		if err := restoreQuarantinedClineHook(path, quarantine); err != nil {
 			return false, err
 		}
 		return false, fmt.Errorf("Cline hook changed during removal and was restored without deletion: %s", path)
+	}
+	if err := entry.close(); err != nil {
+		return false, fmt.Errorf("cannot close matched Cline hook preserved at %s: %w", quarantine, err)
 	}
 	if err := os.Remove(quarantine); err != nil {
 		return false, fmt.Errorf("cannot remove matched Cline hook preserved at %s: %w", quarantine, err)

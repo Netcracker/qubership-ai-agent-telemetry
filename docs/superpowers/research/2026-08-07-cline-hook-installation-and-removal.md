@@ -264,10 +264,15 @@ Installation creates only a missing canonical path and treats only the exact cur
 deletes exact current or supported legacy templates, classifies a mismatched regular file through the exact ownership
 comment, and preserves every other entry as user-owned.
 
-Installation and status reject symbolic links and non-regular entries before reading them. For deletion, uninstall
-moves an exact candidate to a unique path in the same directory and rechecks the isolated entry. This binds the byte
-comparison to the entry being removed. A concurrent replacement is restored without overwriting the canonical path or
-retained at a reported temporary preservation path if restoration is not safe.
+Installation, status, and uninstall open entries without following symbolic links, then check the type and read bytes
+through the same descriptor. POSIX uses nonblocking mode so a FIFO cannot stop the process. For deletion, uninstall
+moves an exact candidate to a unique path in the same directory and rechecks the isolated entry. An ordinary concurrent
+replacement of the canonical path is restored without overwriting a new entry or retained at a reported temporary
+preservation path if restoration is not safe.
+
+This is a fail-safe for expected concurrent writes to the canonical hook path. It is not a security boundary against
+an adversarial process running as the same user that tracks the random temporary path or writes through an open file
+descriptor after comparison. Portable filesystems provide no atomic compare-by-content-and-unlink operation.
 
 Lifecycle tests cover the blocking conflict and the supported two-run procedure: the first uninstall preserves the
 CLI and telemetry data; after the user removes the telemetry invocation and ownership comment, the second uninstall

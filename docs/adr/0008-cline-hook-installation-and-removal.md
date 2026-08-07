@@ -86,10 +86,19 @@ Uninstall is exact and fail-safe:
    configuration, and telemetry cache.
 6. Continue independent cleanup for other selected harnesses and aggregate the Cline error.
 
-Before deleting an exact template, uninstall moves the matched directory entry to a unique path in the same directory
-and compares its bytes again. It deletes only that isolated entry. If the canonical path was replaced after the first
-comparison, uninstall restores a regular replacement without overwriting a newly occupied path. If safe restoration is
-not possible, it retains the replacement at the reported temporary preservation path and returns an error.
+The installer opens an existing entry without following symbolic links. On POSIX, it also uses nonblocking mode so a
+FIFO cannot stop the process. It checks the type and reads the bytes through that same file descriptor.
+
+Before deleting an exact template, uninstall moves the matched canonical entry to a unique path in the same directory
+and compares its bytes again. This protects the expected concurrency boundary: another process replacing the canonical
+path during uninstall. If a different regular entry was moved, uninstall restores it without overwriting a newly
+occupied canonical path. If safe restoration is not possible, it retains the entry at the reported temporary
+preservation path and returns an error.
+
+The lifecycle does not claim protection from an adversarial process running as the same user that discovers and
+replaces the random temporary path, or modifies the isolated file through an already open descriptor after comparison.
+Portable filesystems do not provide an atomic compare-by-content-and-unlink operation. The temporary path is an
+internal fail-safe for ordinary concurrent replacement, not a security boundary against the local account owner.
 
 The error names the preserved hook path and says that the file does not match a managed version. It does not claim to
 know whether the file was edited or replaced. It also names the managed CLI path that remains installed and explains
@@ -135,8 +144,9 @@ would break other child hooks. That lifecycle is broader and harder to remove th
 
 - Installation never changes an occupied Cline hook path unless the file already equals the current template.
 - Uninstall never deletes user-modified or third-party hook content.
-- Installation and status reject symbolic links and non-regular entries without opening them.
-- Uninstall isolates and rechecks an exact candidate so a concurrent path replacement cannot be deleted by mistake.
+- Installation, status, and uninstall do not follow symbolic links or read non-regular entries.
+- Uninstall isolates and rechecks an exact candidate so an ordinary concurrent replacement of the canonical path is
+  restored or retained instead of deleted.
 - A modified hook that retains the telemetry ownership comment prevents automatic removal of the CLI.
 - The implementation has no shell or PowerShell tokenizer and no hash or receipt state for Cline hooks.
 - Windows and POSIX use the same ownership rule despite different generated scripts and filenames.
