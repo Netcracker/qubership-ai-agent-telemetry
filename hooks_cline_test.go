@@ -27,14 +27,25 @@ func TestInstallClineHookByPlatform(t *testing.T) {
 		contains []string
 	}{
 		{
-			goos:     "darwin",
-			mode:     0o755,
-			contains: []string{"#!/bin/sh", "ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true", "exit 0"},
+			goos: "darwin",
+			mode: 0o755,
+			contains: []string{
+				"#!/bin/sh",
+				"Do not add commands to this file",
+				"remove the telemetry command and ownership comment",
+				"ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true",
+				"exit 0",
+			},
 		},
 		{
-			goos:     "windows",
-			mode:     0o600,
-			contains: []string{"& ai-agent-telemetry ingest --agent=cline *> $null", "exit 0"},
+			goos: "windows",
+			mode: 0o600,
+			contains: []string{
+				"Do not add commands to this file",
+				"remove the telemetry command and ownership comment",
+				"& ai-agent-telemetry ingest --agent=cline *> $null",
+				"exit 0",
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -121,7 +132,7 @@ func TestClinePOSIXHookIsSilentAndFailsOpenWhenTelemetryCLIIsMissing(t *testing.
 	}
 }
 
-func TestInstallClineHookMigratesPreviousManagedContent(t *testing.T) {
+func TestInstallClineHookPreservesPreviousManagedContent(t *testing.T) {
 	tests := []struct {
 		name    string
 		goos    string
@@ -154,18 +165,15 @@ func TestInstallClineHookMigratesPreviousManagedContent(t *testing.T) {
 			}
 
 			_, changed, err := installClineHook(home, tt.goos)
-			if err != nil || !changed {
-				t.Fatalf("migration changed = %v, err = %v", changed, err)
+			if err == nil || changed || !strings.Contains(err.Error(), "preserved") {
+				t.Fatalf("install changed = %v, err = %v; want legacy hook preserved as a conflict", changed, err)
 			}
 			got, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(string(got), "cancel") {
-				t.Fatalf("migrated hook still writes stdout:\n%s", got)
-			}
-			if state, detail := inspectClineHook(path, tt.goos); state != hookInstalled || detail != "" {
-				t.Fatalf("status = %s, detail = %q", state, detail)
+			if !bytes.Equal(got, []byte(tt.content)) {
+				t.Fatalf("legacy hook changed: got %q, want %q", got, tt.content)
 			}
 		})
 	}
@@ -182,7 +190,7 @@ func TestInstallClineHookPreservesConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, changed, err := installClineHook(home, "darwin")
-	if err == nil || changed || !strings.Contains(err.Error(), "existing Cline hook is not managed") {
+	if err == nil || changed {
 		t.Fatalf("changed = %v, err = %v", changed, err)
 	}
 	got, readErr := os.ReadFile(path)
@@ -258,22 +266,42 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 		}
 	})
 
-	t.Run("modified", func(t *testing.T) {
+	t.Run("previous silent managed version", func(t *testing.T) {
+		home := t.TempDir()
+		path := clineHookPath(home, "darwin")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		previous := []byte("#!/bin/sh\n# Managed by ai-agent-telemetry. Do not edit.\n" +
+			"ai-agent-telemetry ingest --agent=cline >/dev/null 2>&1 || true\nexit 0\n")
+		if err := os.WriteFile(path, previous, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		changed, err := removeClineHook(path, "darwin", &bytes.Buffer{})
+		if err != nil || !changed {
+			t.Fatalf("changed = %v, err = %v", changed, err)
+		}
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("previous silent managed hook remains: %v", err)
+		}
+	})
+
+	t.Run("ownership comment remains after telemetry command was removed", func(t *testing.T) {
 		for _, goos := range []string{"darwin", "windows"} {
 			t.Run(goos, func(t *testing.T) {
 				home := t.TempDir()
-				path, _, err := installClineHook(home, goos)
-				if err != nil {
+				path := clineHookPath(home, goos)
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 					t.Fatal(err)
 				}
-				modified := append(clineHookContent(goos), []byte("# local change\n")...)
+				modified := []byte("# " + clineHookOwner + "\ncustom-hook-command\n")
 				if err := os.WriteFile(path, modified, clineHookMode(goos)); err != nil {
 					t.Fatal(err)
 				}
 				var warnings bytes.Buffer
 				changed, err := removeClineHook(path, goos, &warnings)
 				if err == nil || changed || !strings.Contains(err.Error(), "cleanup is incomplete") ||
-					!strings.Contains(warnings.String(), "preserved modified Cline hook") {
+					!strings.Contains(warnings.String(), "preserved Cline hook ownership conflict") {
 					t.Fatalf("changed = %v, err = %v, warnings = %q", changed, err, warnings.String())
 				}
 				got, readErr := os.ReadFile(path)
@@ -284,7 +312,7 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 		}
 	})
 
-	t.Run("unrelated", func(t *testing.T) {
+	t.Run("telemetry command without ownership comment is user-owned", func(t *testing.T) {
 		home := t.TempDir()
 		path := clineHookPath(home, "darwin")
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -299,7 +327,7 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 		}
 		var warnings bytes.Buffer
 		changed, err := removeClineHook(path, "darwin", &warnings)
-		if err != nil || changed || !strings.Contains(warnings.String(), "preserved modified Cline hook") {
+		if err != nil || changed || !strings.Contains(warnings.String(), "preserved user-owned Cline hook") {
 			t.Fatalf("changed = %v, err = %v, warnings = %q", changed, err, warnings.String())
 		}
 		if got, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(got, original) {
@@ -323,7 +351,7 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 		}
 		var warnings bytes.Buffer
 		changed, err := removeClineHook(path, "darwin", &warnings)
-		if err != nil || changed || !strings.Contains(warnings.String(), "preserved modified Cline hook") {
+		if err != nil || changed || !strings.Contains(warnings.String(), "preserved user-owned Cline hook") {
 			t.Fatalf("changed = %v, err = %v, warnings = %q", changed, err, warnings.String())
 		}
 		if info, statErr := os.Lstat(path); statErr != nil || info.Mode()&os.ModeSymlink == 0 {
@@ -332,7 +360,7 @@ func TestRemoveClineHookOwnership(t *testing.T) {
 	})
 }
 
-func TestRemoveClineHookDetectsManagedInvocationVariants(t *testing.T) {
+func TestRemoveClineHookDoesNotParseUnownedCommands(t *testing.T) {
 	tests := []struct {
 		name    string
 		goos    string
@@ -395,9 +423,11 @@ func TestRemoveClineHookDetectsManagedInvocationVariants(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tt.content), clineHookMode(tt.goos)); err != nil {
 				t.Fatal(err)
 			}
-			changed, err := removeClineHook(path, tt.goos, &bytes.Buffer{})
-			if err == nil || changed || !strings.Contains(err.Error(), "cleanup is incomplete") {
-				t.Fatalf("changed = %v, err = %v, want incomplete cleanup", changed, err)
+			var warnings bytes.Buffer
+			changed, err := removeClineHook(path, tt.goos, &warnings)
+			if err != nil || changed || !strings.Contains(warnings.String(), "preserved user-owned Cline hook") {
+				t.Fatalf("changed = %v, err = %v, warnings = %q; want user-owned preservation",
+					changed, err, warnings.String())
 			}
 		})
 	}

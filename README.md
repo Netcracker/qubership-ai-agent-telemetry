@@ -247,13 +247,16 @@ ai-agent-telemetry hooks install --target=claude,codex
 
 Cline uses one global file hook for its VS Code and JetBrains extensions, compatible VS Code hosts such as Cursor,
 and Cline CLI. On macOS and Linux, the installer manages `~/Documents/Cline/Hooks/PostToolUse`; on Windows, it manages
-`~/Documents/Cline/Hooks/PostToolUse.ps1`. If an unrelated file or symbolic link already occupies that path, the
-installer reports a conflict and preserves it. The hook exits successfully with no stdout or stderr. This removes
-telemetry output from Cline's hook card, but Cline still displays its own `Hook: PostToolUse` status. Cline 4.1.4 has
-no separate setting to hide that status while keeping the hook enabled. Cline skill deployment maps to APM's
-`agent-skills` target.
+`~/Documents/Cline/Hooks/PostToolUse.ps1`. Installation creates only a missing path; any existing entry other than the
+exact current template is preserved as a conflict. Uninstall deletes only an exact current or supported legacy
+template. A mismatched file with the telemetry ownership comment blocks the remaining telemetry cleanup until the
+user follows the [manual conflict-resolution procedure](docs/manual-uninstall.md). The hook exits successfully with no
+stdout or stderr. This removes telemetry output from Cline's hook card, but Cline still displays its own
+`Hook: PostToolUse` status. Cline 4.1.4 has no separate setting to hide that status while keeping the hook enabled.
+Cline skill deployment maps to APM's `agent-skills` target.
 
-See [the Cline harness decision](docs/adr/0007-cline-harness-support.md) for the client scope and trade-offs.
+See [the Cline harness decision](docs/adr/0007-cline-harness-support.md) and
+[the hook lifecycle decision](docs/adr/0008-cline-hook-installation-and-removal.md) for the client scope and trade-offs.
 
 ### Optional setup skill
 

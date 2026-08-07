@@ -278,6 +278,74 @@ func TestRunLifecyclePreservesCLIAndTelemetryDataForModifiedClineHook(t *testing
 	}
 }
 
+func TestRunLifecycleResolvesModifiedClineHookAfterManualEdit(t *testing.T) {
+	home := t.TempDir()
+	clinePath := hookPath(home, hookCline)
+	if err := os.MkdirAll(filepath.Dir(clinePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	conflict := []byte("# " + clineHookOwner + "\ncustom-hook-command\n")
+	if err := os.WriteFile(clinePath, conflict, clineHookMode(runtime.GOOS)); err != nil {
+		t.Fatal(err)
+	}
+
+	configDir := filepath.Join(home, ".config", pkgName)
+	cacheDir := filepath.Join(home, ".cache", pkgName)
+	for _, path := range []string{configDir, cacheDir} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var firstCalls []string
+	firstDeps := fakeLifecycleDeps(&firstCalls, nil, nil)
+	firstDeps.Components[componentTelemetry] = newTelemetryComponent(telemetryDeps{
+		Home: func() string { return home }, ConfigDir: func() string { return configDir },
+		CacheDir: func() string { return cacheDir }, Warnings: &bytes.Buffer{},
+	})
+	opts := lifecycleOptions{
+		Action: actionUninstall, Components: []componentName{componentTelemetry}, Purge: true, RemoveCLI: true,
+	}
+	first := runLifecycle(context.Background(), opts, firstDeps)
+	if first.Err == nil || !strings.Contains(first.Err.Error(), "docs/manual-uninstall.md") {
+		t.Fatalf("first uninstall error = %v, want manual conflict-resolution guidance", first.Err)
+	}
+	if containsString(firstCalls, "uninstall:cli") {
+		t.Fatalf("first calls = %v, managed CLI must remain while the ownership comment remains", firstCalls)
+	}
+	for _, path := range []string{configDir, cacheDir} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("first uninstall removed telemetry data: %s: %v", path, err)
+		}
+	}
+
+	userHook := []byte("custom-hook-command\n")
+	if err := os.WriteFile(clinePath, userHook, clineHookMode(runtime.GOOS)); err != nil {
+		t.Fatal(err)
+	}
+	var secondCalls []string
+	secondDeps := fakeLifecycleDeps(&secondCalls, nil, nil)
+	secondDeps.Components[componentTelemetry] = newTelemetryComponent(telemetryDeps{
+		Home: func() string { return home }, ConfigDir: func() string { return configDir },
+		CacheDir: func() string { return cacheDir }, Warnings: &bytes.Buffer{},
+	})
+	second := runLifecycle(context.Background(), opts, secondDeps)
+	if second.Err != nil {
+		t.Fatalf("second uninstall error = %v", second.Err)
+	}
+	if !containsString(secondCalls, "uninstall:cli") {
+		t.Fatalf("second calls = %v, want managed CLI removal", secondCalls)
+	}
+	if got, err := os.ReadFile(clinePath); err != nil || !bytes.Equal(got, userHook) {
+		t.Fatalf("user-owned hook = %q, %v; want byte-for-byte preservation", got, err)
+	}
+	for _, path := range []string{configDir, cacheDir} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("telemetry data remains after resolved uninstall: %s: %v", path, err)
+		}
+	}
+}
+
 func TestRunLifecycleRemovesCLIAndTelemetryDataForUnrelatedClineHook(t *testing.T) {
 	tests := []struct {
 		name    string

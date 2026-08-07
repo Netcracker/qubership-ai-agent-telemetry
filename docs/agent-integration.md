@@ -151,15 +151,19 @@ response text that Cline previously showed after every tool call. It does not re
 `Hook: PostToolUse` status card: Cline creates the `hook_status` message before starting the hook process. Cline 4.1.4
 has no separate setting to hide that card while keeping hooks enabled.
 
-The installer migrates the previous managed hook that printed `{"cancel":false}`, repairs only owned content and
-mode, and preserves an unrelated file or symbolic link. Cline supports one file per hook type, so automatic
-composition with an unrelated `PostToolUse` hook is outside the current implementation.
+Installation creates a missing hook, treats the exact current content as idempotent, and preserves every other entry
+as a conflict. It does not rewrite a supported legacy template. Uninstall removes only exact current or supported
+legacy content. A mismatched regular file with the telemetry ownership comment blocks the remaining telemetry cleanup;
+the [manual conflict-resolution guide](manual-uninstall.md) explains how to keep user commands and complete uninstall.
+Cline supports one file per hook type, so automatic composition with an unrelated `PostToolUse` hook is outside the
+current implementation.
 
 On macOS and Linux the file is executable with mode `0755`. On Windows it is a PowerShell file. Selecting the `cline`
 lifecycle harness deploys shared skills through APM's `agent-skills` target because APM has no native Cline target and
 Cline discovers `.agents/skills`.
 
 [ADR 0007](adr/0007-cline-harness-support.md) records why Cline was added and why the integration uses this hook.
+[ADR 0008](adr/0008-cline-hook-installation-and-removal.md) defines its ownership and lifecycle rules.
 
 ## Cursor
 

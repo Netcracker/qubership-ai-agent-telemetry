@@ -268,10 +268,21 @@ func TestUninstallHooksContinuesAfterModifiedClineHook(t *testing.T) {
 	if err := hookInstallError(results); err == nil || !strings.Contains(err.Error(), "cline") {
 		t.Fatalf("hookInstallError() = %v, want incomplete Cline cleanup", err)
 	}
+	cleanupErr := hookInstallError(results)
+	for _, fragment := range []string{
+		clinePath,
+		managedCLIPath(home, runtime.GOOS),
+		"docs/manual-uninstall.md",
+		"rerun the original uninstall command",
+	} {
+		if !strings.Contains(cleanupErr.Error(), fragment) {
+			t.Fatalf("hookInstallError() = %q, want %q", cleanupErr, fragment)
+		}
+	}
 	if len(results) != 3 || !results[0].Changed || results[1].Changed || !results[2].Changed {
 		t.Fatalf("results = %#v", results)
 	}
-	if !strings.Contains(warnings.String(), "preserved modified Cline hook") {
+	if !strings.Contains(warnings.String(), "preserved Cline hook ownership conflict") {
 		t.Fatalf("warnings = %q", warnings.String())
 	}
 	if got, err := os.ReadFile(clinePath); err != nil || !bytes.Equal(got, modified) {
