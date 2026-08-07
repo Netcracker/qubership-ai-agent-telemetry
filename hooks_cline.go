@@ -326,7 +326,7 @@ func quarantineClineHook(path string) (string, error) {
 func restoreQuarantinedClineHook(path, quarantine string) error {
 	if err := os.Link(quarantine, path); err != nil {
 		return fmt.Errorf(
-			"Cline hook changed during removal; preserved the replacement at %s because it could not be restored to %s: %w",
+			"cline hook changed during removal; preserved the replacement at %s because it could not be restored to %s: %w",
 			quarantine, path, err)
 	}
 	if err := os.Remove(quarantine); err != nil {
