@@ -212,7 +212,8 @@ done
 
 for text in \
   'metrics_exporter = { otlp-http = {' 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT' \
-  'OTEL_METRICS_INCLUDE_SESSION_ID=false' 'Cline is not an accepted `--harnesses` target' \
+  'OTEL_METRICS_INCLUDE_SESSION_ID=false' 'Cline is an accepted lifecycle `--harnesses` target' \
+  'Cline has no first-class APM target' \
   'per-session high-cardinality labels' '## Verify ingestion' '## Remove the configuration'; do
   grep -Fq "$text" "$native_onboarding" || fail "native OTLP onboarding guide is missing: $text"
 done

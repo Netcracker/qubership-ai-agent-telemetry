@@ -26,6 +26,8 @@ Denis Filatov (@denifilatoff)
 - [0005-cli-managed-global-hooks.md](0005-cli-managed-global-hooks.md) defines machine-wide hook ownership.
 - [0006-generic-event-schema-and-privacy.md](0006-generic-event-schema-and-privacy.md) defines the event allowlist and
   privacy boundary.
+- [0008-cline-hook-installation-and-removal.md](0008-cline-hook-installation-and-removal.md) supersedes the installation
+  migration and removal rules in this record.
 
 <!-- markdownlint-enable MD001 -->
 
@@ -57,9 +59,10 @@ The Cline adapter will accept the native VS Code Extension payload and the CLI c
 the fields needed for skill detection and repository attribution. Prompts, tool results, model data, user identity,
 and local paths remain outside the event.
 
-The installer owns only its exact hook content. It will create a missing file, repair its mode, migrate the previous
-managed version that printed `{"cancel":false}`, and remove an exact managed file during uninstall. It will preserve
-modified files, unrelated files, and symbolic links as conflicts. It will not compose multiple `PostToolUse` scripts.
+The installer owns only its exact hook content. The original decision allowed migration of the previous managed
+version that printed `{"cancel":false}`. [ADR 0008](0008-cline-hook-installation-and-removal.md) supersedes that part:
+installation is create-only, while uninstall removes exact current and supported legacy templates. It preserves
+modified files, unrelated files, and symbolic links. It will not compose multiple `PostToolUse` scripts.
 
 Selecting the Cline lifecycle target will deploy shared skills through APM's `agent-skills` target because APM has no
 native `cline` target. The global hook also applies to Cline CLI and other Cline clients that use the same file-hook

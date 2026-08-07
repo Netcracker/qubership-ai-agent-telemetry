@@ -27,6 +27,13 @@ func uninstallHooks(home string, targets []hookTarget, warnings io.Writer) []hoo
 		}
 		if target == hookCline {
 			changed, err := removeClineHook(path, runtime.GOOS, warnings)
+			if errors.Is(err, errClineHookOwnershipConflict) {
+				err = fmt.Errorf(
+					"%w; managed CLI remains installed at %s; telemetry configuration and cache were preserved; "+
+						"if --purge was requested, it did not run; remove the telemetry invocation and ownership comment, "+
+						"then rerun the original uninstall command; manual instructions: %s",
+					err, managedCLIPath(home, runtime.GOOS), clineManualUninstall)
+			}
 			results = append(results, hookInstallResult{Target: target, Path: path, Changed: changed, Err: err})
 			continue
 		}

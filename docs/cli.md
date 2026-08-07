@@ -114,8 +114,9 @@ The CLI manages one user-level native file per harness on every supported operat
 
 The Cline hook exits successfully with no stdout or stderr. This removes telemetry output from the Cline tool-call
 display, but Cline still renders its own `Hook: PostToolUse` status card. Cline 4.1.4 has no separate setting to hide
-that card while keeping the hook enabled. Installing a newer CLI migrates the previous managed hook that printed
-`{"cancel":false}`.
+that card while keeping the hook enabled. Installation never rewrites a legacy or mismatched hook. The CLI reports an
+exact supported legacy template as `outdated` and gives the explicit `hooks uninstall` then `hooks install` commands.
+An `invalid` hook is preserved and does not qualify for this replacement procedure.
 
 Normal installation registers all four harnesses; no separate hook command is required. For a custom
 target list, `configure` accepts `--hooks=all`, `--hooks=none`, or a comma-separated subset. The
@@ -129,7 +130,10 @@ ai-agent-telemetry hooks uninstall --target=claude,codex
 
 Both hook commands accept `--target=claude`, `--target=cline`, `--target=codex`, `--target=cursor`, or a comma-separated
 subset; omitting the option selects all four harnesses. Uninstall removes only telemetry-owned entries and canonical
-policy files. For Cline, it removes only an exact managed file; it preserves modified files and symbolic links.
+policy files. For Cline, it removes only an exact current or supported legacy template. A mismatched regular file with
+the exact ownership comment blocks telemetry cleanup and preserves the managed CLI; resolve it with the
+[manual Cline uninstall procedure](manual-uninstall.md). Every other Cline entry is preserved as user-owned without
+blocking cleanup.
 
 Before `configure` or `hooks install` installs a nonempty set of CLI-managed hooks, the CLI reads `~/.apm/apm.yml`.
 If the manifest contains the exact legacy telemetry hook package dependency, the CLI asks APM to remove that global
@@ -152,7 +156,8 @@ targets and returns a nonzero exit code after reporting every failure.
 roll back the configuration. If a later hook installation fails, the configuration remains written and `configure`
 returns exit code `1`.
 
-`status` reports `installed`, `missing`, or `invalid` for each harness. It verifies registration
+`status` reports `installed`, `missing`, `outdated`, or `invalid` for each harness. `outdated` is specific to a Cline
+file whose bytes exactly match a supported legacy template. It verifies registration
 and required policy files, not execution or trust. `selftest` verifies collector delivery, not hook
 registration.
 

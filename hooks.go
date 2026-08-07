@@ -39,6 +39,7 @@ type hookState string
 const (
 	hookInstalled hookState = "installed"
 	hookMissing   hookState = "missing"
+	hookOutdated  hookState = "outdated"
 	hookInvalid   hookState = "invalid"
 )
 

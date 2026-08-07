@@ -108,6 +108,13 @@ ai-agent-telemetry uninstall --purge
 The CLI reverses only a `PATH` mutation proven by its ownership receipt. It preserves unrelated shell-profile and
 Windows user-PATH content and never removes `~/.local/bin`, even when that directory is empty.
 
+Cline uninstall deletes its canonical hook only when the bytes match the current template or a supported legacy
+template. If a different regular file retains the telemetry ownership comment, uninstall preserves it, the managed
+CLI, its owned `PATH` entry, and telemetry data, then returns an error with the exact path and a link to the
+[manual conflict-resolution procedure](manual-uninstall.md). Remove the telemetry invocation and ownership comment
+while keeping any user commands, then rerun the original uninstall command. A Cline entry without the ownership
+comment is preserved as user-owned and does not block cleanup.
+
 The installed Windows executable rejects full uninstall and partial uninstall with `--remove-cli` before making any
 changes. Use the temporary bootstrap so the managed executable is not running:
 
