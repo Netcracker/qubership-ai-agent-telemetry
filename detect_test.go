@@ -452,6 +452,7 @@ func TestDetectClineMCP(t *testing.T) {
 		success       any
 		durationField string
 		duration      any
+		durationAlias any
 		wantOutcome   MCPOutcome
 		wantDuration  *int64
 		wantServer    string
@@ -495,6 +496,17 @@ func TestDetectClineMCP(t *testing.T) {
 			wantOutcome: mcpFailed,
 		},
 		{
+			name:     "direct SDK ignores argument type collisions",
+			hookName: "PostToolUse",
+			toolName: "github__get_issue",
+			parameters: map[string]any{
+				"skill":     map[string]any{"id": 1},
+				"tool_name": 123,
+			},
+			success:     true,
+			wantOutcome: mcpSucceeded,
+		},
+		{
 			name:          "zero duration retained",
 			hookName:      "PostToolUse",
 			toolName:      "github__get_issue",
@@ -521,6 +533,17 @@ func TestDetectClineMCP(t *testing.T) {
 			durationField: "executionTimeMs",
 			duration:      nil,
 			wantOutcome:   mcpSucceeded,
+		},
+		{
+			name:          "null execution time uses duration alias",
+			hookName:      "PostToolUse",
+			toolName:      "github__get_issue",
+			success:       true,
+			durationField: "executionTimeMs",
+			duration:      nil,
+			durationAlias: 1894,
+			wantOutcome:   mcpSucceeded,
+			wantDuration:  durationPtr(1894),
 		},
 		{
 			name:          "null duration alias omitted",
@@ -583,11 +606,14 @@ func TestDetectClineMCP(t *testing.T) {
 			success:  true,
 		},
 		{
-			name:     "direct name with transform suffix",
-			hookName: "PostToolUse",
-			toolName: "github_0123abcd__get_issue",
-			success:  true,
+			name:        "direct name with hash-shaped server suffix",
+			hookName:    "PostToolUse",
+			toolName:    "github_0123abcd__get_issue",
+			success:     true,
+			wantOutcome: mcpSucceeded,
+			wantServer:  "github_0123abcd",
 		},
+		{name: "direct name with transform suffix", hookName: "PostToolUse", toolName: "github__get_issue_0123abcd", success: true},
 		{name: "unrelated tool", hookName: "PostToolUse", toolName: "read_file", success: true},
 	}
 	for _, tt := range tests {
@@ -605,6 +631,9 @@ func TestDetectClineMCP(t *testing.T) {
 			}
 			if tt.durationField != "" {
 				postToolUse[tt.durationField] = tt.duration
+			}
+			if tt.durationAlias != nil {
+				postToolUse["durationMs"] = tt.durationAlias
 			}
 			stdin, err := json.Marshal(map[string]any{
 				"hookName":       tt.hookName,

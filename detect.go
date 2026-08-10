@@ -65,7 +65,7 @@ type clinePayload struct {
 		Success         *bool           `json:"success"`
 		ExecutionTimeMS json.RawMessage `json:"executionTimeMs"`
 		DurationMS      json.RawMessage `json:"durationMs"`
-		Parameters      clineParameters `json:"parameters"`
+		Parameters      json.RawMessage `json:"parameters"`
 	} `json:"postToolUse"`
 }
 
@@ -96,8 +96,11 @@ func clineAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]Telemet
 		if !*p.PostToolUse.Success {
 			return nil, nil
 		}
-		skill := firstNonEmpty(p.PostToolUse.Parameters.Skill, p.PostToolUse.Parameters.SkillName,
-			p.PostToolUse.Parameters.SkillCamel)
+		var parameters clineParameters
+		if json.Unmarshal(p.PostToolUse.Parameters, &parameters) != nil {
+			return nil, nil
+		}
+		skill := firstNonEmpty(parameters.Skill, parameters.SkillName, parameters.SkillCamel)
 		if !validIdentifier(skill, nameIdentifier) {
 			return nil, nil
 		}
@@ -136,8 +139,12 @@ func clineAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]Telemet
 	return []TelemetryEvent{ev}, nil
 }
 
-func clineMCPIdentity(toolName string, parameters clineParameters) (server, tool string, ok bool) {
+func clineMCPIdentity(toolName string, rawParameters json.RawMessage) (server, tool string, ok bool) {
 	if toolName == "use_mcp_tool" {
+		var parameters clineParameters
+		if json.Unmarshal(rawParameters, &parameters) != nil {
+			return "", "", false
+		}
 		if !validIdentifier(parameters.ServerName, mcpIdentifier) ||
 			!validIdentifier(parameters.ToolName, mcpIdentifier) {
 			return "", "", false
@@ -152,8 +159,8 @@ func normalizeClineDirectMCPName(name string) (server, tool string, ok bool) {
 		return "", "", false
 	}
 	server, tool, _ = strings.Cut(name, "__")
-	if clineMCPTransformSuffix.MatchString(server) || clineMCPTransformSuffix.MatchString(tool) ||
-		!validIdentifier(server, mcpIdentifier) || !validIdentifier(tool, mcpIdentifier) {
+	if clineMCPTransformSuffix.MatchString(tool) || !validIdentifier(server, mcpIdentifier) ||
+		!validIdentifier(tool, mcpIdentifier) {
 		return "", "", false
 	}
 	return server, tool, true
@@ -161,7 +168,7 @@ func normalizeClineDirectMCPName(name string) (server, tool string, ok bool) {
 
 func clineDuration(executionTime, duration json.RawMessage) *int64 {
 	raw := executionTime
-	if len(raw) == 0 {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		raw = duration
 	}
 	if len(raw) == 0 {

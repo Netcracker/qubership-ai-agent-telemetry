@@ -32,7 +32,8 @@ The adapter accepts the existing client compatibility aliases:
 
 `success` must be present and boolean. `true` maps to `succeeded`; `false` maps to `failed`. A non-negative integer
 duration is included when present. Missing, negative, fractional, or overflowing duration values are omitted without
-dropping an otherwise valid event.
+dropping an otherwise valid event. A null `executionTimeMs` is treated as absent, so a valid `durationMs` alias can
+supply the duration.
 
 ## MCP identity
 
@@ -52,11 +53,11 @@ The adapter accepts a direct SDK name only when all of these conditions hold:
 
 - it contains exactly one `__` separator;
 - both components satisfy the existing MCP identifier contract;
-- the complete hook tool name is shorter than Cline's 64-character transformation limit; and
-- neither component ends with the transformation suffix shape `_[0-9a-f]{8}`.
+- the complete hook tool name is no longer than Cline's 64-character transformation limit; and
+- the tool component does not end with the transformation suffix shape `_[0-9a-f]{8}`.
 
-These checks prefer false negatives over incorrect attribution. A legitimate name at the length limit or with a
-hash-shaped suffix is not emitted because the hook cannot distinguish it from a transformed name.
+These checks prefer false negatives over incorrect attribution. A legitimate tool component with a hash-shaped suffix
+is not emitted because the hook cannot distinguish it from a transformed name.
 
 ## Attribution and privacy
 
@@ -73,12 +74,13 @@ duration.
 
 ## Adapter structure
 
-`clineAdapter` first validates the hook envelope, session, and repository attribution. It then routes the tool call:
+`clineAdapter` first validates the hook envelope and session. It then routes the tool call and resolves repository
+attribution only for a recognized identity:
 
 1. Existing skill wrappers produce `skill_executed` only after a successful call.
 2. `use_mcp_tool` produces an MCP event from its two explicit identity fields.
 3. A reversible direct SDK name produces an MCP event from its two name components.
-4. Other tools and ambiguous direct names produce no event.
+4. Other tools and ambiguous direct names produce no event and no repository lookup.
 
 The adapter returns at most one event for a hook invocation. Existing event constructors and schema validation remain
 authoritative for field limits and serialization.
