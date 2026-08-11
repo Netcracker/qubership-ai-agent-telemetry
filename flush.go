@@ -289,32 +289,32 @@ func eventRecord(ev TelemetryEvent, observed time.Time, eventID string) (otellog
 	var rec otellog.Record
 	rec.SetTimestamp(ev.TS)
 	rec.SetObservedTimestamp(observed)
-	rec.SetBody(otellog.StringValue(string(ev.EventName)))
+	rec.SetBody(attribute.StringValue(string(ev.EventName)))
 	rec.AddAttributes(
-		otellog.String("event.id", eventID),
-		otellog.String("agent", ev.Agent),
-		otellog.String("session.id", ev.SessionID),
-		otellog.String("repo.remote", ev.RepoRemote),
+		attribute.String("event.id", eventID),
+		attribute.String("agent", ev.Agent),
+		attribute.String("session.id", ev.SessionID),
+		attribute.String("repo.remote", ev.RepoRemote),
 	)
 	switch payload := ev.Payload.(type) {
 	case SkillPayload:
-		rec.AddAttributes(otellog.String("skill.name", payload.SkillName))
+		rec.AddAttributes(attribute.String("skill.name", payload.SkillName))
 	case CommandPayload:
 		rec.AddAttributes(
-			otellog.String("command.name", payload.CommandName),
-			otellog.String("command.source", payload.CommandSource),
-			otellog.String("command.expansion_type", payload.ExpansionType),
+			attribute.String("command.name", payload.CommandName),
+			attribute.String("command.source", payload.CommandSource),
+			attribute.String("command.expansion_type", payload.ExpansionType),
 		)
 	case MCPPayload:
 		if payload.ServerName != "" {
-			rec.AddAttributes(otellog.String("mcp.server.name", payload.ServerName))
+			rec.AddAttributes(attribute.String("mcp.server.name", payload.ServerName))
 		}
 		rec.AddAttributes(
-			otellog.String("mcp.tool.name", payload.ToolName),
-			otellog.String("mcp.outcome", string(payload.Outcome)),
+			attribute.String("mcp.tool.name", payload.ToolName),
+			attribute.String("mcp.outcome", string(payload.Outcome)),
 		)
 		if payload.DurationMS != nil {
-			rec.AddAttributes(otellog.Int64("mcp.duration_ms", *payload.DurationMS))
+			rec.AddAttributes(attribute.Int64("mcp.duration_ms", *payload.DurationMS))
 		}
 	default:
 		return otellog.Record{}, errors.New("unknown telemetry payload")
