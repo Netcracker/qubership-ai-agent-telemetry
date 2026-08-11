@@ -33,6 +33,53 @@
         "digest"
       ],
       "groupName": "Docker Compose image non-major updates"
+    },
+    {
+      "description": "Write an eligible minimum Go minor line as its initial X.Y.0 release",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "allowedVersions": "/^\\d+\\.\\d+\\.0$/",
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Update the minimum Go minor line after a five-year adoption period",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor"
+      ],
+      "minimumReleaseAge": "5 years"
+    },
+    {
+      "description": "Do not update the minimum Go version for patch releases",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "enabled": false
     }
   ]
 }
