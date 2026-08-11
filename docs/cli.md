@@ -107,12 +107,13 @@ The CLI manages one user-level native file per harness on every supported operat
 | Harness | File | Registration |
 | --- | --- | --- |
 | Claude Code | `~/.claude/settings.json` | `PreToolUse`/`Skill`, `UserPromptExpansion`, `PostToolUse`/`mcp__.*`, `PostToolUseFailure`/`mcp__.*` |
-| Cline on macOS and Linux | `~/Documents/Cline/Hooks/PostToolUse` | Executable file hook for successful `use_skill` and `skills` calls |
-| Cline on Windows | `~/Documents/Cline/Hooks/PostToolUse.ps1` | PowerShell file hook for successful `use_skill` and `skills` calls |
+| Cline on macOS and Linux | `~/Documents/Cline/Hooks/PostToolUse` | Executable hook for successful skills and completed MCP tools |
+| Cline on Windows | `~/Documents/Cline/Hooks/PostToolUse.ps1` | PowerShell hook for successful skills and completed MCP tools |
 | Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` | `Stop`, `PostToolUse`/`mcp__.*`, and the execution policy |
 | Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, `afterMCPExecution`, and numeric top-level `version` |
 
-The Cline hook exits successfully with no stdout or stderr. This removes telemetry output from the Cline tool-call
+For MCP calls, the Cline hook records the server and tool names, exact `succeeded` or `failed` outcome, and duration
+when available. It exits successfully with no stdout or stderr. This removes telemetry output from the Cline tool-call
 display, but Cline still renders its own `Hook: PostToolUse` status card. Cline 4.1.4 has no separate setting to hide
 that card while keeping the hook enabled. Installation never rewrites a legacy or mismatched hook. The CLI reports an
 exact supported legacy template as `outdated` and gives the explicit `hooks uninstall` then `hooks install` commands.

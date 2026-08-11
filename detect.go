@@ -60,16 +60,24 @@ type clinePayload struct {
 	TaskID         string   `json:"taskId"`
 	WorkspaceRoots []string `json:"workspaceRoots"`
 	PostToolUse    struct {
-		ToolName   string `json:"toolName"`
-		Tool       string `json:"tool"`
-		Success    bool   `json:"success"`
-		Parameters struct {
-			Skill      string `json:"skill"`
-			SkillName  string `json:"skill_name"`
-			SkillCamel string `json:"skillName"`
-		} `json:"parameters"`
+		ToolName        string          `json:"toolName"`
+		Tool            string          `json:"tool"`
+		Success         *bool           `json:"success"`
+		ExecutionTimeMS json.RawMessage `json:"executionTimeMs"`
+		DurationMS      json.RawMessage `json:"durationMs"`
+		Parameters      json.RawMessage `json:"parameters"`
 	} `json:"postToolUse"`
 }
+
+type clineParameters struct {
+	Skill      string `json:"skill"`
+	SkillName  string `json:"skill_name"`
+	SkillCamel string `json:"skillName"`
+	ServerName string `json:"server_name"`
+	ToolName   string `json:"tool_name"`
+}
+
+var clineMCPTransformSuffix = regexp.MustCompile(`_[0-9a-f]{8}$`)
 
 func clineAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
 	var p clinePayload
@@ -80,24 +88,97 @@ func clineAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]Telemet
 		return nil, nil
 	}
 	toolName := firstNonEmpty(p.PostToolUse.ToolName, p.PostToolUse.Tool)
-	if !p.PostToolUse.Success || toolName != "skills" && toolName != "use_skill" {
+	if !validIdentifier(p.TaskID, sessionIdentifier) || p.PostToolUse.Success == nil {
 		return nil, nil
 	}
 
-	skill := firstNonEmpty(p.PostToolUse.Parameters.Skill, p.PostToolUse.Parameters.SkillName,
-		p.PostToolUse.Parameters.SkillCamel)
-	if !validIdentifier(p.TaskID, sessionIdentifier) || !validIdentifier(skill, nameIdentifier) {
+	if toolName == "skills" || toolName == "use_skill" {
+		if !*p.PostToolUse.Success {
+			return nil, nil
+		}
+		var parameters clineParameters
+		if json.Unmarshal(p.PostToolUse.Parameters, &parameters) != nil {
+			return nil, nil
+		}
+		skill := firstNonEmpty(parameters.Skill, parameters.SkillName, parameters.SkillCamel)
+		if !validIdentifier(skill, nameIdentifier) {
+			return nil, nil
+		}
+		repoDir, repoRemote, attributable := clineRepository(p.WorkspaceRoots, remote)
+		if !attributable {
+			return nil, nil
+		}
+		ev, err := newSkillEvent("cline", p.TaskID, repoRemote, repoDir, skill, now)
+		if err != nil {
+			return nil, nil
+		}
+		return []TelemetryEvent{ev}, nil
+	}
+
+	server, tool, ok := clineMCPIdentity(toolName, p.PostToolUse.Parameters)
+	if !ok {
 		return nil, nil
 	}
 	repoDir, repoRemote, attributable := clineRepository(p.WorkspaceRoots, remote)
 	if !attributable {
 		return nil, nil
 	}
-	ev, err := newSkillEvent("cline", p.TaskID, repoRemote, repoDir, skill, now)
+	outcome := mcpFailed
+	if *p.PostToolUse.Success {
+		outcome = mcpSucceeded
+	}
+	ev, err := newMCPEvent("cline", p.TaskID, repoRemote, repoDir, MCPPayload{
+		ServerName: server,
+		ToolName:   tool,
+		Outcome:    outcome,
+		DurationMS: clineDuration(p.PostToolUse.ExecutionTimeMS, p.PostToolUse.DurationMS),
+	}, now)
 	if err != nil {
 		return nil, nil
 	}
 	return []TelemetryEvent{ev}, nil
+}
+
+func clineMCPIdentity(toolName string, rawParameters json.RawMessage) (server, tool string, ok bool) {
+	if toolName == "use_mcp_tool" {
+		var parameters clineParameters
+		if json.Unmarshal(rawParameters, &parameters) != nil {
+			return "", "", false
+		}
+		if !validIdentifier(parameters.ServerName, mcpIdentifier) ||
+			!validIdentifier(parameters.ToolName, mcpIdentifier) {
+			return "", "", false
+		}
+		return parameters.ServerName, parameters.ToolName, true
+	}
+	return normalizeClineDirectMCPName(toolName)
+}
+
+func normalizeClineDirectMCPName(name string) (server, tool string, ok bool) {
+	if len(name) > 64 || strings.Count(name, "__") != 1 {
+		return "", "", false
+	}
+	server, tool, _ = strings.Cut(name, "__")
+	if clineMCPTransformSuffix.MatchString(tool) || !validIdentifier(server, mcpIdentifier) ||
+		!validIdentifier(tool, mcpIdentifier) {
+		return "", "", false
+	}
+	return server, tool, true
+}
+
+func clineDuration(executionTime, duration json.RawMessage) *int64 {
+	raw := executionTime
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		raw = duration
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	var value *int64
+	if json.Unmarshal(raw, &value) != nil || value == nil || *value < 0 {
+		return nil
+	}
+	return value
 }
 
 func clineRepository(roots []string, remote remoteResolver) (string, string, bool) {
