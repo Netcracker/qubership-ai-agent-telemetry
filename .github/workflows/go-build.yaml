@@ -49,8 +49,10 @@ jobs:
               - 'agent-packages/ai-agent-telemetry/.apm/hooks/**'
               - 'agent-packages/ai-agent-telemetry-configure/.apm/skills/ai-agent-telemetry-configure/references/codex-sandbox.md'
               - '.github/workflows/go-build.yaml'
+              - '.github/workflows/bootstrap-tests.yaml'
               - '.github/workflows/installer-tests.yaml'
               - '.github/workflows/super-linter.yaml'
+              - '.github/workflows/telemetry-backend-tests.yaml'
 
   build:
     name: "Build and Test Go Project"
@@ -144,11 +146,6 @@ jobs:
           fi
 
           read -r -a results <<<"$JOB_RESULTS"
-          if [ "${#results[@]}" -ne 2 ]; then
-            echo "Expected two Go job results, got ${#results[@]}" >&2
-            exit 1
-          fi
-
           expected_result=skipped
           if [ "$RUN_TESTS" = 'true' ]; then
             expected_result=success

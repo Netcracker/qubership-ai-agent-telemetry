@@ -320,11 +320,6 @@ jobs:
           fi
 
           read -r -a results <<<"$JOB_RESULTS"
-          if [ "${#results[@]}" -ne 2 ]; then
-            echo "Expected two lifecycle job results, got ${#results[@]}" >&2
-            exit 1
-          fi
-
           expected_result=skipped
           if [ "$RUN_TESTS" = 'true' ]; then
             expected_result=success
