@@ -294,3 +294,43 @@ jobs:
             throw "operational child failure did not reach the inherited console"
           }
           if ((& $managed version) -ne 'v0.2.0') { throw "failed lifecycle did not retain the v0.2.0 CLI" }
+
+  # This stable, always-created check is the branch-protection gate. The test
+  # jobs are intentionally path-filtered, so their own skipped state cannot be
+  # required directly.
+  ci-gate:
+    name: Installer CI Gate
+    needs: [changes, posix-lifecycle, windows-lifecycle]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      RUN_TESTS: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.lifecycle == 'true' }}
+      JOB_RESULTS: ${{ needs.posix-lifecycle.result }} ${{ needs.windows-lifecycle.result }}
+    steps:
+      - name: Fail when a required job did not succeed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != 'success' ]; then
+            echo "Lifecycle change detection finished with $CHANGES_RESULT" >&2
+            exit 1
+          fi
+
+          read -r -a results <<<"$JOB_RESULTS"
+          expected_result=skipped
+          if [ "$RUN_TESTS" = 'true' ]; then
+            expected_result=success
+          elif [ "$RUN_TESTS" != 'false' ]; then
+            echo "Lifecycle change detection returned $RUN_TESTS" >&2
+            exit 1
+          fi
+
+          for result in "${results[@]}"; do
+            if [ "$result" != "$expected_result" ]; then
+              echo "Expected $expected_result, got $result" >&2
+              exit 1
+            fi
+          done
