@@ -116,3 +116,49 @@ jobs:
           HOME: ${{ runner.temp }}/hook-home
           USERPROFILE: ${{ runner.temp }}/hook-user-profile
         run: go test ./... -run '^Test.*(Hook|Configure($|[A-Z]))' -count=1
+
+  # This stable, always-created check is the branch-protection gate. The test
+  # jobs are intentionally path-filtered, so their own skipped state cannot be
+  # required directly.
+  ci-gate:
+    name: Go CI Gate
+    needs: [changes, build, hook-platform-tests]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      RUN_TESTS: ${{ needs.changes.outputs.go }}
+      JOB_RESULTS: ${{ needs.build.result }} ${{ needs.hook-platform-tests.result }}
+    steps:
+      - name: Fail when a required job did not succeed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != 'success' ]; then
+            echo "Go change detection finished with $CHANGES_RESULT" >&2
+            exit 1
+          fi
+
+          read -r -a results <<<"$JOB_RESULTS"
+          if [ "${#results[@]}" -ne 2 ]; then
+            echo "Expected two Go job results, got ${#results[@]}" >&2
+            exit 1
+          fi
+
+          expected_result=skipped
+          if [ "$RUN_TESTS" = 'true' ]; then
+            expected_result=success
+          elif [ "$RUN_TESTS" != 'false' ]; then
+            echo "Go change detection returned $RUN_TESTS" >&2
+            exit 1
+          fi
+
+          for result in "${results[@]}"; do
+            if [ "$result" != "$expected_result" ]; then
+              echo "Expected $expected_result, got $result" >&2
+              exit 1
+            fi
+          done
