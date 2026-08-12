@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# The single-quoted jq expressions must preserve `$gate` and `$expected` for jq.
+# shellcheck disable=SC2016
+
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/.." && pwd)

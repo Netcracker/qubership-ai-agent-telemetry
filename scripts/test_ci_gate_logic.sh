@@ -5,10 +5,12 @@ set -euo pipefail
 assert_case() {
   local expected=$1
   local description=$2
-  shift 2
+  local changes_result=$3
+  local run_tests=$4
+  local job_results=$5
 
   set +e
-  "$@" >/dev/null 2>&1
+  CHANGES_RESULT=$changes_result RUN_TESTS=$run_tests JOB_RESULTS=$job_results evaluate_gate
   local actual=$?
   set -e
 
@@ -44,20 +46,12 @@ evaluate_gate() {
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  assert_case 0 'relevant jobs succeeded' env \
-    CHANGES_RESULT=success RUN_TESTS=true JOB_RESULTS='success success' bash -c 'source "$1"; evaluate_gate' _ "$0"
-  assert_case 0 'manual dispatch requires lifecycle jobs to succeed' env \
-    CHANGES_RESULT=success RUN_TESTS=true JOB_RESULTS='success success' bash -c 'source "$1"; evaluate_gate' _ "$0"
-  assert_case 0 'irrelevant jobs were skipped' env \
-    CHANGES_RESULT=success RUN_TESTS=false JOB_RESULTS='skipped skipped' bash -c 'source "$1"; evaluate_gate' _ "$0"
-  assert_case 1 'change detection failed' env \
-    CHANGES_RESULT=failure RUN_TESTS=true JOB_RESULTS='success success' bash -c 'source "$1"; evaluate_gate' _ "$0"
-  assert_case 1 'relevant job was skipped' env \
-    CHANGES_RESULT=success RUN_TESTS=true JOB_RESULTS='success skipped' bash -c 'source "$1"; evaluate_gate' _ "$0"
-  assert_case 1 'relevant job was cancelled' env \
-    CHANGES_RESULT=success RUN_TESTS=true JOB_RESULTS='success cancelled' bash -c 'source "$1"; evaluate_gate' _ "$0"
-  assert_case 1 'irrelevant job unexpectedly ran' env \
-    CHANGES_RESULT=success RUN_TESTS=false JOB_RESULTS='success skipped' bash -c 'source "$1"; evaluate_gate' _ "$0"
-  assert_case 1 'result count is incomplete' env \
-    CHANGES_RESULT=success RUN_TESTS=true JOB_RESULTS='success' bash -c 'source "$1"; evaluate_gate' _ "$0"
+  assert_case 0 'relevant jobs succeeded' success true 'success success'
+  assert_case 0 'manual dispatch requires lifecycle jobs to succeed' success true 'success success'
+  assert_case 0 'irrelevant jobs were skipped' success false 'skipped skipped'
+  assert_case 1 'change detection failed' failure true 'success success'
+  assert_case 1 'relevant job was skipped' success true 'success skipped'
+  assert_case 1 'relevant job was cancelled' success true 'success cancelled'
+  assert_case 1 'irrelevant job unexpectedly ran' success false 'success skipped'
+  assert_case 1 'result count is incomplete' success true 'success'
 fi
