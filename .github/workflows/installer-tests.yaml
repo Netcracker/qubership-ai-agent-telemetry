@@ -304,8 +304,7 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
+    permissions: {}
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
       RUN_TESTS: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.lifecycle == 'true' }}

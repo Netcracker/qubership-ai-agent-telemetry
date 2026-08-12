@@ -30,12 +30,6 @@ jobs:
     outputs:
       bootstrap: ${{ steps.filter.outputs.bootstrap }}
     steps:
-      - if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 20
-          persist-credentials: false
-
       - name: Detect bootstrap changes
         if: ${{ github.event_name == 'pull_request' }}
         id: filter
@@ -47,6 +41,7 @@ jobs:
               - 'scripts/install.ps1'
               - 'scripts/install_test.sh'
               - 'scripts/install.Tests.ps1'
+              - 'go.mod'
               - '.github/workflows/bootstrap-tests.yaml'
 
   posix:
@@ -106,8 +101,11 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
+    permissions: {}
+    # This stable, always-created check is the branch-protection gate. The
+    # test jobs are filtered inside the workflow so their skipped state cannot
+    # be required directly; this also avoids a pending check when no bootstrap
+    # files changed in a pull request.
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
       RUN_TESTS: ${{ github.event_name != 'pull_request' || needs.changes.outputs.bootstrap == 'true' }}
