@@ -12,11 +12,6 @@ on:
       - ".github/workflows/telemetry-backend-tests.yaml"
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - "telemetry-backend/**"
-      - "scripts/package-backend-release.sh"
-      - "scripts/package_backend_release_test.sh"
-      - ".github/workflows/telemetry-backend-tests.yaml"
   workflow_dispatch: null
 
 concurrency:
@@ -24,8 +19,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Backend changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 20
+          persist-credentials: false
+
+      - name: Detect backend changes
+        if: ${{ github.event_name == 'pull_request' }}
+        id: filter
+        uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        with:
+          filters: |
+            backend:
+              - 'telemetry-backend/**'
+              - 'scripts/package-backend-release.sh'
+              - 'scripts/package_backend_release_test.sh'
+              - '.github/workflows/telemetry-backend-tests.yaml'
+
   smoke:
     name: Backend smoke (ubuntu-latest)
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -56,3 +81,38 @@ jobs:
 
       - name: Run backend smoke test
         run: sh telemetry-backend/tests/smoke.sh
+
+  ci-gate:
+    name: Backend CI Gate
+    needs: [changes, smoke]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      RUN_TESTS: ${{ github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true' }}
+      JOB_RESULT: ${{ needs.smoke.result }}
+    steps:
+      - name: Fail when a required job did not succeed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != 'success' ]; then
+            echo "Backend change detection finished with $CHANGES_RESULT" >&2
+            exit 1
+          fi
+
+          expected_result=skipped
+          if [ "$RUN_TESTS" = 'true' ]; then
+            expected_result=success
+          elif [ "$RUN_TESTS" != 'false' ]; then
+            echo "Backend change detection returned $RUN_TESTS" >&2
+            exit 1
+          fi
+
+          if [ "$JOB_RESULT" != "$expected_result" ]; then
+            echo "Expected $expected_result, got $JOB_RESULT" >&2
+            exit 1
+          fi
