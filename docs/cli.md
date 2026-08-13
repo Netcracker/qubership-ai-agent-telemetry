@@ -308,8 +308,17 @@ output omits them.
 ## Repository scope
 
 Set repository scope in `repo-allow`, or write it through repeatable `configure --repo-allow`,
-to collect only from organization repositories. When the file is absent, the built-in
-`github.com/Netcracker/*` default applies; `configure` writes that default to `repo-allow`:
+to collect only from Netcracker repositories. When the file is absent, the built-in
+`github.com/Netcracker/*,*netcracker*/**` default applies; `configure` writes that default to
+`repo-allow`. The second pattern matches hosts that contain `netcracker` without naming a
+specific corporate host. It can also match an unrelated host with the same substring.
+
+```text
+github.com/Netcracker/*
+*netcracker*/**
+```
+
+Replace the default with repeatable options when a deployment needs a different scope:
 
 ```sh
 ai-agent-telemetry configure \
@@ -336,7 +345,7 @@ matching organization remote instead of the personal fork remote.
 Policy precedence is deliberate: `AI_AGENT_TELEMETRY_DISABLED` stops collection first;
 then the `AI_AGENT_TELEMETRY_REPO_ALLOW` environment variable overrides the configured
 scope; then `repo-allow` scopes the remaining events. If no repository policy is configured,
-the built-in `github.com/Netcracker/*` default applies.
+the built-in `github.com/Netcracker/*,*netcracker*/**` default applies.
 
 ## Transport and security
 

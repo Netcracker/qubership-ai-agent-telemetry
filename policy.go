@@ -14,7 +14,7 @@ const (
 	envTelemetryDisabled = "AI_AGENT_TELEMETRY_DISABLED"
 	envRepoAllow         = "AI_AGENT_TELEMETRY_REPO_ALLOW"
 	repoAllowFileName    = "repo-allow"
-	defaultRepoAllow     = "github.com/Netcracker/*"
+	defaultRepoAllow     = "github.com/Netcracker/*,*netcracker*/**"
 )
 
 type telemetryPolicy struct {
