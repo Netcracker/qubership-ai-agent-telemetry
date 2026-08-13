@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - renovate.json
+      - .github/scripts/test-renovate-go-minimum.mjs
       - .github/workflows/renovate-config-lint.yaml
   pull_request:
     paths:
       - renovate.json
+      - .github/scripts/test-renovate-go-minimum.mjs
       - .github/workflows/renovate-config-lint.yaml
   schedule:
     - cron: "18 9 * * 1"
@@ -86,6 +88,9 @@ jobs:
             echo "::error::Renovate preset resolution exited with code $renovate_status"
             exit "$renovate_status"
           fi
+
+      - name: Test minimum Go version policy
+        run: node .github/scripts/test-renovate-go-minimum.mjs
 
   lookup-renovate-dependencies:
     name: Look up Renovate dependencies
