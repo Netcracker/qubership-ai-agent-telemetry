@@ -49,7 +49,7 @@ jobs:
           fi
 
       - name: Check tag is absent
-        uses: netcracker/qubership-workflow-hub/actions/tag-action@b6bee6f61fdc8b367777c1173fc852a58878a6a7 # v2.5.0
+        uses: netcracker/qubership-workflow-hub/actions/tag-action@27fd7674286e5f561a6fd8277f2f389ff96ddb9e # v2.6.0
         with:
           ref: ${{ github.ref }}
           tag-name: ${{ env.VERSION }}
@@ -162,7 +162,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 # zizmor: ignore[artipacked]
 
       - name: Create tag
-        uses: netcracker/qubership-workflow-hub/actions/tag-action@b6bee6f61fdc8b367777c1173fc852a58878a6a7 # v2.5.0
+        uses: netcracker/qubership-workflow-hub/actions/tag-action@27fd7674286e5f561a6fd8277f2f389ff96ddb9e # v2.6.0
         with:
           ref: ${{ github.ref }}
           tag-name: ${{ env.VERSION }}
@@ -246,7 +246,7 @@ jobs:
           fi
 
       - name: Upload release assets
-        uses: netcracker/qubership-workflow-hub/actions/assets-action@b6bee6f61fdc8b367777c1173fc852a58878a6a7 # v2.5.0
+        uses: netcracker/qubership-workflow-hub/actions/assets-action@27fd7674286e5f561a6fd8277f2f389ff96ddb9e # v2.6.0
         with:
           tag: ${{ env.VERSION }}
           item-path: dist/ai-agent-telemetry-darwin-amd64,dist/ai-agent-telemetry-darwin-arm64,dist/ai-agent-telemetry-linux-amd64,dist/ai-agent-telemetry-linux-arm64,dist/ai-agent-telemetry-windows-amd64.exe,dist/ai-agent-telemetry-windows-arm64.exe,dist/ai-agent-telemetry-backend.tar.gz,dist/backup-backend.sh,dist/update-backend.sh,dist/install.sh,dist/install.ps1,dist/SHA256SUMS
