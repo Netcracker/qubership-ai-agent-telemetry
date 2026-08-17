@@ -174,9 +174,9 @@ enough.
   scope to `repo-allow`.
 - **Repository scope wrong** — `status` prints `repo_scope:`. The default is
   `github.com/Netcracker/*,*netcracker*/**`. The host pattern avoids naming a specific corporate
-  host, but it can match an unrelated host with the same substring. If the user needs a different
-  scope, run `ai-agent-telemetry configure --repo-allow '<pattern>'`; repeat the flag for more
-  than one pattern. An explicit scope replaces both defaults.
+  host, but it can match an unrelated host with the same substring. If the user needs a different scope, run
+  `ai-agent-telemetry configure --repo-allow '<pattern>'`; repeat the flag for more than one pattern.
+  An explicit scope replaces both defaults.
 - **CA needed** (`selftest` fails with a certificate / TLS error) — only self-signed or
   non-trusted-CA deployments need this; a publicly trusted or MDM-distributed CA needs nothing.
   Obtain the `.crt` (`references/deployment.md` covers a local cluster and a corporate PKI) and
@@ -210,6 +210,60 @@ ai-agent-telemetry update --cli-only
 explicit update request. In Codex, the execution-policy rule deliberately leaves `update`
 sandboxed. Run it in a regular terminal or request permission to leave the sandbox. On Windows,
 the lifecycle hands control to the verified new image before replacing the managed executable.
+
+Before updating, run these read-only commands:
+
+```sh
+ai-agent-telemetry status --verbose
+ai-agent-telemetry update --help
+```
+
+Inspect `repo_scope:`. If it is exactly `github.com/Netcracker/*`, explain that adding `*netcracker*/**` broadens
+collection to any host whose normalized host segment contains `netcracker`, including an unrelated host with the same
+substring. Ask whether the user accepts that scope change. Record the answer as `accept` or `keep`.
+
+Pass the answer to the update command so the CLI applies the decision deterministically after a successful update:
+
+```sh
+ai-agent-telemetry update --repo-scope-change=accept
+ai-agent-telemetry update --repo-scope-change=keep
+```
+
+When `update --help` lists `--repo-scope-change`, run exactly one command according to the answer. For any other
+`repo_scope:`, run `ai-agent-telemetry update` without the scope option. The CLI ignores the option when an environment
+override is active or the file is custom, and it preserves an ambiguous legacy value during noninteractive update
+unless `accept` was explicit. After an accepted change, run `status --verbose` again and require both patterns in
+`repo_scope:`.
+
+The APM package can be newer than the installed CLI. If `update --help` does not list `--repo-scope-change`, do not pass
+the new option to that binary. Bootstrap only the CLI while setting a process-only legacy scope override. On POSIX:
+
+```sh
+AI_AGENT_TELEMETRY_REPO_ALLOW='github.com/Netcracker/*' ai-agent-telemetry update --cli-only
+```
+
+On PowerShell, set the override only for the child process and restore the previous process environment afterward:
+
+```powershell
+$hadRepoAllow = Test-Path Env:AI_AGENT_TELEMETRY_REPO_ALLOW
+$previousRepoAllow = $env:AI_AGENT_TELEMETRY_REPO_ALLOW
+try {
+    $env:AI_AGENT_TELEMETRY_REPO_ALLOW = 'github.com/Netcracker/*'
+    ai-agent-telemetry update --cli-only
+} finally {
+    if ($hadRepoAllow) {
+        $env:AI_AGENT_TELEMETRY_REPO_ALLOW = $previousRepoAllow
+    } else {
+        Remove-Item Env:AI_AGENT_TELEMETRY_REPO_ALLOW -ErrorAction SilentlyContinue
+    }
+}
+```
+
+Do not persist this temporary override. It prevents the new update runner from changing scope during the bootstrap step.
+Stop if the command fails. It installs the new verified CLI without updating the APM package or other components. Then
+run the originally requested update with `--repo-scope-change=accept` or `--repo-scope-change=keep`. For a CLI-only
+request, repeat `update --cli-only` with the scope option. This two-step path ensures that the binary parsing the new
+option supports it and that an accepted scope change still occurs after the requested update succeeds.
 
 ## Failure → fix
 

@@ -137,6 +137,22 @@ func TestApplyConfigurePreservesExistingRepoAllow(t *testing.T) {
 	}
 }
 
+func TestApplyConfigurePreservesPreviousDefaultRepoAllow(t *testing.T) {
+	t.Setenv(envRepoAllow, "")
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	previousDefault := "github.com/Netcracker/*"
+	if err := applyConfigure(cfg, "", "", "", previousDefault, deliverySettingOverrides{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", "", deliverySettingOverrides{}); err != nil {
+		t.Fatal(err)
+	}
+	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
+	if strings.Join(got, ",") != previousDefault {
+		t.Fatalf("repo allow = %v, want previous default preserved %q", got, previousDefault)
+	}
+}
+
 func TestApplyConfigureOnlyWritesProvidedFields(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), pkgName)
 	if err := applyConfigure(cfg, "https://otel.example/v1/logs", "", "", "", deliverySettingOverrides{}); err != nil {

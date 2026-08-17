@@ -153,6 +153,14 @@ func normalizeAppDeps(deps appDeps) appDeps {
 	if deps.Lifecycle.Components == nil && deps.Lifecycle.ManagedCLI.Install == nil && deps.Lifecycle.ManagedCLI.Remove == nil {
 		deps.Lifecycle = defaultLifecycleDeps(deps.Home(), deps.ErrOut)
 	}
+	if deps.Lifecycle.RepoScope.Prepare == nil && deps.Lifecycle.RepoScope.Apply == nil {
+		deps.Lifecycle.RepoScope = newRepoScopeUpdateService(
+			pkgConfigDir,
+			func() string { return os.Getenv(envRepoAllow) },
+			deps.In,
+			deps.ErrOut,
+		)
+	}
 	if deps.Update.Prepare == nil {
 		executable, _ := os.Executable()
 		managedPath := managedCLIPath(deps.Home(), runtime.GOOS)

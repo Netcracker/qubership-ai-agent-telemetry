@@ -57,7 +57,7 @@ func TestLifecycleCommandsArePublicWithDocumentedFlags(t *testing.T) {
 	root := newRootCommand(appDeps{})
 	want := map[string][]string{
 		"install":   {"components", "skip", "harnesses", "force-git-hooks", "non-interactive"},
-		"update":    {"components", "skip", "harnesses", "force-git-hooks", "non-interactive", "cli-only"},
+		"update":    {"components", "skip", "harnesses", "force-git-hooks", "non-interactive", "cli-only", "repo-scope-change"},
 		"uninstall": {"components", "skip", "purge", "remove-cli"},
 	}
 	for name, flags := range want {
@@ -70,6 +70,134 @@ func TestLifecycleCommandsArePublicWithDocumentedFlags(t *testing.T) {
 				t.Errorf("%s --%s was not registered", name, flag)
 			}
 		}
+	}
+}
+
+func TestUpdateAsksBeforeExpandingLegacyRepositoryScope(t *testing.T) {
+	t.Setenv(envRepoAllow, "")
+	configBase := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configBase)
+	configDir := filepath.Join(configBase, pkgName)
+	if err := writeRepoAllowFile(configDir, "github.com/Netcracker/*"); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	code := execute([]string{"update", "--components", "apm"}, updatePolicyTestDeps(t, "y\n", &out, &errOut))
+	if code != 0 {
+		t.Fatalf("code = %d; stderr = %q", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "*netcracker*/**") || !strings.Contains(errOut.String(), "[y/N]") {
+		t.Fatalf("prompt = %q, want the proposed scope and confirmation", errOut.String())
+	}
+	got := loadRepoAllowFile(filepath.Join(configDir, repoAllowFileName))
+	want := []string{"github.com/Netcracker/*", "*netcracker*/**"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("repo allow = %v, want %v", got, want)
+	}
+}
+
+func TestUpdateRepositoryScopeDecisionIsDeterministic(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		args        []string
+		envScope    string
+		fileScope   string
+		wantScope   []string
+		wantSummary string
+	}{
+		{
+			name: "skill accepted expansion", args: []string{"--repo-scope-change", "accept"},
+			fileScope: "github.com/Netcracker/*",
+			wantScope: []string{"github.com/Netcracker/*", "*netcracker*/**"}, wantSummary: "repository scope expanded",
+		},
+		{
+			name: "skill kept legacy scope", args: []string{"--repo-scope-change", "keep"},
+			fileScope: "github.com/Netcracker/*",
+			wantScope: []string{"github.com/Netcracker/*"}, wantSummary: "existing scope preserved",
+		},
+		{
+			name: "noninteractive preserves without decision", args: []string{"--non-interactive"},
+			fileScope: "github.com/Netcracker/*",
+			wantScope: []string{"github.com/Netcracker/*"}, wantSummary: "existing scope preserved",
+		},
+		{
+			name: "environment override protects custom file", args: []string{"--repo-scope-change", "accept"},
+			envScope: "github.com/Netcracker/*", fileScope: "github.com/Qubership/*",
+			wantScope: []string{"github.com/Qubership/*"},
+		},
+		{
+			name: "custom file is not a migration candidate", args: nil,
+			fileScope: "github.com/Qubership/*",
+			wantScope: []string{"github.com/Qubership/*"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(envRepoAllow, tt.envScope)
+			configBase := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", configBase)
+			configDir := filepath.Join(configBase, pkgName)
+			if err := writeRepoAllowFile(configDir, tt.fileScope); err != nil {
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			args := append([]string{"update", "--components", "apm"}, tt.args...)
+			code := execute(args, updatePolicyTestDeps(t, "", &out, &errOut))
+			if code != 0 {
+				t.Fatalf("code = %d; stderr = %q", code, errOut.String())
+			}
+			got := loadRepoAllowFile(filepath.Join(configDir, repoAllowFileName))
+			if !reflect.DeepEqual(got, tt.wantScope) {
+				t.Fatalf("repo allow = %v, want %v", got, tt.wantScope)
+			}
+			if tt.wantSummary != "" && !strings.Contains(out.String(), tt.wantSummary) {
+				t.Fatalf("summary = %q, want %q", out.String(), tt.wantSummary)
+			}
+		})
+	}
+}
+
+func TestUpdateDoesNotExpandRepositoryScopeAfterOperationFailure(t *testing.T) {
+	t.Setenv(envRepoAllow, "")
+	configBase := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configBase)
+	configDir := filepath.Join(configBase, pkgName)
+	if err := writeRepoAllowFile(configDir, legacyDefaultRepoAllow); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	deps := updatePolicyTestDeps(t, "", &out, &errOut)
+	deps.Lifecycle.Components[componentAPM] = componentOps{Update: func(context.Context, lifecycleOptions) operationResult {
+		failure := errors.New("APM update failed")
+		return operationResult{Name: "apm", State: operationFailed, Detail: failure.Error(), Err: failure}
+	}}
+	code := execute([]string{"update", "--components", "apm", "--repo-scope-change", "accept"}, deps)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1; stderr = %q", code, errOut.String())
+	}
+	got := loadRepoAllowFile(filepath.Join(configDir, repoAllowFileName))
+	if !reflect.DeepEqual(got, []string{legacyDefaultRepoAllow}) {
+		t.Fatalf("repo allow = %v, want legacy scope preserved after failed update", got)
+	}
+}
+
+func updatePolicyTestDeps(t *testing.T, input string, out, errOut io.Writer) appDeps {
+	t.Helper()
+	result := func(name string) operationResult {
+		return operationResult{Name: name, State: operationOK, Detail: "done"}
+	}
+	return appDeps{
+		In: strings.NewReader(input), Out: out, ErrOut: errOut, Home: t.TempDir,
+		Lifecycle: lifecycleDeps{
+			ManagedCLI: managedCLIService{Install: func(string) operationResult { return result("managed-cli") }},
+			Components: map[componentName]componentOps{
+				componentAPM: {Update: func(context.Context, lifecycleOptions) operationResult { return result("apm") }},
+			},
+		},
+		Update: updateHandoff{Prepare: func(context.Context, []string) (handoffResult, error) {
+			return handoffResult{}, nil
+		}},
 	}
 }
 
@@ -350,6 +478,24 @@ func TestLifecycleCommandPreservesHandoffExitStatus(t *testing.T) {
 				t.Fatalf("stderr = %q, want child diagnostics only", errOut.String())
 			}
 		})
+	}
+}
+
+func TestUpdateHandoffPreservesRepositoryScopeDecision(t *testing.T) {
+	var got []string
+	code := execute([]string{"update", "--components", "apm", "--repo-scope-change", "accept"}, appDeps{
+		Out: io.Discard, ErrOut: io.Discard, Home: t.TempDir,
+		Update: updateHandoff{Prepare: func(_ context.Context, args []string) (handoffResult, error) {
+			got = append([]string(nil), args...)
+			return handoffResult{HandedOff: true}, nil
+		}},
+	})
+	if code != 0 {
+		t.Fatalf("execute() = %d, want 0", code)
+	}
+	want := []string{"--components", "apm", "--harnesses", "claude,cline,codex,cursor", "--repo-scope-change", "accept"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("handoff args = %q, want %q", got, want)
 	}
 }
 
