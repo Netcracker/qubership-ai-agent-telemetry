@@ -389,7 +389,7 @@ func decodeOTLPRequest(r *http.Request) ([]byte, *collectlogsv1.ExportLogsServic
 		if err != nil {
 			return nil, nil, fmt.Errorf("open gzip body: %w", err)
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 		bodyReader = reader
 	}
 	body, err := io.ReadAll(bodyReader)
