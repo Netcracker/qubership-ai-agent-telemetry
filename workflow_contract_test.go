@@ -49,13 +49,13 @@ func TestWindowsLifecycleBootstrapCallsUseCheckedChildProcesses(t *testing.T) {
 	}
 }
 
-func TestSuperLinterExcludesSuperpowersArtifacts(t *testing.T) {
+func TestSuperLinterExcludesSpecialMarkdownArtifacts(t *testing.T) {
 	data, err := os.ReadFile(".github/workflows/super-linter.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "FILTER_REGEX_EXCLUDE: '(^|/)docs/superpowers/'") {
-		t.Fatal("super-linter must exclude generated Superpowers artifacts")
+	if !strings.Contains(string(data), "FILTER_REGEX_EXCLUDE: '(^|/)(docs/superpowers/|CLAUDE\\.md$)'") {
+		t.Fatal("super-linter must exclude generated Superpowers artifacts and CLAUDE.md imports")
 	}
 }
 
