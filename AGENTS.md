@@ -80,6 +80,10 @@ but the default path is a PR.
   `origin/main`. Fast-forward local `main` when needed; if another worktree prevents it, ask the user to update it.
 - **Before every PR update:** confirm that the branch includes the latest `origin/main`. Rebase onto `origin/main`
   when needed; if the rebase requires user coordination, stop and ask the user to perform it.
+- **After opening or updating a PR:** run `gh pr checks <pr> --watch --interval 10` and keep a watcher active until
+  every check is successful or skipped. Do not treat the task as complete while any check is pending, failing,
+  cancelled, or action-required. Diagnose branch-caused failures, push fixes, and restart the watcher; report external
+  or permission-blocked failures as blockers.
 - **Release:** after the change is on `main`, run the `Release` workflow (workflow_dispatch, with a
   version). It creates the tag and publishes the binaries — never push a tag by hand.
 
