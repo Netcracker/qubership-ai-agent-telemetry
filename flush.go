@@ -272,7 +272,10 @@ func newOTLPLogExporter(
 	endpoint, token string,
 	tlsConfig *tls.Config,
 ) (sdklog.Exporter, error) {
-	opts := []otlploghttp.Option{otlploghttp.WithEndpointURL(endpoint)}
+	opts := []otlploghttp.Option{
+		otlploghttp.WithEndpointURL(endpoint),
+		otlploghttp.WithCompression(otlploghttp.GzipCompression),
+	}
 	if token != "" {
 		opts = append(opts, otlploghttp.WithHeaders(map[string]string{"Authorization": "Bearer " + token}))
 	}
