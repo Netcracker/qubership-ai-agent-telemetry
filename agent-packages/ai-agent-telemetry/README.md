@@ -4,7 +4,9 @@ This retained package is a compatibility surface for repositories that already i
 New setups use the platform installer in the [root README](../../README.md#installation), which installs the CLI and
 registers machine-wide hooks.
 
-Supported agents: Claude Code, Codex, and Cursor.
+This compatibility package contains native APM hook assets for Claude Code, Codex, and Cursor. Cline is supported by
+the machine-wide lifecycle installer, which manages Cline's single global file hook and deploys skills through the
+APM `agent-skills` target. This package does not define a duplicate Cline hook.
 
 ## How it works
 

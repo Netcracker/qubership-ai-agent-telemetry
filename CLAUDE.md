@@ -7,16 +7,15 @@ what an agent needs beyond the README: orientation, conventions, and open work.
 
 ## Orientation
 
-Skill-usage telemetry for AI coding agents. A skill run is detected per harness, sent to a
-shared OpenTelemetry collector, and packaged through APM so that installing the hooks into
-a repository is the consent boundary.
+Skill-usage telemetry for AI coding agents. A skill run is detected per harness and sent to a
+shared OpenTelemetry collector. The lifecycle installer manages machine-wide hooks, while the
+repository allowlist limits collection to approved repositories.
 
-- **Two packages.** The hooks that fire the CLI live in
+- **Two packages.** A retained compatibility package with APM-managed hooks lives in
   [`Netcracker/qubership-ai-agent-telemetry`](https://github.com/Netcracker/qubership-ai-agent-telemetry/tree/main/agent-packages/ai-agent-telemetry)
-  as the `ai-agent-telemetry` package. The setup, repair, and verification skill lives here
-  as `ai-agent-telemetry-configure` (under `agent-packages/`). Consumers add the hooks
-  package to their `apm.yml`; the configure package is an optional dev dependency for
-  agent-guided repair.
+  as `ai-agent-telemetry`. New installations use lifecycle-managed global hooks instead. The
+  optional `ai-agent-telemetry-configure` package provides an agent-guided setup, repair, and
+  verification skill.
 - **Component:** the `ai-agent-telemetry` CLI — a small Go binary at the repository root
   (a flat `package main`, the "Basic command" layout from the Go module-layout guide). It
   detects the skill, buffers events to a local outbox, and flushes over OTLP/HTTPS. No
@@ -31,9 +30,10 @@ a repository is the consent boundary.
   `ai-agent-telemetry configure` when no endpoint is configured yet. Compatibility copies named
   `bootstrap.sh` and `bootstrap.ps1` may also be published for older docs and automation. Check
   state with `ai-agent-telemetry status` / `version`, never by running an installer script.
-- **Detection:** a native hook event where the agent emits one (Claude Code), the session
-  transcript otherwise (Codex, Cursor). See [docs/agent-integration.md](docs/agent-integration.md).
-- **Harnesses:** Codex, Claude Code, and Cursor are shipped (v0.2.0). OpenCode is planned.
+- **Detection:** a native hook event where the harness exposes one (Claude Code and Cline),
+  and session-transcript parsing otherwise (Codex and Cursor). See
+  [docs/agent-integration.md](docs/agent-integration.md).
+- **Harnesses:** Claude Code, Cline, Codex, and Cursor are shipped. OpenCode is planned.
 - **Config & cache paths: uniform XDG, not `os.UserConfigDir()`.** Durable config lives at
   `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` and the spool at
   `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` — the same path on every OS,
@@ -60,12 +60,11 @@ a repository is the consent boundary.
   retired terminology — never reintroduce "breadcrumb".
 - **Present design forks via AskUserQuestion**, recommendation first, and expect the
   recommendation to be challenged.
-- **APM gotchas.** `apm install --target <codex|claude|cursor|all>` deploys the skill, hooks, and the
-  trigger to `.claude/rules/` — for Claude Code that is enough, no `apm compile`. Codex and other
-  `AGENTS.md` agents additionally need `apm compile` to register the trigger. Cursor needs `.cursor/`
-  to exist before install. APM-generated artifacts
-  (`apm_modules/`, `.agents/`, `.codex/`, `.claude/`, `.cursor/`, `apm.lock.yaml`) are
-  gitignored; do not commit them.
+- **APM gotchas.** Use `claude`, `codex`, or `cursor` for the corresponding native APM target. Use
+  `agent-skills` for Cline because Cline discovers `.agents/skills` and APM has no native `cline`
+  target. Claude Code needs no `apm compile`; Codex and other `AGENTS.md` agents do. Cursor needs
+  `.cursor/` to exist before installation. APM-generated artifacts (`apm_modules/`, `.agents/`,
+  `.codex/`, `.claude/`, `.cursor/`, and `apm.lock.yaml`) are gitignored; do not commit them.
 
 ## Git workflow
 
@@ -100,7 +99,7 @@ untracked files not yet committed. Remove the listed paths explicitly.
 
 ## Open work
 
-- **OpenCode adapter** — the fourth harness. A native `use_skill` tool call via the
+- **OpenCode adapter:** the fifth harness. A native `use_skill` tool call via the
   `.claude/skills/` compatibility extension, the same path as Claude Code.
 - **Outbox housekeeping** — offset-file garbage collection is not implemented.
 - **Automatic updates** — `self-update` is explicit. There is no hook or scheduled trigger

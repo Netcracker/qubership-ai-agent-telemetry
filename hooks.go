@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 )
 
@@ -38,6 +39,7 @@ type hookState string
 const (
 	hookInstalled hookState = "installed"
 	hookMissing   hookState = "missing"
+	hookOutdated  hookState = "outdated"
 	hookInvalid   hookState = "invalid"
 )
 
@@ -66,6 +68,8 @@ func hookPath(home string, target hookTarget) string {
 		return filepath.Join(home, ".claude", "settings.json")
 	case hookCodex:
 		return filepath.Join(home, ".codex", "hooks.json")
+	case hookCline:
+		return clineHookPath(home, runtime.GOOS)
 	case hookCursor:
 		return filepath.Join(home, ".cursor", "hooks.json")
 	default:
@@ -86,6 +90,11 @@ func installHooks(home string, targets []hookTarget) []hookInstallResult {
 		path := hookPath(home, target)
 		if path == "" {
 			results = append(results, hookInstallResult{Target: target, Err: errUserHomeUnavailable})
+			continue
+		}
+		if target == hookCline {
+			path, changed, err := installClineHook(home, runtime.GOOS)
+			results = append(results, hookInstallResult{Target: target, Path: path, Changed: changed, Err: err})
 			continue
 		}
 		merge := mergeClaudeHook
@@ -148,6 +157,11 @@ func gatherHookStatus(home string) []hookStatus {
 	for _, target := range allHookTargets {
 		path := hookPath(home, target)
 		status := hookStatus{Target: target, Path: path, State: hookMissing}
+		if target == hookCline {
+			status.State, status.Detail = inspectClineHook(path, runtime.GOOS)
+			statuses = append(statuses, status)
+			continue
+		}
 		root, err := readHookRoot(path)
 		if errors.Is(err, os.ErrNotExist) {
 			statuses = append(statuses, status)
@@ -371,11 +385,12 @@ type hookTarget string
 
 const (
 	hookClaude hookTarget = "claude"
+	hookCline  hookTarget = "cline"
 	hookCodex  hookTarget = "codex"
 	hookCursor hookTarget = "cursor"
 )
 
-var allHookTargets = []hookTarget{hookClaude, hookCodex, hookCursor}
+var allHookTargets = []hookTarget{hookClaude, hookCline, hookCodex, hookCursor}
 
 func knownHookTarget(target hookTarget) bool {
 	for _, known := range allHookTargets {

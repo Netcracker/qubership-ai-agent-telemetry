@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -248,6 +249,44 @@ func TestUninstallHooksPreservesCodexRuleWhenHookCleanupFails(t *testing.T) {
 	gotRule, err := os.ReadFile(codexRulePath(home))
 	if err != nil || string(gotRule) != codexExecutionPolicy {
 		t.Fatalf("Codex rule = %q, %v; want canonical rule preserved", gotRule, err)
+	}
+}
+
+func TestUninstallHooksContinuesAfterModifiedClineHook(t *testing.T) {
+	home := t.TempDir()
+	if err := hookInstallError(installHooks(home, []hookTarget{hookClaude, hookCline, hookCursor})); err != nil {
+		t.Fatal(err)
+	}
+	clinePath := hookPath(home, hookCline)
+	modified := append(clineHookContent(runtime.GOOS), []byte("# local change\n")...)
+	if err := os.WriteFile(clinePath, modified, clineHookMode(runtime.GOOS)); err != nil {
+		t.Fatal(err)
+	}
+
+	var warnings bytes.Buffer
+	results := uninstallHooks(home, []hookTarget{hookCursor, hookCline, hookClaude}, &warnings)
+	if err := hookInstallError(results); err == nil || !strings.Contains(err.Error(), "cline") {
+		t.Fatalf("hookInstallError() = %v, want incomplete Cline cleanup", err)
+	}
+	cleanupErr := hookInstallError(results)
+	for _, fragment := range []string{
+		clinePath,
+		managedCLIPath(home, runtime.GOOS),
+		"docs/manual-uninstall.md",
+		"rerun the original uninstall command",
+	} {
+		if !strings.Contains(cleanupErr.Error(), fragment) {
+			t.Fatalf("hookInstallError() = %q, want %q", cleanupErr, fragment)
+		}
+	}
+	if len(results) != 3 || !results[0].Changed || results[1].Changed || !results[2].Changed {
+		t.Fatalf("results = %#v", results)
+	}
+	if !strings.Contains(warnings.String(), "preserved Cline hook ownership conflict") {
+		t.Fatalf("warnings = %q", warnings.String())
+	}
+	if got, err := os.ReadFile(clinePath); err != nil || !bytes.Equal(got, modified) {
+		t.Fatalf("modified Cline hook = %q, %v", got, err)
 	}
 }
 

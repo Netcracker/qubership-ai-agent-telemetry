@@ -49,7 +49,7 @@ jobs:
           fi
 
       - name: Check tag is absent
-        uses: netcracker/qubership-workflow-hub/actions/tag-action@b6bee6f61fdc8b367777c1173fc852a58878a6a7 # v2.5.0
+        uses: netcracker/qubership-workflow-hub/actions/tag-action@27fd7674286e5f561a6fd8277f2f389ff96ddb9e # v2.6.0
         with:
           ref: ${{ github.ref }}
           tag-name: ${{ env.VERSION }}
@@ -162,7 +162,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 # zizmor: ignore[artipacked]
 
       - name: Create tag
-        uses: netcracker/qubership-workflow-hub/actions/tag-action@b6bee6f61fdc8b367777c1173fc852a58878a6a7 # v2.5.0
+        uses: netcracker/qubership-workflow-hub/actions/tag-action@27fd7674286e5f561a6fd8277f2f389ff96ddb9e # v2.6.0
         with:
           ref: ${{ github.ref }}
           tag-name: ${{ env.VERSION }}
@@ -202,26 +202,32 @@ jobs:
           pwsh -NoProfile -Command \
             "[scriptblock]::Create((Get-Content -Raw dist/install.ps1)) | Out-Null"
 
+      - name: Stage telemetry backend
+        run: bash scripts/package-backend-release.sh "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/dist"
+
       - name: Checksums
         # The installer scripts fetch SHA256SUMS and hard-fail when it is missing.
         # sha256sum's default output (hash, two spaces, filename) is the exact format
         # the .sh ($2 == asset) and .ps1 (filename at end of line) parse.
         working-directory: dist
-        run: sha256sum ai-agent-telemetry-* install.sh install.ps1 > SHA256SUMS
+        run: sha256sum ai-agent-telemetry-* backup-backend.sh update-backend.sh install.sh install.ps1 > SHA256SUMS
 
       - name: Verify staged release payload
         working-directory: dist
         run: |
           cat > ../expected-assets.txt <<'EOF'
           SHA256SUMS
+          ai-agent-telemetry-backend.tar.gz
           ai-agent-telemetry-darwin-amd64
           ai-agent-telemetry-darwin-arm64
           ai-agent-telemetry-linux-amd64
           ai-agent-telemetry-linux-arm64
           ai-agent-telemetry-windows-amd64.exe
           ai-agent-telemetry-windows-arm64.exe
+          backup-backend.sh
           install.ps1
           install.sh
+          update-backend.sh
           EOF
           sed -i 's/^ *//' ../expected-assets.txt
           sort -o ../expected-assets.txt ../expected-assets.txt
@@ -235,12 +241,12 @@ jobs:
 
           awk '{print $2}' SHA256SUMS | sort > ../checksum-assets.txt
           if ! diff -u ../expected-checksum-assets.txt ../checksum-assets.txt; then
-            echo "SHA256SUMS does not cover every staged binary and installer asset exactly once" >&2
+            echo "SHA256SUMS does not cover every staged release asset exactly once" >&2
             exit 1
           fi
 
       - name: Upload release assets
-        uses: netcracker/qubership-workflow-hub/actions/assets-action@b6bee6f61fdc8b367777c1173fc852a58878a6a7 # v2.5.0
+        uses: netcracker/qubership-workflow-hub/actions/assets-action@27fd7674286e5f561a6fd8277f2f389ff96ddb9e # v2.6.0
         with:
           tag: ${{ env.VERSION }}
-          item-path: dist/ai-agent-telemetry-*,dist/install.sh,dist/install.ps1,dist/SHA256SUMS
+          item-path: dist/ai-agent-telemetry-darwin-amd64,dist/ai-agent-telemetry-darwin-arm64,dist/ai-agent-telemetry-linux-amd64,dist/ai-agent-telemetry-linux-arm64,dist/ai-agent-telemetry-windows-amd64.exe,dist/ai-agent-telemetry-windows-arm64.exe,dist/ai-agent-telemetry-backend.tar.gz,dist/backup-backend.sh,dist/update-backend.sh,dist/install.sh,dist/install.ps1,dist/SHA256SUMS

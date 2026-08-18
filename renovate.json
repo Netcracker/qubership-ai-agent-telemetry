@@ -10,6 +10,7 @@
     "github>Netcracker/renovate-config:grafana-plugins"
   ],
   "timezone": "Europe/Saratov",
+  "platformAutomerge": true,
   "rangeStrategy": "bump",
   "postUpdateOptions": [
     "gomodTidy"
@@ -33,6 +34,97 @@
         "digest"
       ],
       "groupName": "Docker Compose image non-major updates"
+    },
+    {
+      "description": "Write an eligible minimum Go minor line as its initial X.Y.0 release",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "allowedVersions": "/^\\d+\\.\\d+\\.0$/",
+      "rangeStrategy": "bump"
+    },
+    {
+      "description": "Update the minimum Go minor line after a five-year adoption period",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor"
+      ],
+      "minimumReleaseAge": "5 years"
+    },
+    {
+      "description": "Do not update the minimum Go version for patch releases",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDatasources": [
+        "golang-version"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Default all dependency updates to manual review",
+      "matchManagers": [
+        "*"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Automerge tested non-major dependency updates",
+      "matchManagers": [
+        "!github-actions",
+        "!renovate-config"
+      ],
+      "matchDatasources": [
+        "!golang-version"
+      ],
+      "matchCurrentVersion": "!/^v?0(?:[.+-]|$)/",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest",
+        "pinDigest"
+      ],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Require manual review for minimum Go version updates",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Require manual review for vulnerability alerts",
+      "matchJsonata": [
+        "isVulnerabilityAlert = true"
+      ],
+      "automerge": false
     }
   ]
 }

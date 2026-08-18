@@ -141,20 +141,20 @@ func TestGatherHookStatusReportsInstalledMissingAndInvalid(t *testing.T) {
 	}
 
 	got := gatherHookStatus(home)
-	if len(got) != 3 {
-		t.Fatalf("statuses = %#v, want three", got)
+	if len(got) != 4 {
+		t.Fatalf("statuses = %#v, want four", got)
 	}
-	wantStates := []hookState{hookInstalled, hookMissing, hookInvalid}
+	wantStates := []hookState{hookInstalled, hookInstalled, hookMissing, hookInvalid}
 	for i, target := range allHookTargets {
 		if got[i].Target != target || got[i].Path != hookPath(home, target) || got[i].State != wantStates[i] {
 			t.Fatalf("status[%d] = %#v", i, got[i])
 		}
 	}
-	if got[0].Detail != "" || got[1].Detail != "" {
+	if got[0].Detail != "" || got[1].Detail != "" || got[2].Detail != "" {
 		t.Fatalf("non-invalid details = %#v", got)
 	}
-	if !strings.Contains(got[2].Detail, "parse") {
-		t.Fatalf("Cursor detail = %q, want parse error", got[2].Detail)
+	if !strings.Contains(got[3].Detail, "parse") {
+		t.Fatalf("Cursor detail = %q, want parse error", got[3].Detail)
 	}
 }
 
@@ -178,13 +178,34 @@ func TestGatherHookStatusRequiresCodexExecutionPolicy(t *testing.T) {
 	}
 
 	statuses := gatherHookStatus(home)
-	status := statuses[1]
+	status := statuses[2]
 	if status.Target != hookCodex || status.State != hookInvalid {
 		t.Fatalf("Codex status = %#v, want invalid", status)
 	}
 	if !strings.Contains(status.Detail, codexRulePath(home)) {
 		t.Fatalf("Codex detail = %q, want missing rule path", status.Detail)
 	}
+}
+
+func TestInstallHooksContinuesAfterClineConflict(t *testing.T) {
+	home := t.TempDir()
+	path := hookPath(home, hookCline)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho unrelated\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	results := installHooks(home, []hookTarget{hookCursor, hookCline, hookClaude})
+	if len(results) != 3 || results[0].Target != hookClaude || results[1].Target != hookCline || results[2].Target != hookCursor {
+		t.Fatalf("results = %#v, want canonical order", results)
+	}
+	if results[0].Err != nil || results[1].Err == nil || results[2].Err != nil {
+		t.Fatalf("results = %#v, want only Cline error", results)
+	}
+	assertInstalledHook(t, hookPath(home, hookClaude), inspectClaudeHook)
+	assertInstalledHook(t, hookPath(home, hookCursor), inspectCursorHook)
 }
 
 func TestGatherHookStatusUnavailableHomeIgnoresRelativeHooks(t *testing.T) {
@@ -240,6 +261,7 @@ func TestParseHookTargets(t *testing.T) {
 		{name: "all", raw: "all", want: allHookTargets},
 		{name: "none", raw: "none", want: []hookTarget{}},
 		{name: "subset", raw: "codex,claude", want: []hookTarget{hookClaude, hookCodex}},
+		{name: "Cline subset", raw: "cursor,cline", want: []hookTarget{hookCline, hookCursor}},
 		{name: "deduplicate", raw: "cursor,cursor", want: []hookTarget{hookCursor}},
 		{name: "whitespace", raw: " cursor, claude ", want: []hookTarget{hookClaude, hookCursor}},
 		{name: "unknown", raw: "windsurf", wantErr: true},

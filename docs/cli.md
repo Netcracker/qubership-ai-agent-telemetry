@@ -7,14 +7,14 @@ To install it, see [Installation in the README](../README.md#installation). This
 covers the command reference, how it works inside, and where it keeps its files.
 
 For the usual setup, run the platform installer and enter collector details only if prompted.
-It registers Claude Code, Codex, and Cursor automatically. The commands below are primarily for
+It registers Claude Code, Cline, Codex, and Cursor automatically. The commands below are primarily for
 customization, diagnostics, and repair.
 
 ## What it does
 
 On each hook run the CLI:
 
-1. reads the agent's hook payload from stdin and routes it by `hook_event_name` (see
+1. reads the agent's hook payload from stdin and routes it by the harness-specific event discriminator (see
    [Agent integration](agent-integration.md));
 2. normalizes supported skill, command, and MCP signals into typed events (see
    [Data](../README.md#data));
@@ -37,7 +37,7 @@ upgrades, so these commands rarely need to be run by hand.
 | `hooks uninstall` | Remove telemetry-owned hooks and canonical policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
 | `status` | Read-only check of configuration, delivery backlog, and each global hook. Sends nothing. Use `--verbose` for native paths and parse errors. |
 | `selftest` | Send one marked probe event and report whether the collector accepted it and it left the outbox. |
-| `ingest` | Read a harness hook payload, route it by `hook_event_name`, validate and queue supported events, then flush opportunistically. Always exits 0 so it never fails an agent turn. |
+| `ingest` | Read a harness hook payload, route its documented event, validate and queue supported events, then flush opportunistically. Always exits 0 so it never fails an agent turn. |
 | `flush` | Strictly send queued events to the collector and delete each only after successful delivery. |
 | `version` | Print the build version. |
 | `completion` | Generate completion for Bash, Zsh, Fish, or PowerShell without editing shell profiles. |
@@ -58,7 +58,7 @@ success. Explicit help prints the requested information without running an opera
 
 `install`, `update`, and `uninstall` accept `--components <list>` and `--skip <list>`. Components are `apm`,
 `telemetry`, and `git-hooks`; `all` is the default. Install and update also accept `--harnesses <list>`,
-`--force-git-hooks`, and `--non-interactive`. Harnesses are `claude`, `codex`, and `cursor`.
+`--force-git-hooks`, and `--non-interactive`. Harnesses are `claude`, `cline`, `codex`, and `cursor`.
 
 ```sh
 ai-agent-telemetry install
@@ -107,10 +107,19 @@ The CLI manages one user-level native file per harness on every supported operat
 | Harness | File | Registration |
 | --- | --- | --- |
 | Claude Code | `~/.claude/settings.json` | `PreToolUse`/`Skill`, `UserPromptExpansion`, `PostToolUse`/`mcp__.*`, `PostToolUseFailure`/`mcp__.*` |
+| Cline on macOS and Linux | `~/Documents/Cline/Hooks/PostToolUse` | Executable hook for successful skills and completed MCP tools |
+| Cline on Windows | `~/Documents/Cline/Hooks/PostToolUse.ps1` | PowerShell hook for successful skills and completed MCP tools |
 | Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` | `Stop`, `PostToolUse`/`mcp__.*`, and the execution policy |
 | Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, `afterMCPExecution`, and numeric top-level `version` |
 
-Normal installation registers all three hooks; no separate hook command is required. For a custom
+For MCP calls, the Cline hook records the server and tool names, exact `succeeded` or `failed` outcome, and duration
+when available. It exits successfully with no stdout or stderr. This removes telemetry output from the Cline tool-call
+display, but Cline still renders its own `Hook: PostToolUse` status card. Cline 4.1.4 has no separate setting to hide
+that card while keeping the hook enabled. Installation never rewrites a legacy or mismatched hook. The CLI reports an
+exact supported legacy template as `outdated` and gives the explicit `hooks uninstall` then `hooks install` commands.
+An `invalid` hook is preserved and does not qualify for this replacement procedure.
+
+Normal installation registers all four harnesses; no separate hook command is required. For a custom
 target list, `configure` accepts `--hooks=all`, `--hooks=none`, or a comma-separated subset. The
 repair command uses `--target` instead:
 
@@ -120,8 +129,12 @@ ai-agent-telemetry hooks install --target=claude,codex
 ai-agent-telemetry hooks uninstall --target=claude,codex
 ```
 
-Both hook commands accept `--target=claude`, `--target=codex`, `--target=cursor`, or a comma-separated subset; omitting
-the option selects all three harnesses. Uninstall removes only telemetry-owned entries and canonical policy files.
+Both hook commands accept `--target=claude`, `--target=cline`, `--target=codex`, `--target=cursor`, or a comma-separated
+subset; omitting the option selects all four harnesses. Uninstall removes only telemetry-owned entries and canonical
+policy files. For Cline, it removes only an exact current or supported legacy template. A mismatched regular file with
+the exact ownership comment blocks telemetry cleanup and preserves the managed CLI; resolve it with the
+[manual Cline uninstall procedure](manual-uninstall.md). Every other Cline entry is preserved as user-owned without
+blocking cleanup.
 
 Before `configure` or `hooks install` installs a nonempty set of CLI-managed hooks, the CLI reads `~/.apm/apm.yml`.
 If the manifest contains the exact legacy telemetry hook package dependency, the CLI asks APM to remove that global
@@ -144,7 +157,8 @@ targets and returns a nonzero exit code after reporting every failure.
 roll back the configuration. If a later hook installation fails, the configuration remains written and `configure`
 returns exit code `1`.
 
-`status` reports `installed`, `missing`, or `invalid` for each harness. It verifies registration
+`status` reports `installed`, `missing`, `outdated`, or `invalid` for each harness. `outdated` is specific to a Cline
+file whose bytes exactly match a supported legacy template. It verifies registration
 and required policy files, not execution or trust. `selftest` verifies collector delivery, not hook
 registration.
 
@@ -153,10 +167,11 @@ Codex's private trust state, so inspect and approve exactly `ai-agent-telemetry 
 
 ## Event routing and validation
 
-After selecting the adapter with `--agent`, `ingest` routes only by `hook_event_name`. Unsupported hooks, malformed
-JSON, missing required fields, invalid identifiers, and unsupported enum values produce no event. A legacy Claude Code
-payload without `hook_event_name` is treated as `PreToolUse` only when `tool_name` is `Skill`. The CLI does not infer
-other event types from payload fields.
+After selecting the adapter with `--agent`, `ingest` routes only by the documented event discriminator. Claude Code,
+Codex, and Cursor use `hook_event_name`; Cline uses `hookName`. Unsupported hooks, malformed JSON, missing required
+fields, invalid identifiers, and unsupported enum values produce no event. A legacy Claude Code payload without
+`hook_event_name` is treated as `PreToolUse` only when `tool_name` is `Skill`. The CLI does not infer other event types
+from payload fields.
 
 Hook ingestion is fail-open: it reports local enqueue or flush errors to stderr but always exits 0. An invalid event
 therefore cannot fail an agent turn or enter the outbox. Collector failures leave valid buffered files for retry.
@@ -350,6 +365,7 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 | **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token, and delivery settings), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush`, `.last_delivery_error`, and `.flush.lock`), `offsets/` (per-session transcript offsets) |
 | **Claude Code hook** | `~/.claude/settings.json` | Global `PreToolUse`/`Skill`, `UserPromptExpansion`, `PostToolUse`/`mcp__.*`, and `PostToolUseFailure`/`mcp__.*` registrations merged with unrelated settings |
+| **Cline hook** | `~/Documents/Cline/Hooks/PostToolUse[.ps1]` | Exact telemetry-owned file; an unrelated file or symbolic link is preserved as a conflict |
 | **Codex hook** | `~/.codex/hooks.json` | Global `Stop` and `PostToolUse`/`mcp__.*` registrations merged with unrelated hooks |
 | **Cursor hook** | `~/.cursor/hooks.json` | Global `afterAgentResponse` and `afterMCPExecution` registrations, plus numeric `version` |
 

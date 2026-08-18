@@ -174,6 +174,48 @@
           ]
         }
       ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "ai-agent-telemetry"}},
+          {"key": "service.version", "value": {"stringValue": "v1.2.0"}},
+          {"key": "machine.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000005"}},
+          {"key": "os.type", "value": {"stringValue": "linux"}}
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {"name": "ai-agent-telemetry"},
+          "logRecords": [
+            {
+              "timeUnixNano": "__TS_10__",
+              "body": {"stringValue": "skill_executed"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0010-7000-8000-000000000010"}},
+                {"key": "agent", "value": {"stringValue": "cline"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000055"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-e"}},
+                {"key": "skill.name", "value": {"stringValue": "cline-hook-probe"}}
+              ]
+            },
+            {
+              "timeUnixNano": "__TS_11__",
+              "body": {"stringValue": "mcp_tool_executed"},
+              "attributes": [
+                {"key": "event.id", "value": {"stringValue": "01900000-0011-7000-8000-000000000011"}},
+                {"key": "agent", "value": {"stringValue": "cline"}},
+                {"key": "session.id", "value": {"stringValue": "00000000-0000-4000-8000-000000000055"}},
+                {"key": "repo.remote", "value": {"stringValue": "github.com/example/repo-e"}},
+                {"key": "mcp.server.name", "value": {"stringValue": "github"}},
+                {"key": "mcp.tool.name", "value": {"stringValue": "get_issue"}},
+                {"key": "mcp.outcome", "value": {"stringValue": "succeeded"}},
+                {"key": "mcp.duration_ms", "value": {"intValue": "42"}}
+              ]
+            }
+          ]
+        }
+      ]
     }
   ]
 }

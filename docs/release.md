@@ -57,17 +57,94 @@ The release must contain exactly these assets:
 
 ```text
 SHA256SUMS
+ai-agent-telemetry-backend.tar.gz
 ai-agent-telemetry-darwin-amd64
 ai-agent-telemetry-darwin-arm64
 ai-agent-telemetry-linux-amd64
 ai-agent-telemetry-linux-arm64
 ai-agent-telemetry-windows-amd64.exe
 ai-agent-telemetry-windows-arm64.exe
+backup-backend.sh
 install.ps1
 install.sh
+update-backend.sh
 ```
 
 `SHA256SUMS` must include one entry for every asset above except itself. The workflow verifies this before upload.
+
+`ai-agent-telemetry-backend.tar.gz` contains the deployable backend files at the archive root, including Compose, Caddy, Collector, Grafana, dashboards, and maintenance scripts. It has no repository-name or `telemetry-backend/` wrapper directory.
+
+## First backend installation
+
+Install the release asset directly when the host does not have an active backend release. The updater requires an
+existing `/opt/ai-agent-telemetry-backend/latest` link and is only for subsequent updates.
+
+Run these commands as `root`, replacing `vX.Y.Z` with the verified release tag:
+
+```bash
+release_id=vX.Y.Z
+release_url="https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/$release_id"
+backend_root=/opt/ai-agent-telemetry-backend
+release_dir=$backend_root/$release_id
+
+install -d -m 0755 "$release_dir"
+curl -fsSLo /tmp/ai-agent-telemetry-backend.tar.gz "$release_url/ai-agent-telemetry-backend.tar.gz"
+curl -fsSLo /tmp/SHA256SUMS "$release_url/SHA256SUMS"
+(
+  cd /tmp
+  awk '$2 == "ai-agent-telemetry-backend.tar.gz"' SHA256SUMS | sha256sum -c -
+)
+tar -xzf /tmp/ai-agent-telemetry-backend.tar.gz -C "$release_dir"
+install -m 0600 "$release_dir/.env.example" "$release_dir/.env"
+vi "$release_dir/.env"
+ln -s "$release_id" "$backend_root/.latest.tmp"
+mv -Tf -- "$backend_root/.latest.tmp" "$backend_root/latest"
+docker compose --project-name ai-agent-telemetry-backend \
+  --project-directory "$release_dir" \
+  --env-file "$release_dir/.env" \
+  -f "$release_dir/docker-compose.yml" \
+  up -d --build
+docker compose --project-name ai-agent-telemetry-backend \
+  --project-directory "$release_dir" \
+  --env-file "$release_dir/.env" \
+  -f "$release_dir/docker-compose.yml" \
+  ps
+```
+
+Confirm that all five services are running and verify the dashboard, log, and metric endpoints before using the
+standalone maintenance commands.
+
+## Backend updater bootstrap
+
+Download and verify both standalone maintenance scripts before updating an existing installation. Run these commands
+as `root` on the backend host:
+
+```bash
+release_url=https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download
+curl -fsSLO "$release_url/update-backend.sh"
+curl -fsSLO "$release_url/backup-backend.sh"
+curl -fsSLO "$release_url/SHA256SUMS"
+awk '$2 == "update-backend.sh" || $2 == "backup-backend.sh"' SHA256SUMS | sha256sum -c -
+chmod 0755 update-backend.sh backup-backend.sh
+./update-backend.sh --ref latest
+```
+
+Pass a release tag, branch name, or full commit SHA to `--ref` when you do not want the latest release. The updater resolves branch names and commit references through the GitHub API before downloading an immutable source archive:
+
+```bash
+./update-backend.sh --ref v1.2.0
+./update-backend.sh --ref main
+./update-backend.sh --ref <full-commit-sha>
+```
+
+The updater stages downloads and images before downtime, creates a self-contained backup under `/opt/ai-agent-telemetry-backups`, activates the target through the `latest` symlink, checks backend health, and restores the previous release if activation fails.
+
+After a successful health check, an interactive update offers to remove backups older than 14 days. The two newest
+backups are always retained. Noninteractive runs keep old backups unless you pass `--prune-backups`:
+
+```bash
+./update-backend.sh --ref latest --prune-backups
+```
 
 ## Smoke checks
 
@@ -124,6 +201,42 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
 
 Confirm that update refreshes all selected components and that `update --cli-only` refreshes only the managed CLI. On
 Windows, also verify direct update handoff and full uninstall through the temporary `install.ps1` bootstrap.
+
+### Cline hook
+
+For a release that adds or changes Cline support, verify the installed hook on macOS or Linux:
+
+```sh
+ai-agent-telemetry status --verbose
+hook="$HOME/Documents/Cline/Hooks/PostToolUse"
+test -x "$hook"
+probe_dir=$(mktemp -d)
+printf '%s\n' '{"hookName":"PostToolUse","postToolUse":{"toolName":"read_file","parameters":{},"result":"","success":true,"executionTimeMs":1}}' \
+  | "$hook" >"$probe_dir/stdout" 2>"$probe_dir/stderr"
+test ! -s "$probe_dir/stdout"
+test ! -s "$probe_dir/stderr"
+rm "$probe_dir/stdout" "$probe_dir/stderr"
+rmdir "$probe_dir"
+```
+
+On Windows PowerShell:
+
+```powershell
+ai-agent-telemetry status --verbose
+$hook = Join-Path $HOME 'Documents\Cline\Hooks\PostToolUse.ps1'
+if (-not (Test-Path $hook -PathType Leaf)) { throw "Cline hook is missing: $hook" }
+$output = [IO.Path]::GetTempFileName()
+$payload = '{"hookName":"PostToolUse","postToolUse":{"toolName":"read_file","parameters":{},"result":"","success":true,"executionTimeMs":1}}'
+$payload | & $hook *> $output
+if ((Get-Item $output).Length -ne 0) { throw "Cline hook wrote output: $output" }
+Remove-Item $output
+```
+
+Confirm that `status --verbose` reports the Cline hook as `installed`. The unsupported `read_file` payload sends no
+event; it checks only registration, execution, and silent output. Then
+invoke a temporary skill once from the Cline VS Code Extension or Cline CLI. Confirm that the collector contains one
+`skill_executed` record with `agent=cline` and the temporary `skill.name`, and that `status --verbose` reports no
+buffered events or delivery error. Remove the temporary skill after the check.
 
 ## Breaking-change checks
 

@@ -13,6 +13,25 @@ import (
 
 const testAPMPackage = "qubership-global-essentials@qubership-ai-packages"
 
+func TestJoinAPMTargetsMapsClineToAgentSkills(t *testing.T) {
+	tests := []struct {
+		name    string
+		targets []hookTarget
+		want    string
+	}{
+		{name: "Cline", targets: []hookTarget{hookCline}, want: "agent-skills"},
+		{name: "mixed", targets: []hookTarget{hookCodex, hookCline}, want: "codex,agent-skills"},
+		{name: "stable and deduplicated", targets: []hookTarget{hookCline, hookCursor, hookCline}, want: "agent-skills,cursor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := joinAPMTargets(tt.targets); got != tt.want {
+				t.Fatalf("joinAPMTargets(%v) = %q, want %q", tt.targets, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAPMComponentInstallBootstrapsMissingCLIAndDiscoversItAgain(t *testing.T) {
 	var calls []string
 	lookups := 0

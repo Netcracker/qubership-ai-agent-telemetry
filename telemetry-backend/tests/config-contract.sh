@@ -16,12 +16,50 @@ adoption_dashboard=$backend_dir/grafana/dashboards/ai-agent-telemetry-adoption.j
 overview_dashboard=$backend_dir/grafana/dashboards/native-agent-metrics-overview.json
 codex_dashboard=$backend_dir/grafana/dashboards/codex-native-metrics.json
 collector_config=$backend_dir/otel-collector-config.yaml
+grafana_dockerfile=$backend_dir/grafana/Dockerfile
 fixture_stack=$backend_dir/tests/with-fixture-stack.sh
+repository_root=$(CDPATH='' cd -- "$backend_dir/.." && pwd)
+release_guide=$repository_root/docs/release.md
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
+
+legacy_hits=$(git -C "$repository_root" grep -In 'skills-telemetry' -- \
+  telemetry-backend scripts/package-backend-release.sh scripts/package_backend_release_test.sh \
+  docs/release.md .github/workflows/release.yaml || true)
+printf '%s\n' "$legacy_hits" | while IFS=: read -r legacy_path legacy_line_number legacy_text; do
+  [ -n "$legacy_path" ] || continue
+  : "$legacy_text"
+  case "$legacy_path" in
+    telemetry-backend/tests/config-contract.sh|docs/superpowers/plans/*|docs/superpowers/specs/*)
+      ;;
+    *)
+      fail "legacy backend identity remains outside its allowlist: $legacy_path:$legacy_line_number"
+      ;;
+  esac
+done
+
+legacy_option_hits=$(git -C "$repository_root" grep -In -- '--legacy-source' -- \
+  telemetry-backend scripts/package-backend-release.sh scripts/package_backend_release_test.sh \
+  docs/release.md .github/workflows/release.yaml || true)
+printf '%s\n' "$legacy_option_hits" | while IFS=: read -r legacy_path legacy_line_number legacy_text; do
+  [ -n "$legacy_path" ] || continue
+  : "$legacy_text"
+  case "$legacy_path" in
+    telemetry-backend/tests/config-contract.sh|docs/superpowers/plans/*|docs/superpowers/specs/*) ;;
+    *) fail "legacy maintenance option remains outside its historical allowlist: $legacy_path:$legacy_line_number" ;;
+  esac
+done
+
+if grep -Fq '/opt/skills-telemetry-backups' "$release_guide"; then
+  fail 'release guide must use the ordinary backend backup root'
+fi
+
+grep -Eq \
+  '^FROM grafana/grafana:[^@[:space:]]+@sha256:[0-9a-f]{64}$' \
+  "$grafana_dockerfile" || fail 'Grafana build must pin its base image by tag and digest'
 
 for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
   VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES VM_SELF_SCRAPE_INTERVAL; do
@@ -114,6 +152,9 @@ rendered=$(mktemp)
 legacy_env=$(mktemp)
 trap 'rm -f "$rendered" "$legacy_env"' EXIT HUP INT TERM
 docker compose --env-file "$env_file" -f "$compose_file" config --format json >"$rendered"
+jq -e '[.services.caddy.image, .services.collector.image, .services.victorialogs.image,
+  .services.victoriametrics.image] | all(test("@sha256:[0-9a-f]{64}$"))' "$rendered" >/dev/null ||
+  fail 'every registry-backed service must pin its image digest'
 jq -e '.services.caddy.ports | length == 2' "$rendered" >/dev/null || fail 'Caddy must publish two ports'
 jq -e '[.services.collector.ports, .services.victorialogs.ports] | all(. == null)' "$rendered" >/dev/null ||
   fail 'Collector and VictoriaLogs must not publish ports'
@@ -171,7 +212,8 @@ done
 
 for text in \
   'metrics_exporter = { otlp-http = {' 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT' \
-  'OTEL_METRICS_INCLUDE_SESSION_ID=false' 'Cline is not an accepted `--harnesses` target' \
+  'OTEL_METRICS_INCLUDE_SESSION_ID=false' 'Cline is an accepted lifecycle `--harnesses` target' \
+  'Cline has no first-class APM target' \
   'per-session high-cardinality labels' '## Verify ingestion' '## Remove the configuration'; do
   grep -Fq "$text" "$native_onboarding" || fail "native OTLP onboarding guide is missing: $text"
 done

@@ -263,8 +263,8 @@ for ref_id in QI QD QM; do
 done
 jq -e '.results.S.frames[0]
   | (.schema.fields | any(.name == "Value" and .type == "number"))
-    and (.data.values[1][0] == 3)' "$grafana_response" >/dev/null ||
-  fail 'the Grafana stat query did not return active_installs=3 as numeric data'
+    and (.data.values[1][0] == 4)' "$grafana_response" >/dev/null ||
+  fail 'the Grafana stat query did not return active_installs=4 as numeric data'
 for ref_id in T P; do
   jq -e --arg ref_id "$ref_id" '
     (.results[$ref_id].frames | [.[].schema.fields[]] | any(.type == "number"))
@@ -298,7 +298,7 @@ jq -e '.results.H.frames | length == 1 and
   "$grafana_response" >/dev/null ||
   fail 'the Grafana coverage query did not return exactly one percentage metric'
 jq -e '[.results.O.frames[].schema.fields[].labels?.agent]
-  | all(. != "selftest") and contains(["claude", "codex", "cursor"])' \
+  | all(. != "selftest") and contains(["claude", "cline", "codex", "cursor"])' \
   "$grafana_response" >/dev/null ||
   fail 'the Grafana harness query did not exclude selftest or return every fixture harness'
 jq -e '[.results.M.frames[].schema.fields[].labels?]

@@ -1,0 +1,17 @@
+.env.example
+Caddyfile
+README.md
+docker-compose.yml
+grafana/Dockerfile
+grafana/dashboards/ai-agent-telemetry-adoption.json
+grafana/dashboards/codex-native-metrics.json
+grafana/dashboards/native-agent-metrics-overview.json
+grafana/dashboards/telemetry-health.json
+grafana/provisioning/alerting/empty.yaml
+grafana/provisioning/dashboards/dashboards.yaml
+grafana/provisioning/datasources/victorialogs.yaml
+grafana/provisioning/plugins/empty.yaml
+native-otlp-onboarding.md
+otel-collector-config.yaml
+scripts/backup-backend.sh
+scripts/update-backend.sh

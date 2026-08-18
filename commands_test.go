@@ -524,11 +524,13 @@ func TestFormatStatusShowsDeliverySettingsOnlyWhenVerbose(t *testing.T) {
 func TestFormatStatusReportsHooksWithoutInvalidDetail(t *testing.T) {
 	report := statusReport{Hooks: []hookStatus{
 		{Target: hookClaude, Path: "/home/u/.claude/settings.json", State: hookInstalled},
+		{Target: hookCline, Path: "/home/u/Documents/Cline/Hooks/PostToolUse", State: hookOutdated,
+			Detail: "legacy managed hook; run replacement commands"},
 		{Target: hookCodex, Path: "/home/u/.codex/hooks.json", State: hookMissing},
 		{Target: hookCursor, Path: "/home/u/.cursor/hooks.json", State: hookInvalid, Detail: "parse hooks: invalid character"},
 	}}
 	out := formatStatus(report, false)
-	want := "hooks:\n  claude: installed\n  codex: missing\n  cursor: invalid\n"
+	want := "hooks:\n  claude: installed\n  cline: outdated\n  codex: missing\n  cursor: invalid\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("output = %q, want block %q", out, want)
 	}
@@ -540,12 +542,15 @@ func TestFormatStatusReportsHooksWithoutInvalidDetail(t *testing.T) {
 func TestFormatStatusVerboseReportsHooksWithPathsAndInvalidDetail(t *testing.T) {
 	report := statusReport{Hooks: []hookStatus{
 		{Target: hookClaude, Path: "/home/u/.claude/settings.json", State: hookInstalled},
+		{Target: hookCline, Path: "/home/u/Documents/Cline/Hooks/PostToolUse", State: hookOutdated,
+			Detail: "legacy managed hook; run replacement commands"},
 		{Target: hookCodex, Path: "/home/u/.codex/hooks.json", State: hookMissing},
 		{Target: hookCursor, Path: "/home/u/.cursor/hooks.json", State: hookInvalid, Detail: "parse /home/u/.cursor/hooks.json: invalid character"},
 	}}
 	out := formatStatus(report, true)
 	for _, want := range []string{
 		"claude: installed (/home/u/.claude/settings.json)",
+		"cline: outdated (/home/u/Documents/Cline/Hooks/PostToolUse): legacy managed hook; run replacement commands",
 		"codex: missing (/home/u/.codex/hooks.json)",
 		"cursor: invalid (/home/u/.cursor/hooks.json): parse /home/u/.cursor/hooks.json: invalid character",
 	} {

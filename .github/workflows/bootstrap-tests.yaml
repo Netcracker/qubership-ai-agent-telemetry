@@ -11,12 +11,6 @@ on:
       - ".github/workflows/bootstrap-tests.yaml"
   pull_request:
     types: [ opened, synchronize, reopened ]
-    paths:
-      - "scripts/install.sh"
-      - "scripts/install.ps1"
-      - "scripts/install_test.sh"
-      - "scripts/install.Tests.ps1"
-      - ".github/workflows/bootstrap-tests.yaml"
   workflow_dispatch: null
 
 concurrency:
@@ -26,8 +20,34 @@ concurrency:
 permissions: {}
 
 jobs:
+  changes:
+    name: Bootstrap changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      bootstrap: ${{ steps.filter.outputs.bootstrap }}
+    steps:
+      - name: Detect bootstrap changes
+        if: ${{ github.event_name == 'pull_request' }}
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            bootstrap:
+              - 'scripts/install.sh'
+              - 'scripts/install.ps1'
+              - 'scripts/install_test.sh'
+              - 'scripts/install.Tests.ps1'
+              - 'go.mod'
+              - '.github/workflows/bootstrap-tests.yaml'
+
   posix:
     name: POSIX (${{ matrix.os }})
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.bootstrap == 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     permissions:
@@ -50,6 +70,8 @@ jobs:
 
   powershell:
     name: PowerShell (windows-latest)
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.bootstrap == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 10
     permissions:
@@ -72,3 +94,44 @@ jobs:
       - name: Run black-box tests with PowerShell 7
         shell: pwsh
         run: pwsh -NoProfile -File scripts/install.Tests.ps1
+
+  ci-gate:
+    name: Bootstrap CI Gate
+    needs: [changes, posix, powershell]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    # This stable, always-created check is the branch-protection gate. The
+    # test jobs are filtered inside the workflow so their skipped state cannot
+    # be required directly; this also avoids a pending check when no bootstrap
+    # files changed in a pull request.
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      RUN_TESTS: ${{ github.event_name != 'pull_request' || needs.changes.outputs.bootstrap == 'true' }}
+      JOB_RESULTS: ${{ needs.posix.result }} ${{ needs.powershell.result }}
+    steps:
+      - name: Fail when a required job did not succeed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$CHANGES_RESULT" != 'success' ]; then
+            echo "Bootstrap change detection finished with $CHANGES_RESULT" >&2
+            exit 1
+          fi
+
+          read -r -a results <<<"$JOB_RESULTS"
+          expected_result=skipped
+          if [ "$RUN_TESTS" = 'true' ]; then
+            expected_result=success
+          elif [ "$RUN_TESTS" != 'false' ]; then
+            echo "Bootstrap change detection returned $RUN_TESTS" >&2
+            exit 1
+          fi
+
+          for result in "${results[@]}"; do
+            if [ "$result" != "$expected_result" ]; then
+              echo "Expected $expected_result, got $result" >&2
+              exit 1
+            fi
+          done
