@@ -187,6 +187,7 @@ func assertOutboxCount(t *testing.T, outbox *Outbox, want int) {
 }
 
 func TestFlushUsesGzipCompression(t *testing.T) {
+	unsetCompressionEnv(t)
 	isolateConfigCache(t)
 	capture := newOTLPCapture(t)
 	defer capture.server.Close()
@@ -210,6 +211,63 @@ func TestFlushUsesGzipCompression(t *testing.T) {
 	records := capturedRecords(capture.requests)
 	if len(records) != 1 || records[0].Body.GetStringValue() != "skill_executed" {
 		t.Fatalf("decompressed OTLP records = %v, want one skill_executed record", records)
+	}
+}
+
+func TestFlushRespectsCompressionOverrides(t *testing.T) {
+	unsetCompressionEnv(t)
+
+	for _, name := range []string{
+		"OTEL_EXPORTER_OTLP_LOGS_COMPRESSION",
+		"OTEL_EXPORTER_OTLP_COMPRESSION",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "none")
+			isolateConfigCache(t)
+			capture := newOTLPCapture(t)
+			defer capture.server.Close()
+
+			outbox := &Outbox{Dir: t.TempDir()}
+			seed(t, outbox, 1)
+
+			sent, err := Flush(outbox, capture.server.URL, "", nil, 2*time.Second)
+			if err != nil {
+				t.Fatalf("flush: %v", err)
+			}
+			if sent != 1 {
+				t.Fatalf("sent = %d, want 1", sent)
+			}
+			if len(capture.contentEncodings) != 1 {
+				t.Fatalf("captured %d Content-Encoding headers, want 1", len(capture.contentEncodings))
+			}
+			if got := capture.contentEncodings[0]; got != "" {
+				t.Fatalf("Content-Encoding = %q, want no compression", got)
+			}
+		})
+	}
+}
+
+func unsetCompressionEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"OTEL_EXPORTER_OTLP_LOGS_COMPRESSION",
+		"OTEL_EXPORTER_OTLP_COMPRESSION",
+	} {
+		value, ok := os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+		t.Cleanup(func() {
+			if ok {
+				if err := os.Setenv(name, value); err != nil {
+					t.Errorf("restore %s: %v", name, err)
+				}
+				return
+			}
+			if err := os.Unsetenv(name); err != nil {
+				t.Errorf("restore unset %s: %v", name, err)
+			}
+		})
 	}
 }
 

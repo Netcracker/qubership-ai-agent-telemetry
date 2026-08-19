@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -272,9 +273,10 @@ func newOTLPLogExporter(
 	endpoint, token string,
 	tlsConfig *tls.Config,
 ) (sdklog.Exporter, error) {
-	opts := []otlploghttp.Option{
-		otlploghttp.WithEndpointURL(endpoint),
-		otlploghttp.WithCompression(otlploghttp.GzipCompression),
+	opts := []otlploghttp.Option{otlploghttp.WithEndpointURL(endpoint)}
+	if os.Getenv("OTEL_EXPORTER_OTLP_LOGS_COMPRESSION") == "" &&
+		os.Getenv("OTEL_EXPORTER_OTLP_COMPRESSION") == "" {
+		opts = append(opts, otlploghttp.WithCompression(otlploghttp.GzipCompression))
 	}
 	if token != "" {
 		opts = append(opts, otlploghttp.WithHeaders(map[string]string{"Authorization": "Bearer " + token}))
