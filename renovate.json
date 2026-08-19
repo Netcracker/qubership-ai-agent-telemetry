@@ -10,7 +10,7 @@
     "github>Netcracker/renovate-config:grafana-plugins"
   ],
   "timezone": "Europe/Saratov",
-  "platformAutomerge": true,
+  "platformAutomerge": false,
   "rangeStrategy": "bump",
   "postUpdateOptions": [
     "gomodTidy"
