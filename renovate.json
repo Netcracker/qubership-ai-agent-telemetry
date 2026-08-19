@@ -10,6 +10,7 @@
     "github>Netcracker/renovate-config:grafana-plugins"
   ],
   "timezone": "Europe/Saratov",
+  "platformAutomerge": false,
   "rangeStrategy": "bump",
   "postUpdateOptions": [
     "gomodTidy"
@@ -80,6 +81,50 @@
         "patch"
       ],
       "enabled": false
+    },
+    {
+      "description": "Default all dependency updates to manual review",
+      "matchManagers": [
+        "*"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Automerge tested non-major dependency updates",
+      "matchManagers": [
+        "!github-actions",
+        "!renovate-config"
+      ],
+      "matchDatasources": [
+        "!golang-version"
+      ],
+      "matchCurrentVersion": "!/^v?0(?:[.+-]|$)/",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest",
+        "pinDigest"
+      ],
+      "automerge": true,
+      "automergeType": "pr"
+    },
+    {
+      "description": "Require manual review for minimum Go version updates",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Require manual review for vulnerability alerts",
+      "matchJsonata": [
+        "isVulnerabilityAlert = true"
+      ],
+      "automerge": false
     }
   ]
 }
