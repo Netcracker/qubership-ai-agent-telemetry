@@ -62,9 +62,11 @@ repository allowlist limits collection to approved repositories.
   recommendation to be challenged.
 - **APM gotchas.** Use `claude`, `codex`, or `cursor` for the corresponding native APM target. Use
   `agent-skills` for Cline because Cline discovers `.agents/skills` and APM has no native `cline`
-  target. Claude Code needs no `apm compile`; Codex and other `AGENTS.md` agents do. Cursor needs
-  `.cursor/` to exist before installation. APM-generated artifacts (`apm_modules/`, `.agents/`,
-  `.codex/`, `.claude/`, `.cursor/`, and `apm.lock.yaml`) are gitignored; do not commit them.
+  target. Claude Code needs no `apm compile`; Codex and other `AGENTS.md` agents do. In this repository,
+  the root `AGENTS.md` is tracked source, so never run multi-file `apm compile` against the repository root.
+  Use `sh scripts/apm_compile_test.sh` to exercise Codex compilation without overwriting it. Cursor needs
+  `.cursor/` to exist before installation. APM-generated artifacts (`apm_modules/`, `.agents/`, `.codex/`,
+  `.claude/`, `.cursor/`, and `apm.lock.yaml`) are gitignored; do not commit them.
 
 ## Git workflow
 
@@ -78,12 +80,14 @@ but the default path is a PR.
   review and approve → squash-merge.
 - **Before every commit and push:** run `git fetch origin` and confirm that local `main` is not behind
   `origin/main`. Fast-forward local `main` when needed; if another worktree prevents it, ask the user to update it.
-- **Before every PR update:** confirm that the branch includes the latest `origin/main`. Rebase onto `origin/main`
-  when needed; if the rebase requires user coordination, stop and ask the user to perform it.
-- **After opening or updating a PR:** run `gh pr checks <pr> --watch --interval 10` and keep a watcher active until
-  every check is successful or skipped. Do not treat the task as complete while any check is pending, failing,
-  cancelled, or action-required. Diagnose branch-caused failures, push fixes, and restart the watcher; report external
-  or permission-blocked failures as blockers.
+- **Before opening or updating a PR:** fetch `origin`, then run
+  `git merge-base --is-ancestor origin/main HEAD` to confirm that the branch includes the latest `origin/main`.
+  Rebase when needed; if the rebase requires user coordination, stop and ask the user to perform it.
+- **After opening or updating a PR:** poll `gh pr checks <pr> --json name,bucket,state` every 10 seconds for up to five
+  minutes until at least one check appears, then run `gh pr checks <pr> --watch --interval 10`. After the watcher exits,
+  query the JSON result again and accept only a non-empty set where every `bucket` is `pass` or `skipping`. Rerun
+  cancelled checks; if they cannot be rerun or cancel again, report them as blockers. Diagnose branch-caused failures
+  and push fixes; report missing, external, or permission-blocked checks as blockers.
 - **Release:** after the change is on `main`, run the `Release` workflow (workflow_dispatch, with a
   version). It creates the tag and publishes the binaries — never push a tag by hand.
 
@@ -91,9 +95,9 @@ Keep history linear (squash merges) and commit messages in Conventional Commits.
 
 ## Testing and cleanup
 
-A test run is `apm install` (plus `apm compile` for Codex), exercising the hook, then removing the
-generated files so the next run starts clean. They are all gitignored; preview them with
-`git clean -xdn`.
+A test run is `apm install` plus `sh scripts/apm_compile_test.sh`, which compiles Codex context into a temporary
+single-file output and verifies that the tracked root `AGENTS.md` stays unchanged. Remove the generated install files
+so the next run starts clean. They are all gitignored; preview them with `git clean -xdn`.
 
 - **Remove** (APM install artifacts and build output): `apm_modules/`, `.agents/`,
   `.codex/`, `.claude/`, `.cursor/`, `apm.lock.yaml`, `dist/`, the root

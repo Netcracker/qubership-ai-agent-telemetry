@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -49,13 +50,38 @@ func TestWindowsLifecycleBootstrapCallsUseCheckedChildProcesses(t *testing.T) {
 	}
 }
 
-func TestSuperLinterExcludesSpecialMarkdownArtifacts(t *testing.T) {
+func TestSuperLinterExcludesOnlySpecialMarkdownArtifacts(t *testing.T) {
 	data, err := os.ReadFile(".github/workflows/super-linter.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "FILTER_REGEX_EXCLUDE: '(^|/)(docs/superpowers/|CLAUDE\\.md$)'") {
-		t.Fatal("super-linter must exclude generated Superpowers artifacts and CLAUDE.md imports")
+	if !strings.Contains(string(data), "STRIP_DEFAULT_WORKSPACE_FOR_REGEX: true") {
+		t.Fatal("super-linter must strip the workspace prefix before applying anchored exclusion regexes")
+	}
+	linePattern := regexp.MustCompile(`(?m)^\s*FILTER_REGEX_EXCLUDE: '([^']+)'$`)
+	match := linePattern.FindStringSubmatch(string(data))
+	if match == nil {
+		t.Fatal("super-linter exclusion regex was not found")
+	}
+	excludePattern, err := regexp.Compile(match[1])
+	if err != nil {
+		t.Fatalf("compile super-linter exclusion regex: %v", err)
+	}
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "docs/superpowers/plan.md", want: true},
+		{path: "nested/docs/superpowers/plan.md", want: true},
+		{path: "CLAUDE.md", want: true},
+		{path: "nested/CLAUDE.md", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			if got := excludePattern.MatchString(test.path); got != test.want {
+				t.Fatalf("exclusion match = %t, want %t for %q", got, test.want, test.path)
+			}
+		})
 	}
 }
 
