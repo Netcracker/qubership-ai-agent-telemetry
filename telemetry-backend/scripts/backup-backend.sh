@@ -562,6 +562,10 @@ run_telemetry_health_probes() (
     maintenance_error 'Compose environment DASHBOARD_AUTH_USER is not a valid auth-proxy identity'
     exit 1
   }
+  if [ "$dashboard_user" = admin ]; then
+    maintenance_error 'Compose environment DASHBOARD_AUTH_USER must not be admin'
+    exit 1
+  }
   if [ "${TELEMETRY_MAINTENANCE_TEST_MODE:-}" = 1 ] && [ -n "${TELEMETRY_TEST_CA_CERT:-}" ]; then
     ca_path=$(realpath -e -- "$TELEMETRY_TEST_CA_CERT") || exit 1
     case "$ca_path" in

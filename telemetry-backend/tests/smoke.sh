@@ -13,6 +13,7 @@ fi
 : "${TEST_COMPOSE_FILE:?set TEST_COMPOSE_FILE}"
 : "${TEST_INGEST_TOKEN:?set TEST_INGEST_TOKEN}"
 : "${TEST_RENDERED_FIXTURE:?set TEST_RENDERED_FIXTURE}"
+: "${TEST_GRAFANA_ADMIN_PASSWORD:?set TEST_GRAFANA_ADMIN_PASSWORD}"
 
 compose() {
   docker compose -p "$TEST_COMPOSE_PROJECT" --env-file "$TEST_ENV_FILE" -f "$TEST_COMPOSE_FILE" "$@"
@@ -140,18 +141,33 @@ for uid in \
 done
 
 cookie_jar=$(mktemp)
+admin_cookie=$(mktemp)
 grafana_query=$(mktemp)
 grafana_response=$(mktemp)
 stale_response=$(mktemp)
-trap 'rm -f "$challenge_headers" "$viewer_cookie" "$cookie_jar" "$grafana_query" "$grafana_response" "$stale_response"' \
+trap 'rm -f "$challenge_headers" "$viewer_cookie" "$cookie_jar" "$admin_cookie" "$grafana_query" "$grafana_response" "$stale_response"' \
   EXIT HUP INT TERM
+[ "$(status --user "admin:$TEST_GRAFANA_ADMIN_PASSWORD" "$TEST_BASE_URL/grafana/login")" = 302 ] ||
+  fail 'Caddy must sign the Grafana administrator in through the auth proxy'
+[ "$(status --user "admin:$TEST_DASHBOARD_PASSWORD" "$TEST_BASE_URL/grafana/login")" = 401 ] ||
+  fail 'Caddy must reject the Grafana administrator with the dashboard password'
+admin_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --cacert "$TEST_CA_CERT" --user "admin:$TEST_GRAFANA_ADMIN_PASSWORD" \
+  --cookie-jar "$admin_cookie" "$TEST_BASE_URL/grafana/login")
+[ "$admin_status" = 302 ] || fail "Caddy administrator login failed (HTTP $admin_status)"
+caddy_admin_user=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" --cookie "$admin_cookie" \
+  "$TEST_BASE_URL/grafana/api/user")
+[ "$(printf '%s' "$caddy_admin_user" | jq -r '.login')" = admin ] ||
+  fail 'Caddy administrator login did not sign in as admin'
+[ "$(printf '%s' "$caddy_admin_user" | jq -r '.isGrafanaAdmin')" = true ] ||
+  fail 'Caddy administrator login does not have administrator access'
 [ "$(status --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
   "$TEST_BASE_URL/grafana/login?disableAutoLogin=true")" = 200 ] ||
   fail 'Grafana administrator login page is unavailable'
 login_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --cacert "$TEST_CA_CERT" --user "$TEST_DASHBOARD_USER:$TEST_DASHBOARD_PASSWORD" \
   --cookie-jar "$cookie_jar" --header 'Content-Type: application/json' \
-  --data '{"user":"admin","password":"fixture-admin-password"}' "$TEST_BASE_URL/grafana/login")
+  --data "{\"user\":\"admin\",\"password\":\"$TEST_GRAFANA_ADMIN_PASSWORD\"}" "$TEST_BASE_URL/grafana/login")
 [ "$login_status" = 200 ] || fail "Grafana administrator login failed (HTTP $login_status)"
 admin_user=$(curl --fail --silent --show-error --cacert "$TEST_CA_CERT" --cookie "$cookie_jar" \
   "$TEST_BASE_URL/grafana/api/user")

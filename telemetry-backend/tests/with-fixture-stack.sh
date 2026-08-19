@@ -17,8 +17,9 @@ ca_cert=$tmp_dir/caddy-root.crt
 rendered_fixture=$tmp_dir/otel-events.json
 rendered_metrics_fixture=$tmp_dir/otel-metrics.json
 event_sed_script=$tmp_dir/otel-events.sed
-dashboard_user='admin'
+dashboard_user='viewer'
 dashboard_password='fixture-viewer-password'
+grafana_admin_password='fixture-admin-password'
 ingest_token='fixture-ingest-token'
 http_port=${TEST_HTTP_PORT:-18080}
 https_port=${TEST_HTTPS_PORT:-18443}
@@ -35,13 +36,15 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 password_hash=$(docker run --rm caddy:2 caddy hash-password --plaintext "$dashboard_password")
+admin_password_hash=$(docker run --rm caddy:2 caddy hash-password --plaintext "$grafana_admin_password")
 {
   printf '%s\n' 'SITE_ADDRESS=localhost'
   printf '%s\n' 'CADDY_TLS=internal'
   printf 'INGEST_TOKEN=%s\n' "$ingest_token"
   printf 'DASHBOARD_AUTH_USER=%s\n' "$dashboard_user"
   printf "DASHBOARD_AUTH_PASSWORD_HASH='%s'\n" "$password_hash"
-  printf '%s\n' 'GRAFANA_ADMIN_PASSWORD=fixture-admin-password'
+  printf '%s\n' "GRAFANA_ADMIN_PASSWORD=$grafana_admin_password"
+  printf "GRAFANA_ADMIN_PASSWORD_HASH='%s'\n" "$admin_password_hash"
   printf '%s\n' 'VL_RETENTION=30d'
   printf '%s\n' 'VM_RETENTION=30d'
   printf '%s\n' 'VM_SELF_SCRAPE_INTERVAL=5s'
@@ -50,7 +53,7 @@ password_hash=$(docker run --rm caddy:2 caddy hash-password --plaintext "$dashbo
 } >"$env_file"
 
 if [ "${TEST_WITH_GRAFANA:-}" = 1 ]; then
-  compose up -d --build
+  compose up -d
 else
   compose up -d victorialogs collector caddy
 fi
@@ -163,6 +166,7 @@ export TEST_BASE_URL="$base_url"
 export TEST_CA_CERT="$ca_cert"
 export TEST_DASHBOARD_USER="$dashboard_user"
 export TEST_DASHBOARD_PASSWORD="$dashboard_password"
+export TEST_GRAFANA_ADMIN_PASSWORD="$grafana_admin_password"
 export TEST_TIME_FROM="$hour"
 export TEST_TIME_TO=$((hour + 3600))
 export TEST_COMPOSE_PROJECT="$project"

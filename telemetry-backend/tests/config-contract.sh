@@ -16,7 +16,6 @@ adoption_dashboard=$backend_dir/grafana/dashboards/ai-agent-telemetry-adoption.j
 overview_dashboard=$backend_dir/grafana/dashboards/native-agent-metrics-overview.json
 codex_dashboard=$backend_dir/grafana/dashboards/codex-native-metrics.json
 collector_config=$backend_dir/otel-collector-config.yaml
-grafana_dockerfile=$backend_dir/grafana/Dockerfile
 fixture_stack=$backend_dir/tests/with-fixture-stack.sh
 repository_root=$(CDPATH='' cd -- "$backend_dir/.." && pwd)
 release_guide=$repository_root/docs/release.md
@@ -57,16 +56,25 @@ if grep -Fq '/opt/skills-telemetry-backups' "$release_guide"; then
   fail 'release guide must use the ordinary backend backup root'
 fi
 
-grep -Eq \
-  '^FROM grafana/grafana:[^@[:space:]]+@sha256:[0-9a-f]{64}$' \
-  "$grafana_dockerfile" || fail 'Grafana build must pin its base image by tag and digest'
+if [ -e "$backend_dir/grafana/Dockerfile" ]; then
+  fail 'Grafana must run a published image instead of a locally built one'
+fi
+if grep -Fq 'up -d --build' "$readme"; then
+  fail 'backend README must not build images that the stack no longer defines'
+fi
+grep -Fq 'grafana-plugins-init' "$readme" ||
+  fail 'backend README must document the plugins-init service'
 
-for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
+for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD GRAFANA_ADMIN_PASSWORD_HASH \
+  VL_RETENTION VM_RETENTION \
   VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES VM_SELF_SCRAPE_INTERVAL; do
   grep -q "^$name=" "$env_file" || fail "$name is missing from .env.example"
 done
 if grep -q '^GRAFANA_ADMIN_USER=' "$env_file"; then
   fail 'Grafana administrator username must not be configurable'
+fi
+if grep -q '^DASHBOARD_AUTH_USER=admin$' "$env_file"; then
+  fail 'DASHBOARD_AUTH_USER must not reuse the Grafana administrator name'
 fi
 
 metrics_pipeline=$(sed -n '/^    metrics:$/,/^    [a-z]/p' "$collector_config")
@@ -143,19 +151,62 @@ grep -q '@grafana_native_login {' "$caddyfile" || fail 'Grafana native login mat
 if ! sed -n '/@grafana_native_login {/,/}/p' "$caddyfile" | grep -q 'method POST'; then
   fail 'Grafana native login POST matcher is missing'
 fi
+grep -q '@grafana_admin_login {' "$caddyfile" || fail 'Grafana administrator login matcher is missing'
+if ! sed -n '/@grafana_admin_login {/,/}/p' "$caddyfile" | grep -Fq 'query disableAutoLogin=*'; then
+  fail 'Grafana administrator login must match the disableAutoLogin request'
+fi
+caddyfile_handler() {
+  awk -v target="$1" '
+    index($0, target) { inside = 1 }
+    inside {
+      print
+      depth += gsub(/\{/, "{") - gsub(/\}/, "}")
+      if (depth == 0) exit
+    }
+  ' "$caddyfile"
+}
+site_auth_snippet=$(caddyfile_handler '(site_auth) {')
+printf '%s\n' "$site_auth_snippet" | grep -Fq '{$DASHBOARD_AUTH_USER} {$DASHBOARD_AUTH_PASSWORD_HASH}' ||
+  fail 'Caddy must authenticate the shared dashboard user'
+printf '%s\n' "$site_auth_snippet" | grep -Fq 'admin {$GRAFANA_ADMIN_PASSWORD_HASH}' ||
+  fail 'Caddy must authenticate the Grafana administrator'
+admin_login_handler=$(caddyfile_handler 'handle @grafana_admin_login {')
+printf '%s\n' "$admin_login_handler" | grep -Fq 'import site_auth' ||
+  fail 'Grafana administrator login must stay behind Caddy Basic Auth'
+printf '%s\n' "$admin_login_handler" | grep -Fq 'header_up -X-WEBAUTH-USER' ||
+  fail 'Grafana administrator login must reach the native form without an auth proxy identity'
+if printf '%s\n' "$admin_login_handler" | grep -Fq 'X-WEBAUTH-USER viewer-'; then
+  fail 'Grafana administrator login must not be signed in as the shared viewer'
+fi
+grafana_login_handler=$(caddyfile_handler 'handle @grafana_login {')
+printf '%s\n' "$grafana_login_handler" | grep -Fq 'import site_auth' ||
+  fail 'Grafana login must stay behind Caddy Basic Auth'
+printf '%s\n' "$grafana_login_handler" | grep -Fq 'header_up X-WEBAUTH-USER admin' ||
+  fail 'Caddy administrator login must sign in as the Grafana administrator'
+printf '%s\n' "$grafana_login_handler" | grep -Fq 'header_up X-WEBAUTH-ROLE GrafanaAdmin' ||
+  fail 'Caddy administrator login must assign the GrafanaAdmin role'
+printf '%s\n' "$grafana_login_handler" | grep -Fq 'header_up X-WEBAUTH-USER viewer-{http.auth.user.id}' ||
+  fail 'Grafana auth proxy must isolate viewer identities from native administrators'
+if printf '%s\n' "$grafana_login_handler" | grep -Fq '{http.auth.user.id} == "admin"'; then
+  :
+else
+  fail 'Grafana login must treat the Caddy admin user as the Grafana administrator'
+fi
 grep -q '@dashboard_entry path / /grafana' "$caddyfile" || fail 'dashboard entry redirect matcher is missing'
 grep -q '@vmui path /select/\\*' "$caddyfile" || fail 'VMUI path matcher is missing'
-grep -q 'header_up X-WEBAUTH-USER viewer-{http.auth.user.id}' "$caddyfile" ||
-  fail 'Grafana auth proxy must isolate viewer identities from native administrators'
 
 rendered=$(mktemp)
 legacy_env=$(mktemp)
 trap 'rm -f "$rendered" "$legacy_env"' EXIT HUP INT TERM
 docker compose --env-file "$env_file" -f "$compose_file" config --format json >"$rendered"
 jq -e '[.services.caddy.image, .services.collector.image, .services.victorialogs.image,
-  .services.victoriametrics.image] | all(test("@sha256:[0-9a-f]{64}$"))' "$rendered" >/dev/null ||
+  .services.victoriametrics.image, .services.grafana.image,
+  .services["grafana-plugins-init"].image] | all(test("@sha256:[0-9a-f]{64}$"))' "$rendered" >/dev/null ||
   fail 'every registry-backed service must pin its image digest'
 jq -e '.services.caddy.ports | length == 2' "$rendered" >/dev/null || fail 'Caddy must publish two ports'
+jq -e '.services.caddy.environment.GRAFANA_ADMIN_PASSWORD_HASH != null and
+  .services.caddy.environment.GRAFANA_ADMIN_PASSWORD_HASH != ""' "$rendered" >/dev/null ||
+  fail 'Caddy must receive the Grafana administrator password hash'
 jq -e '[.services.collector.ports, .services.victorialogs.ports] | all(. == null)' "$rendered" >/dev/null ||
   fail 'Collector and VictoriaLogs must not publish ports'
 jq -e '.services.victoriametrics != null and .services.victoriametrics.ports == null' "$rendered" >/dev/null ||
@@ -176,8 +227,18 @@ jq -e '.services.victoriametrics.command | index("-selfScrapeInterval=30s") != n
   fail 'VictoriaMetrics must self-scrape operational metrics every 30 seconds'
 grep -Fq "'VM_SELF_SCRAPE_INTERVAL=5s'" "$fixture_stack" ||
   fail 'backend fixture must use a five-second VictoriaMetrics self-scrape interval'
-jq -e '(.services.grafana.build.context // "") | endswith("/telemetry-backend/grafana")' "$rendered" >/dev/null ||
-  fail 'Grafana build context is missing'
+jq -e '.services.grafana.build == null' "$rendered" >/dev/null ||
+  fail 'Grafana must not be built from a local Dockerfile'
+jq -e 'any(.services.grafana.volumes[]?;
+  .source == "grafana-plugins" and .target == "/var/lib/grafana/plugins" and .read_only == true)' "$rendered" \
+  >/dev/null || fail 'Grafana must mount the shared plugin volume read-only'
+jq -e '.services.grafana.depends_on["grafana-plugins-init"].condition == "service_completed_successfully"' \
+  "$rendered" >/dev/null || fail 'Grafana must start only after the plugins-init container copies the plugins'
+jq -e 'any(.services["grafana-plugins-init"].volumes[]?;
+  .source == "grafana-plugins" and .target == "/opt/plugins" and (.read_only | not))' "$rendered" >/dev/null ||
+  fail 'the plugins-init container must populate the shared plugin volume'
+jq -e '.services["grafana-plugins-init"].restart == "no"' "$rendered" >/dev/null ||
+  fail 'the plugins-init container must run once instead of restarting'
 jq -e '.services.grafana.ports == null' "$rendered" >/dev/null || fail 'Grafana must not publish ports'
 jq -e '.services.grafana.environment.GF_AUTH_ANONYMOUS_ENABLED == "false"' "$rendered" >/dev/null ||
   fail 'Grafana anonymous access must be disabled'
@@ -185,6 +246,8 @@ jq -e '.services.grafana.environment.GF_SECURITY_ADMIN_USER == "admin"' "$render
   fail 'Grafana administrator username must be fixed to admin'
 jq -e '.services.grafana.environment.GF_AUTH_PROXY_ENABLED == "true"' "$rendered" >/dev/null ||
   fail 'Grafana auth proxy must be enabled'
+jq -e '.services.grafana.environment.GF_AUTH_PROXY_HEADERS == "Role:X-WEBAUTH-ROLE"' "$rendered" >/dev/null ||
+  fail 'Grafana auth proxy must honor the role header from Caddy'
 jq -e '.services.grafana.environment.GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN == "true"' "$rendered" >/dev/null ||
   fail 'Grafana auth proxy must issue a login token'
 jq -e '.services.grafana.environment.GF_USERS_AUTO_ASSIGN_ORG_ROLE == "Viewer"' "$rendered" >/dev/null ||
@@ -202,7 +265,8 @@ grep -q '^    editable: true$' "$datasource_file" ||
   fail 'VictoriaLogs datasource must allow administrator edits'
 
 for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD \
-  "administrator username is \`admin\`" 'Upgrade an existing stack' 'docker compose config' \
+  GRAFANA_ADMIN_PASSWORD_HASH "administrator username is \`admin\`" 'Upgrade an existing stack' \
+  'docker compose config' \
   'com.docker.compose.volume=grafana-data' "Do not run \`docker compose down -v\`" \
   'grafana cli admin reset-admin-password' 'Adoption overview' 'Telemetry health' \
   'Native agent metrics overview' 'Codex native metrics' 'Native metrics and hook telemetry' \

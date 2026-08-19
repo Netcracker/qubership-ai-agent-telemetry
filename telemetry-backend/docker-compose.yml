@@ -2,7 +2,7 @@ name: ai-agent-telemetry-backend
 
 services:
   victorialogs:
-    image: victoriametrics/victoria-logs:v1.24.0-victorialogs@sha256:1ec31ddccc39dc9ead2607cddbf2829be1eb5ad39890e72bba26b359be20801d
+    image: victoriametrics/victoria-logs:v1.51.1@sha256:a3ecc79c2a1f3ea3b03ac517dcf45c8f6ecbd65629acfd9140c335e867b13522
     command:
       - -storageDataPath=/vlogs
       - -retentionPeriod=${VL_RETENTION:-365d}
@@ -41,9 +41,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    build:
-      context: ./grafana
-      dockerfile: Dockerfile
+    image: grafana/grafana:13.1.3@sha256:ab5cb380e3ff3172d6c8bd2e7cfd31cce977d2881b260e1f5bc089bf0b759b43
     environment:
       - GF_SERVER_ROOT_URL=https://${SITE_ADDRESS}:${HTTPS_PORT:-443}/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
@@ -51,6 +49,7 @@ services:
       - GF_AUTH_PROXY_ENABLED=true
       - GF_AUTH_PROXY_HEADER_NAME=X-WEBAUTH-USER
       - GF_AUTH_PROXY_HEADER_PROPERTY=username
+      - GF_AUTH_PROXY_HEADERS=Role:X-WEBAUTH-ROLE
       - GF_AUTH_PROXY_AUTO_SIGN_UP=true
       - GF_AUTH_PROXY_ENABLE_LOGIN_TOKEN=true
       - GF_USERS_AUTO_ASSIGN_ORG=true
@@ -67,12 +66,28 @@ services:
       - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-plugins:/var/lib/grafana/plugins:ro
     networks:
       - backend
     depends_on:
-      - victorialogs
-      - victoriametrics
+      victorialogs:
+        condition: service_started
+      victoriametrics:
+        condition: service_started
+      grafana-plugins-init:
+        condition: service_completed_successfully
     restart: unless-stopped
+
+  grafana-plugins-init:
+    image: ghcr.io/netcracker/qubership-grafana-plugins-init:0.22.0@sha256:3e9e0cdb02e2e7c0ef911950414b1c68f205ef9eafe9bcc1ada89a09fc4a3cfe
+    # The named volume is created root-owned, so the copy runs as root rather than the image's "nobody".
+    user: "0"
+    entrypoint: ["/bin/sh", "-c", "cp -a /etc/grafana/plugins/. /opt/plugins/"]
+    volumes:
+      - grafana-plugins:/opt/plugins
+    networks:
+      - backend
+    restart: "no"
 
   caddy:
     image: caddy:2@sha256:844f60b64e4724a5aa8245e019dace0d3f199f7433ce6c57676cb30a920dbad9
@@ -85,6 +100,7 @@ services:
       - INGEST_TOKEN=${INGEST_TOKEN}
       - DASHBOARD_AUTH_USER=${DASHBOARD_AUTH_USER:?set DASHBOARD_AUTH_USER}
       - DASHBOARD_AUTH_PASSWORD_HASH=${DASHBOARD_AUTH_PASSWORD_HASH:?set DASHBOARD_AUTH_PASSWORD_HASH}
+      - GRAFANA_ADMIN_PASSWORD_HASH=${GRAFANA_ADMIN_PASSWORD_HASH:?set GRAFANA_ADMIN_PASSWORD_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -105,3 +121,4 @@ volumes:
   grafana-data: {}
   caddy-data: {}
   caddy-config: {}
+  grafana-plugins: {}

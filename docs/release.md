@@ -103,7 +103,7 @@ docker compose --project-name ai-agent-telemetry-backend \
   --project-directory "$release_dir" \
   --env-file "$release_dir/.env" \
   -f "$release_dir/docker-compose.yml" \
-  up -d --build
+  up -d
 docker compose --project-name ai-agent-telemetry-backend \
   --project-directory "$release_dir" \
   --env-file "$release_dir/.env" \
@@ -111,8 +111,8 @@ docker compose --project-name ai-agent-telemetry-backend \
   ps
 ```
 
-Confirm that all five services are running and verify the dashboard, log, and metric endpoints before using the
-standalone maintenance commands.
+Confirm that the five long-running services are up and that `grafana-plugins-init` has exited successfully, then
+verify the dashboard, log, and metric endpoints before using the standalone maintenance commands.
 
 ## Backend updater bootstrap
 

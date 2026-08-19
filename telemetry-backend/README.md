@@ -18,6 +18,8 @@ Grafana is outside the ingest path. Stopping it does not interrupt telemetry del
 ## Prerequisites
 
 - Docker Engine 24+ with Compose v2.
+- Pull access to the registry that `docker-compose.yml` pins. Nothing is built on the host: every service, including
+  Grafana and its plugin source, runs a published image pinned by tag and digest.
 - A machine with a public IP, or `localhost` for local testing with Caddy's internal CA.
 - Ports 80 and 443 open and unoccupied on a server. Local ports can be changed in `.env`.
 
@@ -31,9 +33,10 @@ Generate separate values for ingest, dashboard viewers, and the Grafana administ
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 docker run --rm caddy:2 caddy hash-password --plaintext '<dashboard-password>'
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+docker run --rm caddy:2 caddy hash-password --plaintext '<admin-password>'
 ```
 
-The Caddy command prints a bcrypt hash. Keep the original dashboard password for viewers.
+Each Caddy command prints a bcrypt hash. Keep the original dashboard password for viewers and the original administrator password for `admin`.
 
 ### 2. Create the environment file
 
@@ -48,9 +51,10 @@ Set every value in `.env`:
 | `SITE_ADDRESS` | Domain served by Caddy. Use `<ip-with-dashes>.sslip.io` on a VPS or `localhost` locally. |
 | `CADDY_TLS` | ACME email on a VPS or `internal` locally. |
 | `INGEST_TOKEN` | Write-only bearer token used by telemetry clients. |
-| `DASHBOARD_AUTH_USER` | Shared read-only username in front of Grafana and VMUI. |
-| `DASHBOARD_AUTH_PASSWORD_HASH` | Caddy bcrypt hash, enclosed in single quotes to preserve dollar signs. |
+| `DASHBOARD_AUTH_USER` | Shared read-only username in front of Grafana and VMUI. Must not be `admin`. |
+| `DASHBOARD_AUTH_PASSWORD_HASH` | Caddy bcrypt hash of the dashboard password, enclosed in single quotes to preserve dollar signs. |
 | `GRAFANA_ADMIN_PASSWORD` | Initial Grafana administrator password. |
+| `GRAFANA_ADMIN_PASSWORD_HASH` | Caddy bcrypt hash of `GRAFANA_ADMIN_PASSWORD`, enclosed in single quotes. |
 | `VL_RETENTION` | VictoriaLogs retention, such as `30d`. |
 | `VM_RETENTION` | VictoriaMetrics retention, such as `30d`. |
 | `VM_MAX_HOURLY_SERIES` | Maximum unique metric series accepted during one hour. |
@@ -59,39 +63,59 @@ Set every value in `.env`:
 | `VM_SELF_SCRAPE_INTERVAL` | Interval for collecting VictoriaMetrics operational metrics. Keep `30s` in production. |
 | `HTTP_PORT`, `HTTPS_PORT` | Published Caddy ports. Keep `80` and `443` on a public server. |
 
-Do not put the plaintext dashboard password in `.env`. `GRAFANA_ADMIN_PASSWORD` initializes a new `grafana-data`
-volume; changing it later does not change an existing administrator account.
+Do not put the plaintext dashboard password in `.env`. Put the plaintext administrator password in
+`GRAFANA_ADMIN_PASSWORD` and its Caddy hash in `GRAFANA_ADMIN_PASSWORD_HASH`. `GRAFANA_ADMIN_PASSWORD` initializes a
+new `grafana-data` volume; changing it later does not change an existing administrator account.
 
 ### 3. Start and verify the stack
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 docker compose ps
 ```
 
-Open these URLs and enter `DASHBOARD_AUTH_USER` plus the original dashboard password. Grafana exchanges the Basic
-Auth credentials for a login cookie, so the browser prompts once per Grafana session:
+`grafana-plugins-init` copies the datasource plugins and exits, so `docker compose ps` shows five running services and
+one completed container.
+
+Open these URLs and enter credentials in the browser's Basic Auth dialog, served by Caddy. Grafana exchanges those
+credentials for a login cookie, so the browser prompts once per Grafana session:
 
 - `https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/` for management dashboards;
 - `https://<SITE_ADDRESS>:<HTTPS_PORT>/select/vmui/` for ad hoc VictoriaLogs queries;
 - `https://<SITE_ADDRESS>:<HTTPS_PORT>/prometheus/vmui/` for ad hoc VictoriaMetrics queries.
 
-For Grafana administration, open
-`https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/login?disableAutoLogin=true` after passing Caddy Basic Auth. Then enter
-`admin` and `GRAFANA_ADMIN_PASSWORD`. The Grafana administrator username is `admin`. The shared dashboard user receives
-the Viewer role under an isolated Grafana identity and cannot edit provisioned dashboards.
+### 4. Sign in as the Grafana administrator
+
+Caddy's dialog accepts two users. The administrator username is `admin` and cannot be changed. `DASHBOARD_AUTH_USER`
+must not be `admin`.
+
+| Caddy username | Password | Grafana identity |
+| --- | --- | --- |
+| `DASHBOARD_AUTH_USER` | The original dashboard password | Viewer, named `viewer-` plus `DASHBOARD_AUTH_USER` |
+| `admin` | `GRAFANA_ADMIN_PASSWORD` | Grafana administrator |
+
+Open `https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/` and enter `admin` plus `GRAFANA_ADMIN_PASSWORD` in the Caddy
+dialog. Caddy authenticates the request and Grafana signs that identity in through the auth proxy. The shared
+dashboard user cannot edit provisioned dashboards.
+
+To reach Grafana's own login form instead, open
+`https://<SITE_ADDRESS>:<HTTPS_PORT>/grafana/login?disableAutoLogin=true`, answer the Caddy dialog, then enter
+`admin` and `GRAFANA_ADMIN_PASSWORD` in the Grafana form. Without the query parameter, Caddy signs the request in as
+the Caddy user and Grafana does not show that form.
 
 With `CADDY_TLS=internal`, trust the generated Caddy root certificate in the browser or accept the local certificate
 warning. Do not disable certificate verification for production clients.
 
 ## Upgrade an existing stack
 
-Add the dashboard credentials and Grafana administrator password to an existing `.env` before updating the stack:
+Add the dashboard credentials, Grafana administrator password, and administrator password hash to an existing `.env`
+before updating the stack:
 
 ```dotenv
 DASHBOARD_AUTH_USER=viewer
 DASHBOARD_AUTH_PASSWORD_HASH='<caddy-bcrypt-hash>'
 GRAFANA_ADMIN_PASSWORD=<new-admin-password>
+GRAFANA_ADMIN_PASSWORD_HASH='<caddy-bcrypt-hash-of-admin-password>'
 VM_RETENTION=365d
 ```
 
@@ -99,7 +123,7 @@ The example above changes only metrics retention. Existing `.env` values remain 
 `VL_RETENTION=365d` separately if you also want to extend log retention; omitting either variable uses the 365-day
 Compose default for that backend.
 
-Generate the hash as described in [Create credentials](#1-create-credentials), and remove an obsolete
+Generate the hashes as described in [Create credentials](#1-create-credentials), and remove an obsolete
 `GRAFANA_ADMIN_USER` entry from `.env`. If an earlier preview created `grafana-data` with any administrator username
 other than `admin`, recreate only that volume before updating:
 
@@ -107,7 +131,7 @@ other than `admin`, recreate only that volume before updating:
 docker compose down
 docker volume ls --filter label=com.docker.compose.volume=grafana-data
 docker volume rm <grafana-data-volume>
-docker compose up -d --build
+docker compose up -d
 ```
 
 Select the volume that belongs to this Compose project. Grafana restores provisioned dashboards and the datasource,
@@ -118,7 +142,15 @@ Validate and update the stack:
 
 ```sh
 docker compose config
-docker compose up -d --build
+docker compose up -d
+```
+
+A stack created before the plugin migration ran a Grafana image built from `grafana/Dockerfile`. That file is gone, the
+Compose project no longer builds anything, and `docker compose up -d` replaces the built image with the published one
+and adds the `grafana-plugins` volume. Remove the orphaned local image once the stack is healthy:
+
+```sh
+docker image rm ai-agent-telemetry-backend-grafana
 ```
 
 The administrator username is `admin`. `GRAFANA_ADMIN_PASSWORD` initializes only a new `grafana-data` volume. If the
@@ -127,6 +159,31 @@ volume already uses `admin`, reset its password after the update:
 ```sh
 docker compose exec grafana grafana cli admin reset-admin-password '<new-admin-password>'
 ```
+
+Reset the password this way whenever the administrator credential is unknown: an existing `grafana-data` volume keeps
+the password it was initialized with, no matter what `.env` says.
+
+## Grafana plugins
+
+The dashboards need the `victoriametrics-logs-datasource` plugin. The stack runs the published `grafana/grafana` image
+and takes the plugin from a one-shot init container instead of building a custom Grafana image.
+
+`grafana-plugins-init` runs the
+[`Netcracker/qubership-grafana-plugins-init`](https://github.com/Netcracker/qubership-grafana-plugins-init) image, copies
+the plugins baked into it into the shared `grafana-plugins` volume, and exits. Grafana mounts that volume read-only at
+`/var/lib/grafana/plugins` and waits for the copy to complete through a `service_completed_successfully` dependency, so
+it never starts with an empty plugin directory. Nothing is built on the host and no plugin is downloaded at run time,
+which lets the stack start where `grafana.com` is unreachable.
+
+The volume is repopulated from scratch on every `docker compose up`, so the plugin set always matches the pinned init
+image. Deleting the `grafana-plugins` volume is safe; it holds no state.
+
+The init image ships its full plugin catalogue, not only the VictoriaLogs datasource. The unused plugins are inert; the
+handful of retired AngularJS panels among them log a `Refusing to initialize plugin because it's using Angular` error
+once at Grafana startup, which is expected and affects no dashboard.
+
+The copy runs as `root` because Compose creates the named volume root-owned, which the init image's own `nobody` user
+cannot write to. Grafana itself never mounts the volume writable.
 
 ## Dashboards
 
@@ -267,6 +324,7 @@ then use the standalone backup and update commands for subsequent maintenance.
 | View Caddy logs | `docker compose logs -f caddy` |
 | View Collector logs | `docker compose logs -f collector` |
 | View VictoriaMetrics logs | `docker compose logs -f victoriametrics` |
+| View the plugin copy that Grafana waited for | `docker compose logs grafana-plugins-init` |
 | Restart Grafana only | `docker compose restart grafana` |
 
 The default VictoriaMetrics limits accept 50,000 unique series per hour and 200,000 per day, and reserve 1 GiB of free
@@ -294,7 +352,10 @@ docker compose exec grafana grafana cli admin reset-admin-password '<new-admin-p
 | --- | --- | --- |
 | `/v1/logs` | OpenTelemetry Collector `:4318` | `Authorization: Bearer <INGEST_TOKEN>` |
 | `/v1/metrics` | OpenTelemetry Collector `:4318` | `Authorization: Bearer <INGEST_TOKEN>` |
-| `/grafana/login` | Grafana `:3000` | Caddy Basic Auth, then a Grafana Viewer or administrator session |
+| `GET /grafana/login?disableAutoLogin=true` | Grafana `:3000` | Caddy Basic Auth, then Grafana's own administrator form |
+| `GET /grafana/login` as `admin` | Grafana `:3000` | Caddy Basic Auth, exchanged for the Grafana administrator session |
+| `GET /grafana/login` as `DASHBOARD_AUTH_USER` | Grafana `:3000` | Caddy Basic Auth, exchanged for a Grafana Viewer session |
+| `POST /grafana/login` | Grafana `:3000` | Caddy Basic Auth, then the submitted Grafana credentials |
 | other `/grafana/*` paths | Grafana `:3000` | Grafana session cookie |
 | `/select/*` | VictoriaLogs `:9428` | Caddy Basic Auth |
 | Allowlisted `/prometheus/api/v1/*` reads and `/prometheus/vmui/*` | VictoriaMetrics `:8428` | Caddy Basic Auth |

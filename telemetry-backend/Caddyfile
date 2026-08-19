@@ -1,3 +1,12 @@
+(site_auth) {
+	basic_auth {
+		# Generate hashes with:
+		# docker run --rm caddy:2 caddy hash-password --plaintext '<password>'
+		{$DASHBOARD_AUTH_USER} {$DASHBOARD_AUTH_PASSWORD_HASH}
+		admin {$GRAFANA_ADMIN_PASSWORD_HASH}
+	}
+}
+
 {$SITE_ADDRESS} {
 	tls {$CADDY_TLS}
 
@@ -15,19 +24,43 @@
 	@dashboard_entry path / /grafana
 	redir @dashboard_entry /grafana/ 308
 
+	# Grafana administrator sign-in. The auth proxy header is withheld here, so Grafana
+	# serves its own login form instead of signing the request in as a Caddy identity.
+	@grafana_admin_login {
+		path /grafana/login
+		method GET
+		query disableAutoLogin=*
+	}
+	handle @grafana_admin_login {
+		import site_auth
+		reverse_proxy grafana:3000 {
+			header_up -Authorization
+			header_up -X-WEBAUTH-USER
+		}
+	}
+
 	@grafana_login {
 		path /grafana/login
 		method GET
 	}
 	handle @grafana_login {
-		basic_auth {
-			# Generate DASHBOARD_AUTH_PASSWORD_HASH with:
-			# docker run --rm caddy:2 caddy hash-password --plaintext '<password>'
-			{$DASHBOARD_AUTH_USER} {$DASHBOARD_AUTH_PASSWORD_HASH}
+		import site_auth
+
+		@caddy_admin expression `{http.auth.user.id} == "admin"`
+		handle @caddy_admin {
+			reverse_proxy grafana:3000 {
+				header_up -Authorization
+				header_up X-WEBAUTH-USER admin
+				header_up X-WEBAUTH-ROLE GrafanaAdmin
+			}
 		}
-		reverse_proxy grafana:3000 {
-			header_up -Authorization
-			header_up X-WEBAUTH-USER viewer-{http.auth.user.id}
+
+		handle {
+			reverse_proxy grafana:3000 {
+				header_up -Authorization
+				header_up X-WEBAUTH-USER viewer-{http.auth.user.id}
+				header_up X-WEBAUTH-ROLE Viewer
+			}
 		}
 	}
 
@@ -36,9 +69,7 @@
 		method POST
 	}
 	handle @grafana_native_login {
-		basic_auth {
-			{$DASHBOARD_AUTH_USER} {$DASHBOARD_AUTH_PASSWORD_HASH}
-		}
+		import site_auth
 		reverse_proxy grafana:3000 {
 			header_up -Authorization
 			header_up -X-WEBAUTH-USER
@@ -56,9 +87,7 @@
 	# VictoriaLogs UI + query API — shared read-only access
 	@vmui path /select/*
 	handle @vmui {
-		basic_auth {
-			{$DASHBOARD_AUTH_USER} {$DASHBOARD_AUTH_PASSWORD_HASH}
-		}
+		import site_auth
 		reverse_proxy victorialogs:9428
 	}
 
@@ -77,9 +106,7 @@
 		/prometheus/vmui \
 		/prometheus/vmui/*
 	handle @prometheus {
-		basic_auth {
-			{$DASHBOARD_AUTH_USER} {$DASHBOARD_AUTH_PASSWORD_HASH}
-		}
+		import site_auth
 		uri strip_prefix /prometheus
 		reverse_proxy victoriametrics:8428
 	}
