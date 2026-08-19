@@ -1,11 +1,13 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -184,6 +186,91 @@ func assertOutboxCount(t *testing.T, outbox *Outbox, want int) {
 	}
 }
 
+func TestFlushUsesGzipCompression(t *testing.T) {
+	unsetCompressionEnv(t)
+	isolateConfigCache(t)
+	capture := newOTLPCapture(t)
+	defer capture.server.Close()
+
+	outbox := &Outbox{Dir: t.TempDir()}
+	seed(t, outbox, 1)
+
+	sent, err := Flush(outbox, capture.server.URL, "", nil, 2*time.Second)
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if sent != 1 {
+		t.Fatalf("sent = %d, want 1", sent)
+	}
+	if len(capture.contentEncodings) != 1 {
+		t.Fatalf("captured %d Content-Encoding headers, want 1", len(capture.contentEncodings))
+	}
+	if got := capture.contentEncodings[0]; got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip", got)
+	}
+	records := capturedRecords(capture.requests)
+	if len(records) != 1 || records[0].Body.GetStringValue() != "skill_executed" {
+		t.Fatalf("decompressed OTLP records = %v, want one skill_executed record", records)
+	}
+}
+
+func TestFlushRespectsCompressionOverrides(t *testing.T) {
+	unsetCompressionEnv(t)
+
+	for _, name := range []string{
+		"OTEL_EXPORTER_OTLP_LOGS_COMPRESSION",
+		"OTEL_EXPORTER_OTLP_COMPRESSION",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(name, "none")
+			isolateConfigCache(t)
+			capture := newOTLPCapture(t)
+			defer capture.server.Close()
+
+			outbox := &Outbox{Dir: t.TempDir()}
+			seed(t, outbox, 1)
+
+			sent, err := Flush(outbox, capture.server.URL, "", nil, 2*time.Second)
+			if err != nil {
+				t.Fatalf("flush: %v", err)
+			}
+			if sent != 1 {
+				t.Fatalf("sent = %d, want 1", sent)
+			}
+			if len(capture.contentEncodings) != 1 {
+				t.Fatalf("captured %d Content-Encoding headers, want 1", len(capture.contentEncodings))
+			}
+			if got := capture.contentEncodings[0]; got != "" {
+				t.Fatalf("Content-Encoding = %q, want no compression", got)
+			}
+		})
+	}
+}
+
+func unsetCompressionEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		"OTEL_EXPORTER_OTLP_LOGS_COMPRESSION",
+		"OTEL_EXPORTER_OTLP_COMPRESSION",
+	} {
+		value, ok := os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+		t.Cleanup(func() {
+			if ok {
+				if err := os.Setenv(name, value); err != nil {
+					t.Errorf("restore %s: %v", name, err)
+				}
+				return
+			}
+			if err := os.Unsetenv(name); err != nil {
+				t.Errorf("restore unset %s: %v", name, err)
+			}
+		})
+	}
+}
+
 func TestFlushPreservesSkillOTLPSchema(t *testing.T) {
 	records := flushRecords(t, []TelemetryEvent{mustSkillEvent(t, "codex", "s1", "brainstorming")})
 	if len(records) != 1 {
@@ -329,32 +416,49 @@ func capturedRecords(requests []*collectlogsv1.ExportLogsServiceRequest) []*logs
 }
 
 type otlpCapture struct {
-	server   *httptest.Server
-	bodies   [][]byte
-	requests []*collectlogsv1.ExportLogsServiceRequest
+	server           *httptest.Server
+	bodies           [][]byte
+	contentEncodings []string
+	requests         []*collectlogsv1.ExportLogsServiceRequest
 }
 
 func newOTLPCapture(t *testing.T) *otlpCapture {
 	t.Helper()
 	capture := &otlpCapture{}
 	capture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
+		body, request, err := decodeOTLPRequest(r)
 		if err != nil {
-			t.Error(err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		var request collectlogsv1.ExportLogsServiceRequest
-		if err := proto.Unmarshal(body, &request); err != nil {
 			t.Errorf("decode OTLP request: %v", err)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		capture.bodies = append(capture.bodies, body)
-		capture.requests = append(capture.requests, &request)
+		capture.contentEncodings = append(capture.contentEncodings, r.Header.Get("Content-Encoding"))
+		capture.requests = append(capture.requests, request)
 		w.WriteHeader(http.StatusOK)
 	}))
 	return capture
+}
+
+func decodeOTLPRequest(r *http.Request) ([]byte, *collectlogsv1.ExportLogsServiceRequest, error) {
+	var bodyReader io.Reader = r.Body
+	if r.Header.Get("Content-Encoding") == "gzip" {
+		reader, err := gzip.NewReader(r.Body)
+		if err != nil {
+			return nil, nil, fmt.Errorf("open gzip body: %w", err)
+		}
+		defer func() { _ = reader.Close() }()
+		bodyReader = reader
+	}
+	body, err := io.ReadAll(bodyReader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read OTLP body: %w", err)
+	}
+	var request collectlogsv1.ExportLogsServiceRequest
+	if err := proto.Unmarshal(body, &request); err != nil {
+		return nil, nil, fmt.Errorf("unmarshal OTLP payload: %w", err)
+	}
+	return body, &request, nil
 }
 
 func assertOTLPAttrs(t *testing.T, attrs []*commonv1.KeyValue, want map[string]any) {
@@ -611,17 +715,12 @@ func TestFlushLegacyRetryKeepsFallbackEventID(t *testing.T) {
 
 func eventIDFromOTLPRequest(t *testing.T, r *http.Request) string {
 	t.Helper()
-	body, err := io.ReadAll(r.Body)
+	_, request, err := decodeOTLPRequest(r)
 	if err != nil {
-		t.Errorf("read OTLP request: %v", err)
-		return ""
-	}
-	var request collectlogsv1.ExportLogsServiceRequest
-	if err := proto.Unmarshal(body, &request); err != nil {
 		t.Errorf("decode OTLP request: %v", err)
 		return ""
 	}
-	records := capturedRecords([]*collectlogsv1.ExportLogsServiceRequest{&request})
+	records := capturedRecords([]*collectlogsv1.ExportLogsServiceRequest{request})
 	if len(records) != 1 {
 		t.Errorf("got %d OTLP records, want 1", len(records))
 		return ""
