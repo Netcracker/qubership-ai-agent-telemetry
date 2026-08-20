@@ -66,21 +66,12 @@ ai-agent-telemetry install --components apm,telemetry --harnesses claude,codex
 ai-agent-telemetry install --skip git-hooks
 ai-agent-telemetry update
 ai-agent-telemetry update --cli-only
-ai-agent-telemetry update --repo-scope-change=accept
 ```
 
 The managed CLI is infrastructure, not a selectable component. Every install or ordinary update installs or confirms
 the CLI before running selected components. Update refreshes selected existing components and installs selected
 missing components. `--cli-only` skips all component and prerequisite preflight and cannot be combined with selection,
 harness, Git-hook, or noninteractive options.
-
-Interactive update detects a `repo-allow` file containing exactly the previous
-`github.com/Netcracker/*` default and asks before adding `*netcracker*/**`. The prompt explains that the new pattern
-can match an unrelated host containing the same substring. Pass `--repo-scope-change=accept` or
-`--repo-scope-change=keep` when another interactive layer has already collected the decision. Noninteractive update
-without either value preserves the previous scope. Environment overrides, custom files, and files that already contain
-both defaults are never migration candidates. The CLI writes an accepted change only after the selected update
-operations succeed.
 
 Telemetry preflight resolves the collector endpoint and optional token before any changes. Interactive mode prompts
 when no endpoint is configured. With `--non-interactive`, set `AI_AGENT_TELEMETRY_ENDPOINT` and optionally
@@ -355,11 +346,6 @@ Policy precedence is deliberate: `AI_AGENT_TELEMETRY_DISABLED` stops collection 
 then the `AI_AGENT_TELEMETRY_REPO_ALLOW` environment variable overrides the configured
 scope; then `repo-allow` scopes the remaining events. If no repository policy is configured,
 the built-in `github.com/Netcracker/*,*netcracker*/**` default applies.
-
-Updating the CLI preserves an environment override and every custom `repo-allow` file. When the file contains exactly
-`github.com/Netcracker/*`, interactive update treats it as an ambiguous previous default and asks before adding
-`*netcracker*/**`. Use `--repo-scope-change=accept` or `--repo-scope-change=keep` when the decision was collected before
-the command. The CLI never expands the scope without explicit consent.
 
 ## Transport and security
 

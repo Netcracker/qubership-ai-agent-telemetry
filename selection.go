@@ -170,14 +170,6 @@ func normalizeLifecycleOptions(opts lifecycleOptions) (lifecycleOptions, error) 
 	default:
 		return lifecycleOptions{}, fmt.Errorf("unknown lifecycle action %q", opts.Action)
 	}
-	if opts.Action != actionUpdate && opts.RepoScopeChange != repoScopeChangeAsk {
-		return lifecycleOptions{}, fmt.Errorf("--repo-scope-change is valid only for update")
-	}
-	switch opts.RepoScopeChange {
-	case repoScopeChangeAsk, repoScopeChangeAccept, repoScopeChangeKeep:
-	default:
-		return lifecycleOptions{}, fmt.Errorf("invalid --repo-scope-change value %q; valid values: accept, keep", opts.RepoScopeChange)
-	}
 
 	if opts.CLIOnly {
 		if opts.Action != actionUpdate {

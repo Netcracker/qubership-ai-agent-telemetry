@@ -129,11 +129,6 @@ The precedence is: `AI_AGENT_TELEMETRY_DISABLED` disables collection globally;
 `repo-allow` decides which remotes are collected. If no repository policy is configured,
 the built-in `github.com/Netcracker/*,*netcracker*/**` default applies.
 
-An update preserves environment overrides and custom `repo-allow` files. When a file contains only
-the previous `github.com/Netcracker/*` default, interactive update explains the broader host pattern
-and asks for confirmation before adding it. Noninteractive update keeps the previous scope unless
-the caller passes `--repo-scope-change=accept`.
-
 ## Backend requirements
 
 Any collector that meets these requirements works. A ready-to-deploy reference stack is in
@@ -190,10 +185,6 @@ component changes.
 Update the CLI and all selected components with `ai-agent-telemetry update`. Use `update --cli-only` when you want to
 update only the managed CLI. CLI-only mode cannot be combined with component, skip, harness, Git-hook, or
 noninteractive options.
-
-An update may ask to expand the previous repository scope. Pass `--repo-scope-change=accept` or
-`--repo-scope-change=keep` when the caller has already collected the user's decision. The option has no effect on an
-environment override, a custom file, or a file that already contains both default patterns.
 
 `ai-agent-telemetry uninstall` removes all components and the managed CLI. A partial selection preserves the CLI
 unless you pass `--remove-cli`; that flag requires telemetry in the final selection. Normal uninstall preserves

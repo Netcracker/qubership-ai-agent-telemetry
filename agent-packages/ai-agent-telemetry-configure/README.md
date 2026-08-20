@@ -75,11 +75,6 @@ The CLI reads its collector settings from the environment or the provisioned
   `--repo-allow <pattern>` values to replace the default scope.
 - `AI_AGENT_TELEMETRY_REPO_ALLOW` — optional environment override for scripts and CI.
 
-Updating preserves an environment override and every custom `repo-allow` file. If an older installation has only
-`github.com/Netcracker/*`, interactive update explains that adding `*netcracker*/**` broadens collection and asks for
-confirmation. The configure skill collects the same decision first and passes it through
-`--repo-scope-change=accept|keep`. The CLI never expands the old scope without explicit consent.
-
 Persist delivery overrides through the CLI instead of editing `env` directly:
 
 ```bash

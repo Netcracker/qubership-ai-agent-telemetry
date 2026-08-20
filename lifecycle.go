@@ -26,15 +26,14 @@ const (
 )
 
 type lifecycleOptions struct {
-	Action          lifecycleAction
-	Components      []componentName
-	Harnesses       []hookTarget
-	ForceGitHooks   bool
-	NonInteractive  bool
-	Purge           bool
-	RemoveCLI       bool
-	CLIOnly         bool
-	RepoScopeChange repoScopeChange
+	Action         lifecycleAction
+	Components     []componentName
+	Harnesses      []hookTarget
+	ForceGitHooks  bool
+	NonInteractive bool
+	Purge          bool
+	RemoveCLI      bool
+	CLIOnly        bool
 }
 
 type operationState string
@@ -77,7 +76,6 @@ type lifecycleDeps struct {
 	ManagedCLI           managedCLIService
 	ManagedInstallSource func() (string, error)
 	Components           map[componentName]componentOps
-	RepoScope            repoScopeUpdateService
 }
 
 func defaultLifecycleDeps(home string, warnings io.Writer) lifecycleDeps {
@@ -107,11 +105,6 @@ func runLifecycle(ctx context.Context, opts lifecycleOptions, deps lifecycleDeps
 func preflightLifecycle(ctx context.Context, opts lifecycleOptions, deps lifecycleDeps) error {
 	removeCLI := opts.Action == actionUninstall && (opts.RemoveCLI || isCompleteSelection(opts.Components))
 	var preflightErrors []error
-	if opts.Action == actionUpdate && deps.RepoScope.Prepare != nil {
-		if err := deps.RepoScope.Prepare(opts); err != nil {
-			preflightErrors = append(preflightErrors, fmt.Errorf("repository scope preflight: %w", err))
-		}
-	}
 	if err := preflightManagedCLI(opts, deps.ManagedCLI); err != nil {
 		preflightErrors = append(preflightErrors, err)
 	}
@@ -166,11 +159,6 @@ func executePreparedLifecycle(ctx context.Context, opts lifecycleOptions, deps l
 					continue
 				}
 				results = append(results, runComponent(ctx, opts, component, deps.Components[component]))
-			}
-		}
-		if opts.Action == actionUpdate && failedResultError(results) == nil && deps.RepoScope.Apply != nil {
-			if result, ok := deps.RepoScope.Apply(); ok {
-				results = append(results, normalizeOperationResult(result, "repo-policy"))
 			}
 		}
 	case actionUninstall:

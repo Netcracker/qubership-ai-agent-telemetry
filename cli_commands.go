@@ -15,7 +15,6 @@ import (
 type lifecycleFlagValues struct {
 	components, skip, harnesses                              []string
 	forceGitHooks, nonInteractive, purge, removeCLI, cliOnly bool
-	repoScopeChange                                          string
 	legacyForceUpdate, legacyForce, legacySkipConfig         bool
 }
 
@@ -92,8 +91,6 @@ func bindLifecycleFlags(cmd *cobra.Command, action lifecycleAction, values *life
 	}
 	if action == actionUpdate {
 		cmd.Flags().BoolVar(&values.cliOnly, "cli-only", false, "Update only the managed CLI")
-		cmd.Flags().StringVar(&values.repoScopeChange, "repo-scope-change", "",
-			"Handle the legacy repository scope: accept or keep; omit to be prompted")
 	}
 	if action == actionUninstall {
 		cmd.Flags().BoolVar(&values.purge, "purge", false, "Remove telemetry configuration and cache")
@@ -109,8 +106,7 @@ func bindLifecycleFlags(cmd *cobra.Command, action lifecycleAction, values *life
 
 func lifecycleOptionsFromFlags(action lifecycleAction, cmd *cobra.Command, values lifecycleFlagValues) (lifecycleOptions, error) {
 	opts := lifecycleOptions{Action: action, ForceGitHooks: values.forceGitHooks, NonInteractive: values.nonInteractive,
-		Purge: values.purge, RemoveCLI: values.removeCLI, CLIOnly: values.cliOnly,
-		RepoScopeChange: repoScopeChange(values.repoScopeChange)}
+		Purge: values.purge, RemoveCLI: values.removeCLI, CLIOnly: values.cliOnly}
 	if cmd.Flags().Changed("components") || cmd.Flags().Changed("skip") {
 		components, err := normalizeSelection(values.components, values.skip)
 		if err != nil {
@@ -161,11 +157,7 @@ func legacyLifecycleOptionError(cmd *cobra.Command, values lifecycleFlagValues) 
 func lifecycleArgs(opts lifecycleOptions) []string {
 	args := make([]string, 0, 10)
 	if opts.CLIOnly {
-		args = append(args, "--cli-only")
-		if opts.RepoScopeChange != repoScopeChangeAsk {
-			args = append(args, "--repo-scope-change", string(opts.RepoScopeChange))
-		}
-		return args
+		return []string{"--cli-only"}
 	}
 	components := make([]string, len(opts.Components))
 	for i, component := range opts.Components {
@@ -184,9 +176,6 @@ func lifecycleArgs(opts lifecycleOptions) []string {
 	}
 	if opts.NonInteractive {
 		args = append(args, "--non-interactive")
-	}
-	if opts.RepoScopeChange != repoScopeChangeAsk {
-		args = append(args, "--repo-scope-change", string(opts.RepoScopeChange))
 	}
 	if opts.Purge {
 		args = append(args, "--purge")
