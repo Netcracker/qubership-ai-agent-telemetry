@@ -6,6 +6,9 @@
     ],
     "afterMCPExecution": [
       { "command": "ai-agent-telemetry ingest --agent=cursor" }
+    ],
+    "subagentStop": [
+      { "command": "ai-agent-telemetry ingest --agent=cursor" }
     ]
   }
 }

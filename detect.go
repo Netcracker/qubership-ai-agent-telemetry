@@ -426,9 +426,10 @@ func resolveRemote(remote remoteResolver, cwd string) string {
 // deliberately not collected: it is PII, and the project drops repo.path and
 // turn.id for the same reason.
 type cursorPayload struct {
-	SessionID      string   `json:"session_id"`
-	WorkspaceRoots []string `json:"workspace_roots"`
-	TranscriptPath string   `json:"transcript_path"`
+	SessionID           string   `json:"session_id"`
+	WorkspaceRoots      []string `json:"workspace_roots"`
+	TranscriptPath      string   `json:"transcript_path"`
+	AgentTranscriptPath string   `json:"agent_transcript_path"`
 }
 
 type cursorHookEnvelope struct {
@@ -454,6 +455,17 @@ func cursorAdapter(
 	switch envelope.HookEventName {
 	case "afterAgentResponse":
 		return cursorTranscriptEventsAuto(stdin, remote, now), nil
+	case "subagentStop":
+		var p cursorPayload
+		if json.Unmarshal(stdin, &p) != nil || p.AgentTranscriptPath == "" || !cursorHasWorkspaceRoot(p.WorkspaceRoots) {
+			return nil, nil
+		}
+		p.TranscriptPath = p.AgentTranscriptPath
+		normalized, err := json.Marshal(p)
+		if err != nil {
+			return nil, nil
+		}
+		return cursorTranscriptEventsAuto(normalized, remote, now), nil
 	case "afterMCPExecution":
 		// Continue below.
 	default:
@@ -482,6 +494,15 @@ func cursorAdapter(
 		return nil, nil
 	}
 	return []TelemetryEvent{ev}, nil
+}
+
+func cursorHasWorkspaceRoot(roots []string) bool {
+	for _, root := range roots {
+		if strings.TrimSpace(root) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // cursorRemote resolves the git remote from the first workspace root. Cursor
