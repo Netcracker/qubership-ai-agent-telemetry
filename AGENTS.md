@@ -5,12 +5,9 @@ behavior.
 
 ## Non-obvious invariants
 
-- Keep `AGENTS.md` as the canonical shared instructions. Keep root `CLAUDE.md` exactly `@AGENTS.md` with a final
-  newline; `.markdownlintignore` is its narrow Markdown-lint exception.
 - Write every committed file in English, including documentation, code comments, commit messages, and identifiers.
 - Treat `README.md` and `docs/` as maintained documentation. Files under `docs/superpowers/` are historical snapshots;
   never update them to describe later changes.
-- The response-text marker is retired. Do not reintroduce it or call it a "breadcrumb".
 - For a design choice that materially changes scope or behavior, ask the user. Present the recommended option first and
   expect it to be challenged.
 - Never run `git clean -xdf`: it deletes the ignored, machine-specific root `apm.yml` and unrelated untracked work.
