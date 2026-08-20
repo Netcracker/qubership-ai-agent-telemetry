@@ -35,6 +35,73 @@ func (e testLogExporter) Export(context.Context, []sdklog.Record) error { return
 func (e testLogExporter) Shutdown(context.Context) error                { return e.shutdownErr }
 func (e testLogExporter) ForceFlush(context.Context) error              { return nil }
 
+type countingLogExporter struct {
+	exports atomic.Int32
+	records atomic.Int32
+}
+
+func (e *countingLogExporter) Export(_ context.Context, records []sdklog.Record) error {
+	e.exports.Add(1)
+	e.records.Add(int32(len(records)))
+	return nil
+}
+func (e *countingLogExporter) Shutdown(context.Context) error   { return nil }
+func (e *countingLogExporter) ForceFlush(context.Context) error { return nil }
+
+type deadlineLogExporter struct{}
+
+func (deadlineLogExporter) Export(ctx context.Context, _ []sdklog.Record) error {
+	<-ctx.Done()
+	return fmt.Errorf("send failed: %w", ctx.Err())
+}
+func (deadlineLogExporter) Shutdown(context.Context) error   { return nil }
+func (deadlineLogExporter) ForceFlush(context.Context) error { return nil }
+
+func TestBatchingExporterExportHonorsCanceledContext(t *testing.T) {
+	inner := &countingLogExporter{}
+	exp := newBatchingExporter(inner)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var rec sdklog.Record
+	if err := exp.Export(ctx, []sdklog.Record{rec}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Export error = %v, want context.Canceled", err)
+	}
+	if err := exp.ForceFlush(context.Background()); err != nil {
+		t.Fatalf("ForceFlush: %v", err)
+	}
+	if got := inner.exports.Load(); got != 0 {
+		t.Fatalf("inner exports = %d, want 0 after canceled Export", got)
+	}
+	if got := inner.records.Load(); got != 0 {
+		t.Fatalf("inner records = %d, want 0 after canceled Export", got)
+	}
+}
+
+func TestBatchingExporterKeepsAcceptedRecordsAfterLaterCancel(t *testing.T) {
+	inner := &countingLogExporter{}
+	exp := newBatchingExporter(inner)
+
+	var rec sdklog.Record
+	if err := exp.Export(context.Background(), []sdklog.Record{rec, rec}); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := exp.Export(ctx, []sdklog.Record{rec}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled Export error = %v, want context.Canceled", err)
+	}
+	if err := exp.ForceFlush(context.Background()); err != nil {
+		t.Fatalf("ForceFlush: %v", err)
+	}
+	if got := inner.exports.Load(); got != 1 {
+		t.Fatalf("inner exports = %d, want 1", got)
+	}
+	if got := inner.records.Load(); got != 2 {
+		t.Fatalf("inner records = %d, want 2 previously accepted records", got)
+	}
+}
+
 func explicitResolver(endpoint string) deliveryResolver {
 	return deliveryResolver{
 		Endpoint: func() (string, error) { return endpoint, nil },
@@ -142,6 +209,28 @@ func TestFlushExplicitReportsExporterFailure(t *testing.T) {
 
 	if sent, err := flushExplicit(outbox, resolve); err == nil || !strings.Contains(err.Error(), "export failed") || sent != 0 {
 		t.Fatalf("sent=%d err=%v, want exporter error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func TestFlushDeadlineDuringExportReportsOneDeliveryError(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	seed(t, outbox, 1)
+	resolve := explicitResolver("https://collector.invalid")
+	resolve.Timeout = func() time.Duration { return 10 * time.Millisecond }
+	resolve.Exporter = func(context.Context, string, string, *tls.Config) (sdklog.Exporter, error) {
+		return deadlineLogExporter{}, nil
+	}
+
+	sent, err := flushExplicit(outbox, resolve)
+	if err == nil || sent != 0 {
+		t.Fatalf("sent=%d err=%v, want delivery error", sent, err)
+	}
+	if got := strings.Count(err.Error(), "export events:"); got != 1 {
+		t.Fatalf("error = %q, want one export events label", err)
+	}
+	if !strings.Contains(err.Error(), "send failed: context deadline exceeded") {
+		t.Fatalf("error = %q, want exporter failure", err)
 	}
 	assertOutboxCount(t, outbox, 1)
 }
@@ -546,8 +635,62 @@ func TestFlushSendsAndClearsOnSuccess(t *testing.T) {
 	if sent != 3 {
 		t.Fatalf("sent = %d, want 3", sent)
 	}
-	if atomic.LoadInt32(&hits) == 0 {
-		t.Fatal("collector received no requests")
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("collector requests = %d, want 1 (batched export)", got)
+	}
+	files, _ := s.List()
+	if len(files) != 0 {
+		t.Fatalf("outbox not cleared: %d files remain", len(files))
+	}
+}
+
+func TestFlushBatchesMultipleEventsIntoOneOTLPRequest(t *testing.T) {
+	isolateConfigCache(t)
+	capture := newOTLPCapture(t)
+	defer capture.server.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	seed(t, s, 5)
+
+	sent, err := Flush(s, capture.server.URL, "", nil, 2*time.Second)
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if sent != 5 {
+		t.Fatalf("sent = %d, want 5", sent)
+	}
+	if got := len(capture.requests); got != 1 {
+		t.Fatalf("OTLP requests = %d, want 1 (batched export)", got)
+	}
+	if got := len(capturedRecords(capture.requests)); got != 5 {
+		t.Fatalf("log records = %d, want 5", got)
+	}
+	files, _ := s.List()
+	if len(files) != 0 {
+		t.Fatalf("outbox not cleared: %d files remain", len(files))
+	}
+}
+
+func TestFlushBatchesFullBufferIntoOneOTLPRequest(t *testing.T) {
+	isolateConfigCache(t)
+	capture := newOTLPCapture(t)
+	defer capture.server.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	seed(t, s, 100)
+
+	sent, err := Flush(s, capture.server.URL, "", nil, 2*time.Second)
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if sent != 100 {
+		t.Fatalf("sent = %d, want 100", sent)
+	}
+	if got := len(capture.requests); got != 1 {
+		t.Fatalf("OTLP requests = %d, want 1 (batched export)", got)
+	}
+	if got := len(capturedRecords(capture.requests)); got != 100 {
+		t.Fatalf("log records = %d, want 100", got)
 	}
 	files, _ := s.List()
 	if len(files) != 0 {
@@ -618,10 +761,92 @@ func TestFlushKeepsBufferOnServerError(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error on server 500")
 	}
+	if !strings.Contains(err.Error(), "export events:") {
+		t.Fatalf("error = %v, want export events label", err)
+	}
+	if strings.Contains(err.Error(), "shut down exporter:") {
+		t.Fatalf("error = %v, delivery failure must not use shut down exporter label", err)
+	}
 	files, _ := s.List()
 	if len(files) != 2 {
 		t.Fatalf("buffer should be intact: %d files remain, want 2", len(files))
 	}
+}
+
+func TestFlushExpiredContextRetainsOutboxAndRecordsError(t *testing.T) {
+	isolateConfigCache(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	if err := os.WriteFile(lastDeliveryErrorPath(s), []byte("old failure"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	seed(t, s, 3)
+
+	sent, err := Flush(s, srv.URL, "", nil, time.Nanosecond)
+	if err == nil {
+		t.Fatal("want error when flush context is already expired")
+	}
+	if sent != 0 {
+		t.Fatalf("sent = %d, want 0", sent)
+	}
+	if !strings.Contains(err.Error(), "export events:") {
+		t.Fatalf("error = %v, want export events label", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
+	assertOutboxCount(t, s, 3)
+	got, ok := readLastDeliveryError(s)
+	if !ok {
+		t.Fatal("want last delivery error recorded, not cleared")
+	}
+	if got == "old failure" {
+		t.Fatal("want last delivery error replaced with the deadline failure")
+	}
+	if !strings.Contains(got, "export events:") {
+		t.Fatalf("last delivery error = %q, want export events label", got)
+	}
+
+	sent, err = flushExplicit(s, deliveryResolver{
+		Endpoint: func() (string, error) { return srv.URL, nil },
+		TLS:      func() (*tls.Config, error) { return nil, nil },
+		Token:    func() string { return "" },
+		Timeout:  func() time.Duration { return time.Nanosecond },
+	})
+	if err == nil {
+		t.Fatal("want explicit flush error when flush context is already expired")
+	}
+	if sent != 0 {
+		t.Fatalf("explicit sent = %d, want 0", sent)
+	}
+	assertOutboxCount(t, s, 3)
+}
+
+func TestFlushUnauthorizedUsesExportEventsLabel(t *testing.T) {
+	isolateConfigCache(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	s := &Outbox{Dir: t.TempDir()}
+	seed(t, s, 1)
+
+	_, err := Flush(s, srv.URL, "", nil, 2*time.Second)
+	if err == nil {
+		t.Fatal("want error on server 401")
+	}
+	if !strings.Contains(err.Error(), "export events:") {
+		t.Fatalf("error = %v, want export events label", err)
+	}
+	if strings.Contains(err.Error(), "shut down exporter:") {
+		t.Fatalf("error = %v, delivery failure must not use shut down exporter label", err)
+	}
+	assertOutboxCount(t, s, 1)
 }
 
 func TestFlushRetryKeepsEventID(t *testing.T) {
