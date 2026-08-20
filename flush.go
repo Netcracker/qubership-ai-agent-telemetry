@@ -70,7 +70,7 @@ func (b *batchingExporter) Shutdown(ctx context.Context) error {
 
 func (b *batchingExporter) ForceFlush(ctx context.Context) error {
 	if err := b.flush(ctx); err != nil {
-		return err
+		return fmt.Errorf("export events: %w", err)
 	}
 	return b.inner.ForceFlush(ctx)
 }
@@ -84,6 +84,12 @@ func (b *batchingExporter) flush(ctx context.Context) error {
 		return nil
 	}
 	return b.inner.Export(ctx, records)
+}
+
+func (b *batchingExporter) hasBufferedRecords() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.buffer) > 0
 }
 
 type deliveryResolver struct {
@@ -277,8 +283,10 @@ func deliverEvents(
 
 	sentNames := make([]string, 0, len(names))
 	var retainedIssues boundedErrors
+	emitContextDone := false
 	for _, n := range names {
 		if err := ctx.Err(); err != nil {
+			emitContextDone = true
 			break
 		}
 		ev, rerr := s.Read(n)
@@ -299,6 +307,7 @@ func deliverEvents(
 		// Export may reject a canceled context without buffering; do not treat
 		// that emit as accepted for deletion.
 		if err := ctx.Err(); err != nil {
+			emitContextDone = true
 			break
 		}
 		sentNames = append(sentNames, n)
@@ -307,11 +316,14 @@ func deliverEvents(
 	// Shutdown flushes the exporter; the batching decorator exports once here.
 	shutdownErr := provider.Shutdown(ctx)
 	deliveryErr := exportIssues.err()
-	// Breaking the emit loop on an already-expired context leaves an empty
-	// buffer, so Shutdown succeeds. Treat the exhausted budget as failure.
-	if deliveryErr == nil {
-		if err := ctx.Err(); err != nil {
-			deliveryErr = fmt.Errorf("export events: %w", err)
+	// If the budget expires before Shutdown attempts the buffered export,
+	// preserve the outbox and report a delivery failure. Do not add a second
+	// deadline error when the exporter already attempted the batch.
+	if ctxErr := ctx.Err(); deliveryErr == nil && ctxErr != nil &&
+		(emitContextDone || exp.hasBufferedRecords()) {
+		deliveryErr = fmt.Errorf("export events: %w", ctxErr)
+		if shutdownErr == ctxErr {
+			shutdownErr = nil
 		}
 	}
 	if shutdownErr != nil {

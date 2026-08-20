@@ -48,6 +48,15 @@ func (e *countingLogExporter) Export(_ context.Context, records []sdklog.Record)
 func (e *countingLogExporter) Shutdown(context.Context) error   { return nil }
 func (e *countingLogExporter) ForceFlush(context.Context) error { return nil }
 
+type deadlineLogExporter struct{}
+
+func (deadlineLogExporter) Export(ctx context.Context, _ []sdklog.Record) error {
+	<-ctx.Done()
+	return fmt.Errorf("send failed: %w", ctx.Err())
+}
+func (deadlineLogExporter) Shutdown(context.Context) error   { return nil }
+func (deadlineLogExporter) ForceFlush(context.Context) error { return nil }
+
 func TestBatchingExporterExportHonorsCanceledContext(t *testing.T) {
 	inner := &countingLogExporter{}
 	exp := newBatchingExporter(inner)
@@ -200,6 +209,28 @@ func TestFlushExplicitReportsExporterFailure(t *testing.T) {
 
 	if sent, err := flushExplicit(outbox, resolve); err == nil || !strings.Contains(err.Error(), "export failed") || sent != 0 {
 		t.Fatalf("sent=%d err=%v, want exporter error", sent, err)
+	}
+	assertOutboxCount(t, outbox, 1)
+}
+
+func TestFlushDeadlineDuringExportReportsOneDeliveryError(t *testing.T) {
+	outbox := &Outbox{Dir: t.TempDir()}
+	seed(t, outbox, 1)
+	resolve := explicitResolver("https://collector.invalid")
+	resolve.Timeout = func() time.Duration { return 10 * time.Millisecond }
+	resolve.Exporter = func(context.Context, string, string, *tls.Config) (sdklog.Exporter, error) {
+		return deadlineLogExporter{}, nil
+	}
+
+	sent, err := flushExplicit(outbox, resolve)
+	if err == nil || sent != 0 {
+		t.Fatalf("sent=%d err=%v, want delivery error", sent, err)
+	}
+	if got := strings.Count(err.Error(), "export events:"); got != 1 {
+		t.Fatalf("error = %q, want one export events label", err)
+	}
+	if !strings.Contains(err.Error(), "send failed: context deadline exceeded") {
+		t.Fatalf("error = %q, want exporter failure", err)
 	}
 	assertOutboxCount(t, outbox, 1)
 }
