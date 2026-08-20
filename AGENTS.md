@@ -1,8 +1,5 @@
 # Repository agent instructions
 
-Read [README.md](README.md) first. It is the source for architecture, installation, data contracts, and backend
-behavior.
-
 ## Non-obvious invariants
 
 - Write every committed file in English, including documentation, code comments, commit messages, and identifiers.
@@ -20,6 +17,7 @@ behavior.
   If another worktree or user coordination prevents a safe update, stop and ask the user.
 - Send every change, including documentation, through a ready-for-review pull request, not a draft. Merge only after
   one approval, all review threads are resolved, and the required checks pass for the current head.
+- Keep the pull-request description aligned with the current scope and verification steps after each scope change.
 - After each push, inspect checks for the exact head SHA. Report pending, failed, or cancelled checks separately and do
   not describe CI as complete until every expected check is terminal.
 - Use Conventional Commits; the pull-request workflows enforce the convention.
