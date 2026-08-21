@@ -12,6 +12,11 @@ const { applyPackageRules } = await import(
 
 const configPath = process.argv[2] ?? 'renovate.json';
 const repositoryConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+assert.equal(
+  repositoryConfig.platformAutomerge,
+  true,
+  'eligible updates should use GitHub native automerge',
+);
 const inheritedAutomergeRule = {
   description: 'Simulate an inherited automerge default',
   automerge: true,

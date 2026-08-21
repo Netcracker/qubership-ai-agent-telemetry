@@ -31,7 +31,7 @@ var codexHookSpecs = []hookSpec{
 }
 
 var cursorHookEvents = []string{
-	"afterAgentResponse", "afterMCPExecution",
+	"afterAgentResponse", "afterMCPExecution", "subagentStop",
 }
 
 type hookState string

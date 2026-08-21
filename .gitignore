@@ -10,7 +10,6 @@ apm_modules/
 .kiro/
 .windsurf/
 .github/instructions/
-/AGENTS.md
 /GEMINI.md
 
 # Local APM workbench install (machine-specific paths; never committed)

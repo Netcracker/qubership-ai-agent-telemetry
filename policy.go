@@ -40,13 +40,17 @@ func (p telemetryPolicy) repoScope() string {
 	if p.Disabled {
 		return "disabled"
 	}
-	if len(p.RepoAllowList) == 0 {
+	if len(p.RepoAllowList) == 0 || policyUnrestricted(p.RepoAllowList) {
 		return "all"
 	}
 	if p.RepoAllowDefault {
 		return strings.Join(p.RepoAllowList, ",") + " (default)"
 	}
 	return strings.Join(p.RepoAllowList, ",")
+}
+
+func policyUnrestricted(allow []string) bool {
+	return len(allow) == 1 && strings.TrimSpace(allow[0]) == "*"
 }
 
 func resolveRepoAllowList(envValue string, fileValues []string) ([]string, bool) {
@@ -83,7 +87,7 @@ func eventAllowedRemote(ev TelemetryEvent, policy telemetryPolicy, remotes func(
 		return "", false
 	}
 	origin := normalizeRawRemote(ev.RepoRemote)
-	if len(policy.RepoAllowList) == 0 {
+	if len(policy.RepoAllowList) == 0 || policyUnrestricted(policy.RepoAllowList) {
 		return origin, true
 	}
 	candidates := []string{ev.RepoRemote}
