@@ -70,8 +70,9 @@ The CLI reads its collector settings from the environment or the provisioned
 - `AI_AGENT_TELEMETRY_FLUSH_TIMEOUT` — positive ordinary flush timeout in Go duration syntax.
   The default is `2s`.
 - `repo-allow` — repository allowlist, one glob per line. `configure` writes
-  `github.com/Netcracker/*` by default when the file is absent; pass repeatable
-  `--repo-allow <pattern>` values to use a different scope.
+  `github.com/Netcracker/*` and `*netcracker*/**` by default when the file is absent. The host pattern does not name
+  a specific corporate host, but it can match an unrelated host with the same substring. Pass repeatable
+  `--repo-allow <pattern>` values to replace the default scope.
 - `AI_AGENT_TELEMETRY_REPO_ALLOW` — optional environment override for scripts and CI.
 
 Persist delivery overrides through the CLI instead of editing `env` directly:

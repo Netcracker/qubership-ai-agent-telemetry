@@ -170,12 +170,13 @@ enough.
 
 - **Endpoint missing** — ask the user for the collector URL; their onboarding portal or admin
   has it. Run `ai-agent-telemetry configure --endpoint=<url>`. When no repository allowlist
-  file exists yet, this also writes the default `github.com/Netcracker/*` scope to
-  `repo-allow`.
+  file exists yet, this also writes the default `github.com/Netcracker/*,*netcracker*/**`
+  scope to `repo-allow`.
 - **Repository scope wrong** — `status` prints `repo_scope:`. The default is
-  `github.com/Netcracker/*`. If the user needs a different organization or GitLab group,
-  run `ai-agent-telemetry configure --repo-allow '<pattern>'`; repeat the flag for more
-  than one pattern.
+  `github.com/Netcracker/*,*netcracker*/**`. The host pattern avoids naming a specific corporate
+  host, but it can match an unrelated host with the same substring. If the user needs a different
+  scope, run `ai-agent-telemetry configure --repo-allow '<pattern>'`; repeat the flag for more
+  than one pattern. An explicit scope replaces both defaults.
 - **CA needed** (`selftest` fails with a certificate / TLS error) — only self-signed or
   non-trusted-CA deployments need this; a publicly trusted or MDM-distributed CA needs nothing.
   Obtain the `.crt` (`references/deployment.md` covers a local cluster and a corporate PKI) and

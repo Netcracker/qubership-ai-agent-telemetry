@@ -245,13 +245,22 @@ func TestResolveRepoAllowListUsesFile(t *testing.T) {
 	}
 }
 
-func TestResolveRepoAllowListDefaultsToNetcracker(t *testing.T) {
+func TestResolveRepoAllowListDefaultsToNetcrackerRepositories(t *testing.T) {
 	got, defaulted := resolveRepoAllowList("", nil)
 	if !defaulted {
 		t.Fatal("missing policy should be marked as default")
 	}
-	if strings.Join(got, ",") != defaultRepoAllow {
-		t.Fatalf("repo allow = %v, want %q", got, defaultRepoAllow)
+	want := "github.com/Netcracker/*,*netcracker*/**"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("repo allow = %v, want %q", got, want)
+	}
+	for _, remote := range []string{
+		"https://github.com/Netcracker/project.git",
+		"ssh://git@code.netcracker.example/group/project.git",
+	} {
+		if !repoAllowed(remote, got) {
+			t.Errorf("default policy rejected %q", remote)
+		}
 	}
 }
 
