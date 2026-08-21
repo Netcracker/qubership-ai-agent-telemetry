@@ -129,6 +129,21 @@ The precedence is: `AI_AGENT_TELEMETRY_DISABLED` disables collection globally;
 `repo-allow` decides which remotes are collected. If no repository policy is configured,
 the built-in `github.com/Netcracker/*,*netcracker*/**` default applies.
 
+To retain telemetry from an explicitly approved workspace even when repository detection fails,
+configure one or more local path patterns:
+
+```sh
+ai-agent-telemetry configure \
+  --path-allow '/Users/alice/work/**' \
+  --path-allow '/opt/qubership/projects/**'
+```
+
+Repository and path rules authorize collection independently. An event authorized only by a path
+rule is retained without `repo_remote`. Local paths and path rules are used only for policy checks
+and are not serialized into telemetry. Supplying `--path-allow` replaces the saved path list;
+running `configure` without it preserves the list. Use `--clear-path-allow` to remove every path
+rule.
+
 ## Backend requirements
 
 Any collector that meets these requirements works. A ready-to-deploy reference stack is in

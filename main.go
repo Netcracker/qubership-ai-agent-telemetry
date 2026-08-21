@@ -61,6 +61,11 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 			opts.CAPath = strings.TrimPrefix(a, "--ca=")
 		case strings.HasPrefix(a, "--repo-allow="):
 			repoAllowValues = append(repoAllowValues, strings.TrimPrefix(a, "--repo-allow="))
+		case strings.HasPrefix(a, "--path-allow="):
+			opts.PathAllowSet = true
+			opts.PathAllow = append(opts.PathAllow, strings.TrimPrefix(a, "--path-allow="))
+		case a == "--clear-path-allow":
+			opts.ClearPathAllow = true
 		case strings.HasPrefix(a, "--buffer-cap="):
 			value := strings.TrimPrefix(a, "--buffer-cap=")
 			if _, err := parseBufferCap(value); err != nil {
@@ -97,6 +102,13 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 			}
 			i++
 			repoAllowValues = append(repoAllowValues, args[i])
+		case a == "--path-allow":
+			value, err := configureFlagValue(args, &i, a)
+			if err != nil {
+				return configureOptions{}, err
+			}
+			opts.PathAllowSet = true
+			opts.PathAllow = append(opts.PathAllow, value)
 		case strings.HasPrefix(a, "--hooks="):
 			value := strings.TrimPrefix(a, "--hooks=")
 			if value == "" {
@@ -123,6 +135,9 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 		default:
 			return configureOptions{}, fmt.Errorf("unknown configure flag %q", a)
 		}
+	}
+	if opts.PathAllowSet && opts.ClearPathAllow {
+		return configureOptions{}, fmt.Errorf("--path-allow and --clear-path-allow cannot be combined")
 	}
 	opts.RepoAllow = strings.Join(repoAllowValues, ",")
 	return opts, nil

@@ -11,15 +11,40 @@ import (
 	"time"
 )
 
-// applyConfigure is the deterministic core the skill and the one-liner both
-// call: it writes only the fields it is given. The endpoint and token go into
-// the env file (merged, so they can be set in separate runs); repository scope
-// goes into repo-allow; a CA path is validated and copied to ca.crt. Empty
-// fields are left untouched, which keeps re-running configure safe.
+// applyConfigure updates the existing settings without changing path policy.
 func applyConfigure(
 	configDir, endpoint, caPath, token, repoAllow string,
 	delivery deliverySettingOverrides,
 ) error {
+	return applyConfigureWithPath(
+		configDir, endpoint, caPath, token, repoAllow, pathAllowUpdate{}, delivery,
+	)
+}
+
+type pathAllowUpdate struct {
+	Patterns []string
+	Set      bool
+	Clear    bool
+}
+
+// applyConfigureWithPath writes only the settings supplied by the caller. It
+// validates a complete path-policy replacement before changing any files.
+func applyConfigureWithPath(
+	configDir, endpoint, caPath, token, repoAllow string,
+	pathUpdate pathAllowUpdate,
+	delivery deliverySettingOverrides,
+) error {
+	if pathUpdate.Set && pathUpdate.Clear {
+		return fmt.Errorf("--path-allow and --clear-path-allow cannot be combined")
+	}
+	if pathUpdate.Set {
+		if len(pathUpdate.Patterns) == 0 {
+			return fmt.Errorf("path allow list must not be empty")
+		}
+		if err := validatePathAllow(pathUpdate.Patterns); err != nil {
+			return err
+		}
+	}
 	updates := map[string]string{}
 	if endpoint != "" {
 		updates["AI_AGENT_TELEMETRY_ENDPOINT"] = endpoint
@@ -50,6 +75,38 @@ func applyConfigure(
 		if err := copyCAFile(configDir, caPath); err != nil {
 			return err
 		}
+	}
+	if pathUpdate.Set {
+		if err := writePathAllowFile(configDir, pathUpdate.Patterns); err != nil {
+			return err
+		}
+	} else if pathUpdate.Clear {
+		if err := os.Remove(filepath.Join(configDir, pathAllowFileName)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func writePathAllowFile(configDir string, patterns []string) error {
+	if err := validatePathAllow(patterns); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		return err
+	}
+	var b strings.Builder
+	for _, pattern := range patterns {
+		fmt.Fprintln(&b, pattern)
+	}
+	path := filepath.Join(configDir, pathAllowFileName)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	if err := replaceFile(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
 	}
 	return nil
 }
@@ -177,6 +234,9 @@ type statusReport struct {
 	Configured        bool
 	CAFound           bool
 	RepoScope         string
+	PathScope         string
+	PathAllowList     []string
+	PathAllowError    string
 	Buffered          int
 	LastFlush         string
 	LastDeliveryError string
@@ -194,15 +254,20 @@ func gatherStatus(
 	settings deliverySettings,
 ) statusReport {
 	r := statusReport{
-		Version:      version,
-		ConfigDir:    configDir,
-		Endpoint:     endpoint,
-		Configured:   endpoint != "",
-		RepoScope:    policy.repoScope(),
-		LastFlush:    "never",
-		Hooks:        gatherHookStatus(userHomeDir()),
-		BufferCap:    settings.BufferCap,
-		FlushTimeout: settings.FlushTimeout,
+		Version:       version,
+		ConfigDir:     configDir,
+		Endpoint:      endpoint,
+		Configured:    endpoint != "",
+		RepoScope:     policy.repoScope(),
+		PathScope:     policy.pathScope(),
+		PathAllowList: append([]string(nil), policy.PathAllowList...),
+		LastFlush:     "never",
+		Hooks:         gatherHookStatus(userHomeDir()),
+		BufferCap:     settings.BufferCap,
+		FlushTimeout:  settings.FlushTimeout,
+	}
+	if policy.PathAllowError != nil {
+		r.PathAllowError = policy.PathAllowError.Error()
 	}
 	if configDir != "" {
 		if _, err := os.Stat(filepath.Join(configDir, caFileName)); err == nil {
@@ -237,6 +302,11 @@ func formatStatus(r statusReport, verbose bool) string {
 		repoScope = "all"
 	}
 	fmt.Fprintf(&b, "repo_scope: %s\n", repoScope)
+	pathScope := r.PathScope
+	if pathScope == "" {
+		pathScope = "not configured"
+	}
+	fmt.Fprintf(&b, "path_scope: %s\n", pathScope)
 	fmt.Fprintf(&b, "ca: %s\n", caState(r.CAFound))
 	fmt.Fprintf(&b, "buffered: %d\n", r.Buffered)
 	fmt.Fprintf(&b, "last_flush_attempt: %s\n", r.LastFlush)
@@ -260,7 +330,16 @@ func formatStatus(r statusReport, verbose bool) string {
 		fmt.Fprint(&b, "configuration:\n")
 		fmt.Fprintf(&b, "  buffer_cap: %d\n", r.BufferCap)
 		fmt.Fprintf(&b, "  flush_timeout: %s\n", r.FlushTimeout)
+		if len(r.PathAllowList) > 0 {
+			fmt.Fprint(&b, "  path_allow:\n")
+			for _, pattern := range r.PathAllowList {
+				fmt.Fprintf(&b, "    - %s\n", pattern)
+			}
+		}
 		fmt.Fprint(&b, "diagnostics:\n")
+		if r.PathAllowError != "" {
+			fmt.Fprintf(&b, "  path_allow_error: %s\n", r.PathAllowError)
+		}
 		if r.LastDeliveryError != "" {
 			fmt.Fprintf(&b, "  last_delivery_error: %s\n", r.LastDeliveryError)
 		} else {

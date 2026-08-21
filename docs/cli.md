@@ -351,6 +351,45 @@ then the `AI_AGENT_TELEMETRY_REPO_ALLOW` environment variable overrides the conf
 scope; then `repo-allow` scopes the remaining events. If no repository policy is configured,
 the built-in `github.com/Netcracker/*,*netcracker*/**` default applies.
 
+## Local path scope
+
+Path rules provide an explicit second way to authorize collection when repository attribution is
+missing or does not match `repo-allow`:
+
+```text
+collect = !disabled && (repository_allowed || path_allowed)
+```
+
+Configure the complete path allowlist with repeatable options. Quote wildcard patterns so the shell
+does not expand them:
+
+```sh
+ai-agent-telemetry configure \
+  --path-allow '/Users/alice/work/**' \
+  --path-allow 'C:\Users\Alice\work\**'
+```
+
+Supplying at least one `--path-allow` replaces the saved list atomically. Running `configure`
+without the option preserves the list. `--clear-path-allow` removes all path rules; it cannot be
+combined with `--path-allow`.
+
+Patterns are positive absolute paths. A literal segment can contain `*`, while `**` is supported
+only as a complete segment and matches zero or more segments. `/work/**` matches `/work` and its
+descendants. The standalone pattern `*` matches every available policy path, but it does not
+authorize an event without a path. POSIX paths, Windows drive paths, and UNC paths are supported.
+Repeated and trailing separators are normalized. Windows paths accept both `/` and `\` separators
+and match without case sensitivity; POSIX matching is case sensitive. Deny rules, character classes,
+relative paths, and `.` or `..` pattern segments are rejected.
+
+Candidate paths are made absolute, cleaned, and resolved through symlinks before matching. A path
+that cannot be canonicalized does not match. An absent, empty, unreadable, malformed, or unsupported
+`path-allow` file authorizes no additional paths and does not disable repository policy.
+
+An event authorized only by a path rule is retained without `repo_remote`. Local paths, patterns,
+and policy file contents are not serialized into telemetry. `status` reports `path_scope` as
+`not configured`, `configured`, or `invalid`; `status --verbose` lists active patterns or the local
+policy error.
+
 ## Transport and security
 
 Delivery is OTLP/HTTP, over HTTPS only. The CLI never falls back to plaintext and never
@@ -371,7 +410,7 @@ per-OS `os.UserConfigDir()` / `os.UserCacheDir()` locations. The reasoning is in
 | --- | --- | --- |
 | **Binary** (on `PATH`) | `~/.local/bin/ai-agent-telemetry` (`.exe` on Windows) | the CLI itself, placed there by the installer so the hook resolves it by bare name |
 | **PATH receipt** | Beside the managed binary as `.ai-agent-telemetry-install.json` | ownership evidence for the exact installer-created `PATH` mutation; no credentials or telemetry state |
-| **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token, and delivery settings), `repo-allow` (repository allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
+| **Config** (durable) | `$XDG_CONFIG_HOME` else `~/.config/ai-agent-telemetry/` | `env` (endpoint, token, and delivery settings), `repo-allow` (repository allowlist), `path-allow` (local path allowlist), `ca.crt` (optional private CA), `machine-id` (anonymous install UUID) |
 | **Cache** (disposable) | `$XDG_CACHE_HOME` else `~/.cache/ai-agent-telemetry/` | `outbox/` (one JSON file per event, plus `.lastflush`, `.last_delivery_error`, and `.flush.lock`), `offsets/` (per-session transcript offsets) |
 | **Claude Code hook** | `~/.claude/settings.json` | Global `PreToolUse`/`Skill`, `UserPromptExpansion`, `PostToolUse`/`mcp__.*`, and `PostToolUseFailure`/`mcp__.*` registrations merged with unrelated settings |
 | **Cline hook** | `~/Documents/Cline/Hooks/PostToolUse[.ps1]` | Exact telemetry-owned file; an unrelated file or symbolic link is preserved as a conflict |
