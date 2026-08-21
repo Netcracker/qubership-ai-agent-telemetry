@@ -402,11 +402,14 @@ func knownHookTarget(target hookTarget) bool {
 }
 
 type configureOptions struct {
-	Endpoint  string
-	CAPath    string
-	RepoAllow string
-	Hooks     []hookTarget
-	Delivery  deliverySettingOverrides
+	Endpoint       string
+	CAPath         string
+	RepoAllow      string
+	PathAllow      []string
+	PathAllowSet   bool
+	ClearPathAllow bool
+	Hooks          []hookTarget
+	Delivery       deliverySettingOverrides
 }
 
 type deliverySettingOverrides struct {
