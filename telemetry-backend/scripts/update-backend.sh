@@ -1386,7 +1386,7 @@ def regular_identity(opened, opened_mount):
 def validate_claimed_tree(directory_fd, expected_mount, accepted=None):
     if accepted is None:
         accepted = {}
-    for name in sorted(os.listdir(directory_fd), key=os.fsencode):
+    for name in sorted(list_directory(directory_fd), key=os.fsencode):
         before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         if stat.S_ISDIR(before.st_mode):
             child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
@@ -1421,7 +1421,7 @@ def validate_claimed_tree(directory_fd, expected_mount, accepted=None):
 
 def remove_claimed_tree(directory_fd, expected_mount, entryremove_hook, root_path, quarantine, relative, stop_at,
                         partial_stopped, accepted, handled):
-    for name in sorted(os.listdir(directory_fd), key=os.fsencode):
+    for name in sorted(list_directory(directory_fd), key=os.fsencode):
         before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         child_relative = (*relative, name)
         if stat.S_ISDIR(before.st_mode):
@@ -1485,7 +1485,7 @@ def remove_claimed_tree(directory_fd, expected_mount, entryremove_hook, root_pat
 
 
 def audit_claimed_tree(directory_fd, expected_mount, accepted, handled):
-    for name in sorted(os.listdir(directory_fd), key=os.fsencode):
+    for name in sorted(list_directory(directory_fd), key=os.fsencode):
         before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         if stat.S_ISDIR(before.st_mode):
             child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
@@ -1520,7 +1520,7 @@ def audit_claimed_tree(directory_fd, expected_mount, accepted, handled):
 
 
 def remove_empty_directories(directory_fd, expected_mount):
-    for name in sorted(os.listdir(directory_fd), key=os.fsencode):
+    for name in sorted(list_directory(directory_fd), key=os.fsencode):
         before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         if not stat.S_ISDIR(before.st_mode):
             continue

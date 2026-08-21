@@ -83,7 +83,7 @@ validate_production_runtime() {
 
 maintenance_init() {
   local test_mode=${TELEMETRY_MAINTENANCE_TEST_MODE:-} kill_at=${TELEMETRY_TEST_KILL_AT:-}
-  local recovery_release
+  local active_resolution recovery_release
 
   umask 077
   : "$HELPER_IMAGE" "$JSON_IMAGE" "$TRANSACTION_LABEL" "$ROLE_LABEL" "$LARGE_BACKUP_BYTES"
@@ -127,8 +127,13 @@ maintenance_init() {
 
   validate_project_name "$PROJECT_NAME" || return 1
   TRANSACTION_FILE=$BACKEND_ROOT/.maintenance-transaction
-  if ! CURRENT_BACKEND_DIR=$(resolve_active_backend_dir "$BACKEND_ROOT"); then
-    [ -f "$TRANSACTION_FILE" ] || return 1
+  if active_resolution=$(resolve_active_backend_dir "$BACKEND_ROOT" 2>&1); then
+    CURRENT_BACKEND_DIR=$active_resolution
+  else
+    if [ ! -f "$TRANSACTION_FILE" ]; then
+      printf '%s\n' "$active_resolution" >&2
+      return 1
+    fi
     validate_transaction_state || return 1
     recovery_release=$(read_transaction PREVIOUS_RELEASE) || return 1
     CURRENT_BACKEND_DIR=$(transaction_release_dir "$recovery_release") || return 1
@@ -765,12 +770,10 @@ strict_health_gate() {
 }
 
 transaction_release_dir() {
-  local release_id=$1 candidate=$BACKEND_ROOT/$1
+  local candidate=$BACKEND_ROOT/$1
 
   if [ -d "$candidate" ] && [ ! -L "$candidate" ]; then
     printf '%s\n' "$candidate"
-  elif [ "$release_id" = "$(basename -- "$BACKEND_ROOT")" ]; then
-    printf '%s\n' "$BACKEND_ROOT"
   else
     maintenance_error "transaction release directory is missing: $candidate"
     return 1

@@ -843,6 +843,38 @@ run_cli_suite() {
     # shellcheck disable=SC1090,SC1091
     TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
     export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT=$sandbox/backend
+    export TELEMETRY_TEST_BACKUP_ROOT=$sandbox/backups TELEMETRY_TEST_PROJECT_NAME=recovery_probe_test
+    maintenance_init
+    entries=('FORMAT_VERSION=1' 'TRANSACTION_ID=recovery-probe' 'OPERATION=backup' \
+      'PHASE=backup-offline' 'PREVIOUS_RELEASE=active-release' \
+      "BACKUP_PATH=$sandbox/backups/pre-recovery-probe")
+    for service in caddy collector grafana victorialogs victoriametrics; do
+      entries+=("PREVIOUS_IMAGE_${service^^}=$(fixture_image_id active-release "$service")")
+    done
+    write_transaction "${entries[@]}"
+    rm "$BACKEND_ROOT/latest"
+    recovery_probe_output=$(maintenance_init 2>&1) || exit 1
+    [ -z "$recovery_probe_output" ] || exit 1
+    [ "$CURRENT_BACKEND_DIR" = "$BACKEND_ROOT/active-release" ] || exit 1
+    clear_transaction
+    ln -s active-release "$BACKEND_ROOT/latest"
+  ) || fail 'successful transaction recovery reported a missing active release'
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    BACKEND_ROOT=$sandbox/backend
+    missing_release=$(basename "$BACKEND_ROOT")
+    if missing_release_output=$(transaction_release_dir "$missing_release" 2>&1); then
+      exit 1
+    fi
+    [[ $missing_release_output == *"transaction release directory is missing: $BACKEND_ROOT/$missing_release"* ]]
+  ) || fail 'transaction release resolution accepted the backend root as a release directory'
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT=$sandbox/backend
     export TELEMETRY_TEST_COMMAND_LOG=$sandbox/measure-events.log
     maintenance_init
     # shellcheck disable=SC2329 # measure_volume_bytes reaches Docker through this boundary double.
@@ -2720,7 +2752,6 @@ run_retention_suite() {
 import os
 import pathlib
 import sys
-import tempfile
 
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 start = source.index("import calendar\n", source.index("prune_backups()"))
@@ -2733,17 +2764,42 @@ try:
 finally:
     sys.argv = original_argv
 
-with tempfile.TemporaryDirectory() as root:
-    pathlib.Path(root, "before").touch()
-    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        namespace["list_directory"](root_fd)
-        pathlib.Path(root, "after").touch()
-        names = namespace["list_directory"](root_fd)
-    finally:
-        os.close(root_fd)
-    if {"before", "after"} - set(names):
-        raise SystemExit("retention directory enumeration did not observe a newly created entry")
+events = []
+
+
+def record_lseek(directory_fd, offset, whence):
+    events.append(("lseek", directory_fd, offset, whence))
+
+
+def require_rewind(directory_fd):
+    expected = ("lseek", directory_fd, 0, os.SEEK_SET)
+    if not events or events[-1] != expected:
+        raise RuntimeError("directory enumeration was not preceded by a rewind")
+    events.append(("listdir", directory_fd))
+    return []
+
+
+namespace["os"].lseek = record_lseek
+namespace["os"].listdir = require_rewind
+
+directory_fd = 17
+namespace["validate_claimed_tree"](directory_fd, 1)
+namespace["remove_claimed_tree"](directory_fd, 1, "", "", "", (), "", [False], {}, set())
+namespace["audit_claimed_tree"](directory_fd, 1, {}, set())
+namespace["remove_empty_directories"](directory_fd, 1)
+
+expected_events = [
+    ("lseek", directory_fd, 0, os.SEEK_SET),
+    ("listdir", directory_fd),
+    ("lseek", directory_fd, 0, os.SEEK_SET),
+    ("listdir", directory_fd),
+    ("lseek", directory_fd, 0, os.SEEK_SET),
+    ("listdir", directory_fd),
+    ("lseek", directory_fd, 0, os.SEEK_SET),
+    ("listdir", directory_fd),
+]
+if events != expected_events:
+    raise SystemExit(f"unexpected directory enumeration sequence: {events!r}")
 PY
 
   prepare_retention_fixture() {
