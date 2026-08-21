@@ -21,6 +21,8 @@ type telemetryPolicy struct {
 	Disabled         bool
 	RepoAllowList    []string
 	RepoAllowDefault bool
+	PathAllowList    []string
+	PathAllowError   error
 }
 
 func resolveTelemetryPolicy() telemetryPolicy {
@@ -29,10 +31,13 @@ func resolveTelemetryPolicy() telemetryPolicy {
 		os.Getenv(envRepoAllow),
 		loadRepoAllowFile(pkgConfigPath(repoAllowFileName)),
 	)
+	pathAllow, pathErr := loadPathAllowFile(pkgConfigPath(pathAllowFileName))
 	return telemetryPolicy{
 		Disabled:         truthy(firstNonEmpty(os.Getenv(envTelemetryDisabled), env[envTelemetryDisabled])),
 		RepoAllowList:    repoAllow,
 		RepoAllowDefault: defaulted,
+		PathAllowList:    pathAllow,
+		PathAllowError:   pathErr,
 	}
 }
 
@@ -47,6 +52,16 @@ func (p telemetryPolicy) repoScope() string {
 		return strings.Join(p.RepoAllowList, ",") + " (default)"
 	}
 	return strings.Join(p.RepoAllowList, ",")
+}
+
+func (p telemetryPolicy) pathScope() string {
+	if p.PathAllowError != nil {
+		return "invalid"
+	}
+	if len(p.PathAllowList) == 0 {
+		return "not configured"
+	}
+	return "configured"
 }
 
 func policyUnrestricted(allow []string) bool {
@@ -71,6 +86,8 @@ func filterEventsByPolicy(events []TelemetryEvent, policy telemetryPolicy, remot
 	for _, ev := range events {
 		if allowedRemote, ok := eventAllowedRemote(ev, policy, remotes); ok {
 			ev.RepoRemote = allowedRemote
+			ev.RepoDir = ""
+			ev.PolicyPaths = nil
 			out = append(out, ev)
 		}
 	}
@@ -96,6 +113,9 @@ func eventAllowedRemote(ev TelemetryEvent, policy telemetryPolicy, remotes func(
 	}
 	if allowed := firstAllowedRemote(candidates, policy.RepoAllowList); allowed != "" {
 		return allowed, true
+	}
+	if policy.PathAllowError == nil && pathAllowed(ev.PolicyPaths, policy.PathAllowList) {
+		return "", true
 	}
 	return "", false
 }

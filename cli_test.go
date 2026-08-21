@@ -518,7 +518,7 @@ func TestCobraConfigureFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"endpoint", "ca", "repo-allow", "hooks", "buffer-cap", "flush-timeout"} {
+	for _, name := range []string{"endpoint", "ca", "repo-allow", "path-allow", "clear-path-allow", "hooks", "buffer-cap", "flush-timeout"} {
 		if command.Flags().Lookup(name) == nil {
 			t.Errorf("configure flag --%s is not registered", name)
 		}

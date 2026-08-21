@@ -203,7 +203,8 @@ func registerLifecycleCompletion(cmd *cobra.Command, action lifecycleAction) {
 
 func newConfigureCommand(deps appDeps) *cobra.Command {
 	var endpoint, caPath, hooks, bufferCap, flushTimeout string
-	var repoAllow []string
+	var repoAllow, pathAllow []string
+	var clearPathAllow bool
 	cmd := &cobra.Command{
 		Use:   "configure",
 		Short: "Write machine settings and install global harness hooks",
@@ -238,7 +239,14 @@ func newConfigureCommand(deps appDeps) *cobra.Command {
 			}
 			collectorEndpoint := configureEndpoint(endpoint)
 			token := readSecret("Collector token (leave blank to skip): ")
-			if err := applyConfigure(configDir, collectorEndpoint, caPath, token, strings.Join(repoAllow, ","), delivery); err != nil {
+			pathUpdate := pathAllowUpdate{
+				Patterns: pathAllow,
+				Set:      cmd.Flags().Changed("path-allow"),
+				Clear:    clearPathAllow,
+			}
+			if err := applyConfigureWithPath(
+				configDir, collectorEndpoint, caPath, token, strings.Join(repoAllow, ","), pathUpdate, delivery,
+			); err != nil {
 				return fmt.Errorf("configure: %w", err)
 			}
 			results := installManagedHooks(deps.Home(), targets, cmd.ErrOrStderr())
@@ -262,6 +270,9 @@ func newConfigureCommand(deps appDeps) *cobra.Command {
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Set the OTLP/HTTP collector endpoint")
 	cmd.Flags().StringVar(&caPath, "ca", "", "Install a private CA certificate")
 	cmd.Flags().StringArrayVar(&repoAllow, "repo-allow", nil, "Allow a repository pattern (repeatable)")
+	cmd.Flags().StringArrayVar(&pathAllow, "path-allow", nil, "Allow an absolute local path pattern (repeatable)")
+	cmd.Flags().BoolVar(&clearPathAllow, "clear-path-allow", false, "Remove all local path rules")
+	cmd.MarkFlagsMutuallyExclusive("path-allow", "clear-path-allow")
 	cmd.Flags().StringVar(&hooks, "hooks", "", "Install hook targets: "+enumValuesDescription(hookFlagValues(true)))
 	_ = cmd.RegisterFlagCompletionFunc("hooks", func(_ *cobra.Command, _ []string, value string) ([]string, cobra.ShellCompDirective) {
 		return completeCSV(hookFlagValues(true), value)

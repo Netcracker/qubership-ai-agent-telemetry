@@ -306,6 +306,7 @@ func cursorTranscriptEventsForPath(
 	for _, name := range scan.Skills {
 		ev, err := newSkillEvent("cursor", p.SessionID, rem, repoDir, name, now)
 		if err == nil {
+			ev.PolicyPaths = uniquePolicyPaths(p.WorkspaceRoots)
 			events = append(events, ev)
 		}
 	}

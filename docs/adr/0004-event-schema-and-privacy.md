@@ -112,11 +112,12 @@ line requires a new ADR.
 
 ## Consequences
 
-- **Repos without an allowed remote are dropped by the default policy.** A non-git checkout or one with no matching
-  remote produces an empty repository identity and is filtered when the default
-  `github.com/Netcracker/*,*netcracker*/**` allowlist is active. The host wildcard avoids publishing a specific
-  corporate host, but it can also match an unrelated host with the same substring. A deliberately unscoped policy can
-  still send an event with an empty `repo.remote`; this is accepted because the alternative is leaking the local path.
+- **Repos without an allowed remote are dropped unless an explicit path rule authorizes collection.** A non-git checkout
+  or one with no matching remote produces an empty repository identity and is filtered when only the default
+  `github.com/Netcracker/*,*netcracker*/**` repository allowlist applies. The host wildcard avoids publishing a specific
+  corporate host, but it can also match an unrelated host with the same substring. A deliberately unscoped repository
+  policy or an explicit `path-allow` match can retain an event with an empty `repo.remote`; the local path remains
+  local-only policy input.
 - **No per-user analytics.** Without `user_email` or any user identifier, the backend cannot break down
   usage by person. This is intentional: the metric is "which skills are used, where," not "who uses them."
 - **`machine.id` resets on re-configure.** Deleting the config directory (or reconfiguring onto a new

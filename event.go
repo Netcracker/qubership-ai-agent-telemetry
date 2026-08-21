@@ -67,6 +67,7 @@ type TelemetryEvent struct {
 	SessionID     string
 	RepoRemote    string
 	RepoDir       string
+	PolicyPaths   []string
 	TS            time.Time
 	Payload       telemetryPayload
 }
@@ -377,6 +378,7 @@ func newSkillEvent(
 		SessionID:     sessionID,
 		RepoRemote:    repoRemote,
 		RepoDir:       repoDir,
+		PolicyPaths:   uniquePolicyPaths([]string{repoDir}),
 		TS:            ts,
 		Payload:       SkillPayload{SkillName: skillName},
 	}
@@ -400,6 +402,7 @@ func newCommandEvent(
 		SessionID:     sessionID,
 		RepoRemote:    repoRemote,
 		RepoDir:       repoDir,
+		PolicyPaths:   uniquePolicyPaths([]string{repoDir}),
 		TS:            ts,
 		Payload:       payload,
 	}
@@ -423,6 +426,7 @@ func newMCPEvent(
 		SessionID:     sessionID,
 		RepoRemote:    repoRemote,
 		RepoDir:       repoDir,
+		PolicyPaths:   uniquePolicyPaths([]string{repoDir}),
 		TS:            ts,
 		Payload:       payload,
 	}
@@ -471,7 +475,7 @@ func validateTelemetryEvent(ev TelemetryEvent) error {
 	if ev.Agent == selftestAgent {
 		payload, ok := ev.Payload.(SkillPayload)
 		if !ok || ev.EventName != eventSkillExecuted || payload.SkillName != selftestSkill ||
-			!validUUIDv4(ev.SessionID) || ev.RepoRemote != "" || ev.RepoDir != "" {
+			!validUUIDv4(ev.SessionID) || ev.RepoRemote != "" || ev.RepoDir != "" || len(ev.PolicyPaths) != 0 {
 			return fmt.Errorf("invalid selftest event")
 		}
 		return nil
