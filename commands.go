@@ -104,7 +104,7 @@ func writePathAllowFile(configDir string, patterns []string) error {
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
 		return err
 	}
-	if err := replaceFile(tmp, path); err != nil {
+	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
