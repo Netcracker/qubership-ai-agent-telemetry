@@ -77,10 +77,10 @@ collect = !disabled && (repository_allowed || path_allowed)
 
 Repository policy can use the local working directory and all git remotes to select an allowed normalized remote. Path
 policy can use harness workspace roots when repository attribution is missing or disallowed. Only `repo.remote` is
-serialized, and a path-only match clears it. Local paths and path rules stay on the machine. An unscoped repository
-policy can retain an event with an empty remote. The selftest probe bypasses collection policy because it tests machine
-delivery rather than repository activity. Path authorization does not choose an operation-specific root; that work
-remains [issue 66].
+serialized, and a path-only match retains a safe normalized remote when one is available. Local paths and path rules
+stay on the machine. An event can retain an empty remote when Git attribution is unavailable. The selftest probe
+bypasses collection policy because it tests machine delivery rather than repository activity. Path authorization does
+not choose an operation-specific root; that work remains [issue 66].
 
 Keep these content and identity fields excluded even when a hook supplies them:
 

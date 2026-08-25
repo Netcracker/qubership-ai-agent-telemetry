@@ -115,6 +115,11 @@ func eventAllowedRemote(ev TelemetryEvent, policy telemetryPolicy, remotes func(
 		return allowed, true
 	}
 	if policy.PathAllowError == nil && pathAllowed(ev.PolicyPaths, policy.PathAllowList) {
+		for _, remote := range candidates {
+			if normalized := normalizeRawRemote(remote); normalized != "" {
+				return normalized, true
+			}
+		}
 		return "", true
 	}
 	return "", false

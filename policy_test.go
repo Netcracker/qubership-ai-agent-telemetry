@@ -228,29 +228,33 @@ func TestPolicyWithAllowlistDropsUnknownRemote(t *testing.T) {
 	}
 }
 
-func TestPathPolicyRetainsEventWithoutDisclosingDisallowedRemote(t *testing.T) {
+func TestPathPolicyRetainsResolvedRemoteWithoutDisclosingPath(t *testing.T) {
 	workspace := t.TempDir()
 	ev := testSkillEvent(
-		t, "codex", "s1", "git@github.com:personal/project.git", "", "skill", time.Now(),
+		t, "codex", "s1", "", workspace, "skill", time.Now(),
 	)
-	ev.PolicyPaths = []string{workspace}
 	policy := telemetryPolicy{
 		RepoAllowList: []string{"github.com/Netcracker/*"},
 		PathAllowList: []string{filepath.ToSlash(workspace) + "/**"},
 	}
 
-	got := filterEventsByPolicy([]TelemetryEvent{ev}, policy, nil)
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, policy, func(cwd string) []string {
+		if cwd != workspace {
+			t.Fatalf("cwd = %q, want %q", cwd, workspace)
+		}
+		return []string{"git@github.com:personal/project.git"}
+	})
 	if len(got) != 1 {
 		t.Fatalf("got %d events, want 1", len(got))
 	}
-	if got[0].RepoRemote != "" {
-		t.Fatalf("path-only event disclosed repo remote %q", got[0].RepoRemote)
+	if got[0].RepoRemote != "github.com/personal/project" {
+		t.Fatalf("repo remote = %q, want resolved remote", got[0].RepoRemote)
 	}
 	encoded, err := json.Marshal(got[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), workspace) || strings.Contains(string(encoded), "repo_remote") {
+	if strings.Contains(string(encoded), workspace) {
 		t.Fatalf("path-only event disclosed policy context: %s", encoded)
 	}
 }

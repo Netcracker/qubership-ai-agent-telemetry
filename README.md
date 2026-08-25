@@ -140,10 +140,10 @@ ai-agent-telemetry configure \
 ```
 
 Repository and path rules authorize collection independently. An event authorized only by a path
-rule is retained without `repo_remote`. Local paths and path rules are used only for policy checks
-and are not serialized into telemetry. Supplying `--path-allow` replaces the saved path list;
-running `configure` without it preserves the list. Use `--clear-path-allow` to remove every path
-rule.
+rule retains a normalized `repo_remote` when Git attribution is available. Local paths and path
+rules are used only for policy checks and are not serialized into telemetry. Supplying
+`--path-allow` replaces the saved path list; running `configure` without it preserves the list. Use
+`--clear-path-allow` to remove every path rule.
 
 ## Backend requirements
 

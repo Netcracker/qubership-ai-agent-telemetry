@@ -385,10 +385,10 @@ Candidate paths are made absolute, cleaned, and resolved through symlinks before
 that cannot be canonicalized does not match. An absent, empty, unreadable, malformed, or unsupported
 `path-allow` file authorizes no additional paths and does not disable repository policy.
 
-An event authorized only by a path rule is retained without `repo_remote`. Local paths, patterns,
-and policy file contents are not serialized into telemetry. `status` reports `path_scope` as
-`not configured`, `configured`, or `invalid`; `status --verbose` lists active patterns or the local
-policy error.
+An event authorized only by a path rule retains a normalized `repo_remote` when Git attribution is
+available. Local paths, patterns, and policy file contents are not serialized into telemetry.
+`status` reports `path_scope` as `not configured`, `configured`, or `invalid`; `status --verbose`
+lists active patterns or the local policy error.
 
 ## Transport and security
 
