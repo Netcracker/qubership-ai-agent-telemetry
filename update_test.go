@@ -322,9 +322,11 @@ func TestWindowsUpdateSwapRollsBackCanonicalInstallFailure(t *testing.T) {
 	if !errors.Is(err, installFailure) || called {
 		t.Fatalf("runWindowsUpdateSwapWith() error = %v; lifecycle called = %t", err, called)
 	}
+	managed := "C:/bin/ai-agent-telemetry.exe"
+	stale := filepath.Join(filepath.Dir(managed), ".ai-agent-telemetry.exe.update-old-42-nonce")
 	wantMoves := [][2]string{
-		{"C:/bin/ai-agent-telemetry.exe", "C:/bin/.ai-agent-telemetry.exe.update-old-42-nonce"},
-		{"C:/bin/.ai-agent-telemetry.exe.update-old-42-nonce", "C:/bin/ai-agent-telemetry.exe"},
+		{managed, stale},
+		{stale, managed},
 	}
 	if !reflect.DeepEqual(moves, wantMoves) {
 		t.Fatalf("moves = %#v, want rollback %#v", moves, wantMoves)
