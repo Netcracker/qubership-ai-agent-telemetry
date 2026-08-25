@@ -115,8 +115,9 @@ func TestApplyConfigureDefaultsRepoAllowWhenUnset(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
-	if strings.Join(got, ",") != defaultRepoAllow {
-		t.Fatalf("repo allow = %v, want %q", got, defaultRepoAllow)
+	want := "github.com/Netcracker/*,*netcracker*/**"
+	if strings.Join(got, ",") != want {
+		t.Fatalf("repo allow = %v, want %q", got, want)
 	}
 }
 

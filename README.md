@@ -2,8 +2,8 @@
 
 Records skill runs, command invocations, and MCP tool executions in Claude Code, Cline, Codex, and Cursor sessions.
 It sends the events to an OpenTelemetry collector. Collection is bounded by the installed hook and
-the machine repository policy. The default `configure` policy records only repositories
-under the Netcracker GitHub organization unless you set a different repository scope.
+the machine repository policy. The default `configure` policy records repositories in the Netcracker GitHub
+organization and on hosts whose name contains `netcracker`, unless you set a different repository scope.
 
 ## TL;DR
 
@@ -97,11 +97,12 @@ and allowlist are in [ADR 0006](docs/adr/0006-generic-event-schema-and-privacy.m
 
 ## Repository scope
 
-By default, the CLI applies a Netcracker organization allowlist. `configure` writes it to
+By default, the CLI applies a Netcracker repository allowlist. `configure` writes it to
 `repo-allow` in the config dir:
 
 ```text
 github.com/Netcracker/*
+*netcracker*/**
 ```
 
 To use globally installed hooks without collecting personal-project activity from other
@@ -116,15 +117,17 @@ ai-agent-telemetry configure \
 
 The allowlist is matched against normalized, lowercase git remote identities such as
 `github.com/netcracker/repo`. `*` matches one path segment; `**` matches nested GitLab
-groups. For forks, the CLI checks every configured git remote in the working tree, not
-only `origin`. A personal GitHub fork is allowed when it has an `upstream` remote that
-points to an allowed organization repository, and telemetry records the matching
+groups. The `*netcracker*/**` default matches any remote whose host segment contains
+`netcracker`; this avoids publishing a specific corporate host but can also match an unrelated
+host with the same substring. For forks, the CLI checks every configured git remote in the
+working tree, not only `origin`. A personal GitHub fork is allowed when it has an `upstream`
+remote that points to an allowed organization repository, and telemetry records the matching
 organization remote instead of the personal fork remote.
 
 The precedence is: `AI_AGENT_TELEMETRY_DISABLED` disables collection globally;
 `AI_AGENT_TELEMETRY_REPO_ALLOW` overrides the configured scope for CI and automation; then
 `repo-allow` decides which remotes are collected. If no repository policy is configured,
-the built-in `github.com/Netcracker/*` default applies.
+the built-in `github.com/Netcracker/*,*netcracker*/**` default applies.
 
 ## Backend requirements
 
