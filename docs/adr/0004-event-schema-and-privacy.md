@@ -6,7 +6,7 @@ Accepted
 
 **Date:** 2026-07-09
 
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-25
 
 **Owner:** denifilatoff
 
@@ -53,11 +53,22 @@ The outbox persists the same event content in local JSON files before flush. It 
 the event is enqueued. Local-only helper fields, such as the working directory used for repository policy checks, are
 never serialized.
 
+The machine collection policy runs before enqueue and uses this rule:
+
+```text
+collect = !disabled && (repository_allowed || path_allowed)
+```
+
+Repository remotes, working directories, and harness workspace roots can be local policy inputs. Paths and path rules
+are never serialized. When only a path rule authorizes an event, the CLI retains a safe normalized `repo.remote` when
+Git attribution is available. Path authorization does not select an operation-specific root; that attribution remains
+[issue 66].
+
 ### Fields excluded
 
 | Field | Why excluded |
 | --- | --- |
-| `repo.path` | The local working directory leaks the username. Repositories are identified by `repo.remote` alone. A non-git checkout has no repo label unless policy can resolve an allowed remote from the working tree. |
+| `repo.path` | The local working directory leaks the username. Repositories are identified by `repo.remote` alone. A non-git checkout has no repo label unless policy can resolve a safe normalized remote from the working tree. |
 | `turn.id` | Finer than `session.id` and supplied by the harness. Delivery deduplication uses the CLI-generated `event.id` instead. |
 | `user_email` | Cursor's hook payload carries it. We do not read it — skill-usage counts do not require user identity, and collecting email would cross the "no personal data" line. |
 | `skill.source` | Originally carried by the `[skill-called]` marker; retired when the marker was removed (see [ADR 0001](0001-skill-detection-via-hooks-and-transcripts.md)). |
@@ -70,6 +81,7 @@ URL userinfo such as usernames, passwords, or OAuth tokens.
 
 When the hook runs in a personal fork, repository policy checks every configured git remote in the working tree. If an
 allowed upstream remote matches, the event records the allowed organization remote instead of the personal fork remote.
+If no repository rule matches but a path rule authorizes collection, the event records the detected normalized remote.
 
 ### `machine.id`: anonymous install identity
 
@@ -110,13 +122,16 @@ identified by a random UUID that cannot be traced back to a person or a device. 
 This is a deliberate minimum, not a starting point to extend. Adding a field that crosses the personal-data
 line requires a new ADR.
 
+[issue 66]: https://github.com/Netcracker/qubership-ai-agent-telemetry/issues/66
+
 ## Consequences
 
-- **Repos without an allowed remote are dropped by the default policy.** A non-git checkout or one with no matching
-  remote produces an empty repository identity and is filtered when the default
-  `github.com/Netcracker/*,*netcracker*/**` allowlist is active. The host wildcard avoids publishing a specific
-  corporate host, but it can also match an unrelated host with the same substring. A deliberately unscoped policy can
-  still send an event with an empty `repo.remote`; this is accepted because the alternative is leaking the local path.
+- **Repos without an allowed remote are dropped unless an explicit path rule authorizes collection.** A non-git checkout
+  or one with no matching remote produces an empty repository identity and is filtered when only the default
+  `github.com/Netcracker/*,*netcracker*/**` repository allowlist applies. The host wildcard avoids publishing a specific
+  corporate host, but it can also match an unrelated host with the same substring. A deliberately unscoped repository
+  policy or an explicit `path-allow` match can retain an event. Its normalized remote is included when available; the
+  local path remains local-only policy input.
 - **No per-user analytics.** Without `user_email` or any user identifier, the backend cannot break down
   usage by person. This is intentional: the metric is "which skills are used, where," not "who uses them."
 - **`machine.id` resets on re-configure.** Deleting the config directory (or reconfiguring onto a new

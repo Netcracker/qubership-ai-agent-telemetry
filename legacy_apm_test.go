@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -61,7 +62,11 @@ func TestCleanupLegacyTelemetryAPMWithMissingManifestDoesNothing(t *testing.T) {
 func TestCleanupLegacyTelemetryAPMWithBlankHomeDoesNothing(t *testing.T) {
 	workingDir := t.TempDir()
 	t.Chdir(workingDir)
-	for _, relativeHome := range []string{"", "   "} {
+	relativeHomes := []string{""}
+	if runtime.GOOS != "windows" {
+		relativeHomes = append(relativeHomes, "   ")
+	}
+	for _, relativeHome := range relativeHomes {
 		dir := filepath.Join(relativeHome, ".apm")
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)

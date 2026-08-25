@@ -61,6 +61,7 @@ func TestDetectClaudeCommand(t *testing.T) {
 		Agent:         "claude",
 		SessionID:     "s1",
 		RepoDir:       "/repo",
+		PolicyPaths:   []string{"/repo"},
 		TS:            now,
 		Payload: CommandPayload{
 			CommandName:   "review-pr",
@@ -252,6 +253,7 @@ func TestDetectCodexMCP(t *testing.T) {
 		Agent:         "codex",
 		SessionID:     "s1",
 		RepoDir:       "/repo",
+		PolicyPaths:   []string{"/repo"},
 		TS:            now,
 		Payload: MCPPayload{
 			ServerName: "github",
@@ -698,9 +700,9 @@ func TestDetectClineRejectsMalformedInput(t *testing.T) {
 
 func TestDetectClineMultiRootAttribution(t *testing.T) {
 	tests := []struct {
-		name    string
-		remotes map[string]string
-		want    bool
+		name       string
+		remotes    map[string]string
+		wantRemote string
 	}{
 		{
 			name: "same normalized repository",
@@ -708,7 +710,7 @@ func TestDetectClineMultiRootAttribution(t *testing.T) {
 				"/repo-a": "git@github.com:Netcracker/project.git",
 				"/repo-b": "https://github.com/Netcracker/project.git",
 			},
-			want: true,
+			wantRemote: "git@github.com:Netcracker/project.git",
 		},
 		{
 			name: "ambiguous repositories",
@@ -740,15 +742,35 @@ func TestDetectClineMultiRootAttribution(t *testing.T) {
 			if !reflect.DeepEqual(resolved, []string{"/repo-a", "/repo-b"}) {
 				t.Fatalf("resolved roots = %v", resolved)
 			}
-			if tt.want {
-				if len(events) != 1 || events[0].RepoDir != "/repo-a" ||
-					events[0].RepoRemote != "git@github.com:Netcracker/project.git" {
+			if len(events) != 1 {
+				t.Fatalf("events = %#v, want one event for policy evaluation", events)
+			}
+			if !reflect.DeepEqual(events[0].PolicyPaths, []string{"/repo-a", "/repo-b"}) {
+				t.Fatalf("policy paths = %#v", events[0].PolicyPaths)
+			}
+			if tt.wantRemote != "" {
+				if events[0].RepoDir != "/repo-a" || events[0].RepoRemote != tt.wantRemote {
 					t.Fatalf("events = %#v", events)
 				}
-			} else if len(events) != 0 {
-				t.Fatalf("events = %#v, want none", events)
+			} else if events[0].RepoDir != "" || events[0].RepoRemote != "" {
+				t.Fatalf("ambiguous event attribution = %#v, want empty", events[0])
 			}
 		})
+	}
+}
+
+func TestDetectCursorMCPPreservesAllWorkspaceRootsForPolicy(t *testing.T) {
+	stdin := []byte(`{"hook_event_name":"afterMCPExecution","session_id":"s1","workspace_roots":["/repo-a","","/repo-b","/repo-a"],"tool_name":"get_issue"}`)
+	events, err := detect("cursor", stdin, func(string) string { return "" }, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one", events)
+	}
+	want := []string{"/repo-a", "/repo-b"}
+	if !reflect.DeepEqual(events[0].PolicyPaths, want) {
+		t.Fatalf("policy paths = %#v, want %#v", events[0].PolicyPaths, want)
 	}
 }
 

@@ -221,6 +221,7 @@ func TestTelemetryEventCanonicalJSON(t *testing.T) {
 				SessionID:     "session-123",
 				RepoRemote:    "github.com/netcracker/project",
 				RepoDir:       "/must/not/be/serialized",
+				PolicyPaths:   []string{"/also/must/not/be/serialized"},
 				TS:            ts,
 				Payload:       SkillPayload{SkillName: "superpowers:brainstorming"},
 			},
@@ -291,6 +292,7 @@ func TestTelemetryEventCanonicalJSON(t *testing.T) {
 			}
 			expected := tt.event
 			expected.RepoDir = ""
+			expected.PolicyPaths = nil
 			expected.TS = canonicalTS
 			if !eventsEqual(decoded, expected) {
 				t.Fatalf("decoded event = %#v, want %#v", decoded, expected)

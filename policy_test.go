@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -222,6 +225,95 @@ func TestPolicyWithAllowlistDropsUnknownRemote(t *testing.T) {
 	ev := testSkillEvent(t, "codex", "s1", "", "", "skill", time.Now())
 	if eventAllowed(ev, policy, nil) {
 		t.Fatal("empty remote should be denied when an allowlist is configured")
+	}
+}
+
+func TestPathPolicyRetainsResolvedRemoteWithoutDisclosingPath(t *testing.T) {
+	workspace := t.TempDir()
+	ev := testSkillEvent(
+		t, "codex", "s1", "", workspace, "skill", time.Now(),
+	)
+	policy := telemetryPolicy{
+		RepoAllowList: []string{"github.com/Netcracker/*"},
+		PathAllowList: []string{filepath.ToSlash(workspace) + "/**"},
+	}
+
+	got := filterEventsByPolicy([]TelemetryEvent{ev}, policy, func(cwd string) []string {
+		if cwd != workspace {
+			t.Fatalf("cwd = %q, want %q", cwd, workspace)
+		}
+		return []string{"git@github.com:personal/project.git"}
+	})
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want 1", len(got))
+	}
+	if got[0].RepoRemote != "github.com/personal/project" {
+		t.Fatalf("repo remote = %q, want resolved remote", got[0].RepoRemote)
+	}
+	encoded, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), workspace) {
+		t.Fatalf("path-only event disclosed policy context: %s", encoded)
+	}
+}
+
+func TestPathPolicyUsesAnyAvailablePath(t *testing.T) {
+	allowed := t.TempDir()
+	other := t.TempDir()
+	ev := testSkillEvent(t, "codex", "s1", "", "", "skill", time.Now())
+	ev.PolicyPaths = []string{"", other, allowed, allowed}
+	policy := telemetryPolicy{
+		RepoAllowList: []string{"github.com/Netcracker/*"},
+		PathAllowList: []string{filepath.ToSlash(allowed) + "/**"},
+	}
+	if !eventAllowed(ev, policy, nil) {
+		t.Fatal("one matching policy path did not authorize the event")
+	}
+}
+
+func TestPathPolicyDoesNotOverrideDisabledOrMissingPath(t *testing.T) {
+	workspace := t.TempDir()
+	ev := testSkillEvent(t, "codex", "s1", "", "", "skill", time.Now())
+	policy := telemetryPolicy{
+		Disabled:      true,
+		RepoAllowList: []string{"github.com/Netcracker/*"},
+		PathAllowList: []string{"*"},
+	}
+	ev.PolicyPaths = []string{workspace}
+	if eventAllowed(ev, policy, nil) {
+		t.Fatal("path policy overrode the disabled policy")
+	}
+
+	policy.Disabled = false
+	ev.PolicyPaths = nil
+	if eventAllowed(ev, policy, nil) {
+		t.Fatal("standalone * authorized an event without a policy path")
+	}
+}
+
+func TestInvalidPathPolicyFailsClosedWithoutDisablingRepositoryPolicy(t *testing.T) {
+	workspace := t.TempDir()
+	policy := telemetryPolicy{
+		RepoAllowList:  []string{"github.com/Netcracker/*"},
+		PathAllowList:  []string{"*"},
+		PathAllowError: errors.New("invalid path policy"),
+	}
+
+	repositoryEvent, err := newSkillEvent(
+		"codex", "s1", "git@github.com:Netcracker/project.git", workspace, "skill", time.Now(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eventAllowed(repositoryEvent, policy, nil) {
+		t.Fatal("invalid path policy disabled an allowed repository event")
+	}
+
+	pathOnlyEvent := testSkillEvent(t, "codex", "s2", "", workspace, "skill", time.Now())
+	if eventAllowed(pathOnlyEvent, policy, nil) {
+		t.Fatal("invalid path policy authorized a path-only event")
 	}
 }
 

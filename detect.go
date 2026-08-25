@@ -106,12 +106,13 @@ func clineAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]Telemet
 		}
 		repoDir, repoRemote, attributable := clineRepository(p.WorkspaceRoots, remote)
 		if !attributable {
-			return nil, nil
+			repoDir, repoRemote = "", ""
 		}
 		ev, err := newSkillEvent("cline", p.TaskID, repoRemote, repoDir, skill, now)
 		if err != nil {
 			return nil, nil
 		}
+		ev.PolicyPaths = uniquePolicyPaths(p.WorkspaceRoots)
 		return []TelemetryEvent{ev}, nil
 	}
 
@@ -121,7 +122,7 @@ func clineAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]Telemet
 	}
 	repoDir, repoRemote, attributable := clineRepository(p.WorkspaceRoots, remote)
 	if !attributable {
-		return nil, nil
+		repoDir, repoRemote = "", ""
 	}
 	outcome := mcpFailed
 	if *p.PostToolUse.Success {
@@ -136,6 +137,7 @@ func clineAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]Telemet
 	if err != nil {
 		return nil, nil
 	}
+	ev.PolicyPaths = uniquePolicyPaths(p.WorkspaceRoots)
 	return []TelemetryEvent{ev}, nil
 }
 
@@ -493,6 +495,7 @@ func cursorAdapter(
 	if err != nil {
 		return nil, nil
 	}
+	ev.PolicyPaths = uniquePolicyPaths(p.WorkspaceRoots)
 	return []TelemetryEvent{ev}, nil
 }
 

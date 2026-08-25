@@ -155,7 +155,7 @@ func cursorEvidenceRepo(paths, workspaceRoots []string, remote remoteResolver) s
 		}
 		root, cached := rootCache[dir]
 		if !cached {
-			root = cursorGitRoot(dir)
+			root = cursorGitRoot(dir, roots)
 			rootCache[dir] = root
 		}
 		if root == "" || !cursorPathWithinAnyRoot(root, roots) {
@@ -231,12 +231,23 @@ func nearestExistingDirectory(path string) string {
 	return ""
 }
 
-func cursorGitRoot(directory string) string {
+func cursorGitRoot(directory string, workspaceRoots []string) string {
 	output, err := exec.Command("git", "-C", directory, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return ""
 	}
-	return filepath.Clean(strings.TrimSpace(string(output)))
+	root := filepath.Clean(strings.TrimSpace(string(output)))
+	for _, workspaceRoot := range workspaceRoots {
+		resolvedRoot, err := filepath.EvalSymlinks(workspaceRoot)
+		if err != nil {
+			continue
+		}
+		relative, err := filepath.Rel(resolvedRoot, root)
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return filepath.Join(workspaceRoot, relative)
+		}
+	}
+	return root
 }
 
 // cursorTranscriptEvents reads the transcript named by transcript_path and
@@ -306,6 +317,7 @@ func cursorTranscriptEventsForPath(
 	for _, name := range scan.Skills {
 		ev, err := newSkillEvent("cursor", p.SessionID, rem, repoDir, name, now)
 		if err == nil {
+			ev.PolicyPaths = uniquePolicyPaths(p.WorkspaceRoots)
 			events = append(events, ev)
 		}
 	}
