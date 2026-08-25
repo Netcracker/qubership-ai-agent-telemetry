@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidatePathAllowGrammar(t *testing.T) {
@@ -80,6 +82,48 @@ func TestPathPatternMatch(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Fatalf("pathPatternMatch(%q, %q) = %v, want %v", tt.pattern, tt.candidate, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPathPatternMatchCompletesForAdversarialPatterns(t *testing.T) {
+	tests := []struct {
+		name      string
+		pattern   string
+		candidate string
+	}{
+		{
+			name:      "segment wildcards",
+			pattern:   "/" + strings.Repeat("*a", 12) + "b",
+			candidate: "/" + strings.Repeat("a", 32),
+		},
+		{
+			name:      "recursive segment wildcards",
+			pattern:   "/" + strings.Repeat("**/", 12) + "missing",
+			candidate: "/" + strings.TrimSuffix(strings.Repeat("a/", 32), "/"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			done := make(chan struct{})
+			var got bool
+			var err error
+			go func() {
+				got, err = pathPatternMatch(tt.pattern, tt.candidate)
+				close(done)
+			}()
+
+			select {
+			case <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got {
+					t.Fatal("non-matching path matched")
+				}
+			case <-time.After(500 * time.Millisecond):
+				t.Fatal("path match exceeded 500 ms")
 			}
 		})
 	}

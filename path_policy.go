@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -67,6 +68,13 @@ func pathAllowed(paths, allow []string) bool {
 	if len(paths) == 0 || len(allow) == 0 || validatePathAllow(allow) != nil {
 		return false
 	}
+	canonicalPatterns := make([]string, 0, len(allow))
+	for _, pattern := range allow {
+		canonical, err := canonicalizePathPattern(pattern)
+		if err == nil {
+			canonicalPatterns = append(canonicalPatterns, canonical)
+		}
+	}
 	for _, candidate := range uniquePolicyPaths(paths) {
 		absolute, err := filepath.Abs(candidate)
 		if err != nil {
@@ -76,7 +84,7 @@ func pathAllowed(paths, allow []string) bool {
 		if err != nil {
 			continue
 		}
-		for _, pattern := range allow {
+		for _, pattern := range canonicalPatterns {
 			matched, err := pathPatternMatch(pattern, canonical)
 			if err == nil && matched {
 				return true
@@ -84,6 +92,53 @@ func pathAllowed(paths, allow []string) bool {
 		}
 	}
 	return false
+}
+
+func canonicalizePathPattern(pattern string) (string, error) {
+	compiled, err := parsePathPattern(pattern)
+	if err != nil || compiled.all {
+		return pattern, err
+	}
+	hostFlavor := pathPOSIX
+	if filepath.Separator == '\\' {
+		hostFlavor = pathWindows
+	}
+	if compiled.flavor != hostFlavor {
+		return pattern, nil
+	}
+
+	literalSegments := len(compiled.segments)
+	for i, segment := range compiled.segments {
+		if strings.Contains(segment, "*") {
+			literalSegments = i
+			break
+		}
+	}
+	prefix := formatPolicyPath(policyPath{
+		flavor:   compiled.flavor,
+		volume:   compiled.volume,
+		segments: compiled.segments[:literalSegments],
+	})
+	canonical, err := filepath.EvalSymlinks(filepath.Clean(filepath.FromSlash(prefix)))
+	if err != nil {
+		return "", err
+	}
+	parsed, err := parsePolicyPath(filepath.ToSlash(canonical), false)
+	if err != nil {
+		return "", err
+	}
+	parsed.segments = append(parsed.segments, compiled.segments[literalSegments:]...)
+	return formatPolicyPath(parsed), nil
+}
+
+func formatPolicyPath(path policyPath) string {
+	if path.volume == "/" {
+		return "/" + strings.Join(path.segments, "/")
+	}
+	if len(path.segments) == 0 {
+		return path.volume + "/"
+	}
+	return path.volume + "/" + strings.Join(path.segments, "/")
 }
 
 func uniquePolicyPaths(paths []string) []string {
@@ -235,17 +290,23 @@ func normalizePolicySegments(parts []string, pattern bool) ([]string, error) {
 }
 
 func matchPolicyPathSegments(pattern, candidate []string, flavor pathFlavor) bool {
-	if len(pattern) == 0 {
-		return len(candidate) == 0
-	}
-	if pattern[0] == "**" {
-		if matchPolicyPathSegments(pattern[1:], candidate, flavor) {
-			return true
+	matches := make([]bool, len(candidate)+1)
+	matches[0] = true
+	for _, patternSegment := range pattern {
+		next := make([]bool, len(candidate)+1)
+		if patternSegment == "**" {
+			next[0] = matches[0]
+			for i := 1; i <= len(candidate); i++ {
+				next[i] = matches[i] || next[i-1]
+			}
+		} else {
+			for i := 1; i <= len(candidate); i++ {
+				next[i] = matches[i-1] && pathSegmentMatch(patternSegment, candidate[i-1], flavor)
+			}
 		}
-		return len(candidate) > 0 && matchPolicyPathSegments(pattern, candidate[1:], flavor)
+		matches = next
 	}
-	return len(candidate) > 0 && pathSegmentMatch(pattern[0], candidate[0], flavor) &&
-		matchPolicyPathSegments(pattern[1:], candidate[1:], flavor)
+	return matches[len(candidate)]
 }
 
 func pathSegmentMatch(pattern, candidate string, flavor pathFlavor) bool {
@@ -253,27 +314,9 @@ func pathSegmentMatch(pattern, candidate string, flavor pathFlavor) bool {
 		pattern = strings.ToLower(pattern)
 		candidate = strings.ToLower(candidate)
 	}
-	for len(pattern) > 0 {
-		if pattern[0] != '*' {
-			if len(candidate) == 0 || pattern[0] != candidate[0] {
-				return false
-			}
-			pattern = pattern[1:]
-			candidate = candidate[1:]
-			continue
-		}
-		pattern = strings.TrimLeft(pattern, "*")
-		if pattern == "" {
-			return true
-		}
-		for i := 0; i <= len(candidate); i++ {
-			if pathSegmentMatch(pattern, candidate[i:], flavor) {
-				return true
-			}
-		}
-		return false
-	}
-	return candidate == ""
+	pattern = strings.ReplaceAll(pattern, `\`, `\\`)
+	matched, err := pathpkg.Match(pattern, candidate)
+	return err == nil && matched
 }
 
 func pathTextEqual(flavor pathFlavor, left, right string) bool {

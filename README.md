@@ -1,9 +1,9 @@
 # ai-agent-telemetry
 
 Records skill runs, command invocations, and MCP tool executions in Claude Code, Cline, Codex, and Cursor sessions.
-It sends the events to an OpenTelemetry collector. Collection is bounded by the installed hook and
-the machine repository policy. The default `configure` policy records repositories in the Netcracker GitHub
-organization and on hosts whose name contains `netcracker`, unless you set a different repository scope.
+It sends the events to an OpenTelemetry collector. Collection is bounded by the installed hook and the machine
+collection policy. The default repository policy records repositories in the Netcracker GitHub organization and on
+hosts whose name contains `netcracker`; optional path rules can authorize additional local workspaces.
 
 ## TL;DR
 
@@ -125,9 +125,10 @@ remote that points to an allowed organization repository, and telemetry records 
 organization remote instead of the personal fork remote.
 
 The precedence is: `AI_AGENT_TELEMETRY_DISABLED` disables collection globally;
-`AI_AGENT_TELEMETRY_REPO_ALLOW` overrides the configured scope for CI and automation; then
-`repo-allow` decides which remotes are collected. If no repository policy is configured,
-the built-in `github.com/Netcracker/*,*netcracker*/**` default applies.
+`AI_AGENT_TELEMETRY_REPO_ALLOW` overrides the configured repository scope for CI and automation; then
+`repo-allow` and `path-allow` authorize collection independently. In compact form, the rule is
+`collect = !disabled && (repository_allowed || path_allowed)`. If no repository policy is configured, the built-in
+`github.com/Netcracker/*,*netcracker*/**` default applies.
 
 To retain telemetry from an explicitly approved workspace even when repository detection fails,
 configure one or more local path patterns:

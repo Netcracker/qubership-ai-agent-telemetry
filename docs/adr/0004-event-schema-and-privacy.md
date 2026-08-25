@@ -6,7 +6,7 @@ Accepted
 
 **Date:** 2026-07-09
 
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-25
 
 **Owner:** denifilatoff
 
@@ -52,6 +52,16 @@ The process also emits these resource attributes:
 The outbox persists the same event content in local JSON files before flush. It stores `event.id` as `event_id` when
 the event is enqueued. Local-only helper fields, such as the working directory used for repository policy checks, are
 never serialized.
+
+The machine collection policy runs before enqueue and uses this rule:
+
+```text
+collect = !disabled && (repository_allowed || path_allowed)
+```
+
+Repository remotes, working directories, and harness workspace roots can be local policy inputs. Paths and path rules
+are never serialized. When only a path rule authorizes an event, `repo.remote` remains empty. Path authorization does
+not infer a repository or select an operation-specific root; that attribution remains [issue 66].
 
 ### Fields excluded
 
@@ -109,6 +119,8 @@ identified by a random UUID that cannot be traced back to a person or a device. 
 
 This is a deliberate minimum, not a starting point to extend. Adding a field that crosses the personal-data
 line requires a new ADR.
+
+[issue 66]: https://github.com/Netcracker/qubership-ai-agent-telemetry/issues/66
 
 ## Consequences
 
