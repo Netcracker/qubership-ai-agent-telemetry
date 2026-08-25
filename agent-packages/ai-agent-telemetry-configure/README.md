@@ -76,7 +76,8 @@ The CLI reads its collector settings from the environment or the provisioned
 - `AI_AGENT_TELEMETRY_REPO_ALLOW` — optional environment override for scripts and CI.
 - `path-allow` — optional local path allowlist, one absolute positive glob per line. Repeatable
   `configure --path-allow '<pattern>'` options replace the saved list, and `--clear-path-allow`
-  removes it. Path-only events omit `repo_remote`; local paths and rules are not serialized.
+  removes it. Path-authorized events retain a normalized `repo_remote` when Git attribution is available. Local paths
+  and rules are not serialized.
 
 Persist delivery overrides through the CLI instead of editing `env` directly:
 
