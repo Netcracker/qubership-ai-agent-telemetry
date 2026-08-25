@@ -69,10 +69,18 @@ Reserve one internal exception for the delivery probe. `agent=selftest` is valid
 directory. Adapters accept only `claude`, `codex`, and `cursor`; they cannot select the exception. Legacy reads accept
 only the same exact reserved pair.
 
-Apply repository policy to every harness event before enqueue. Policy can use the local working directory and all git
-remotes to select an allowed normalized remote, but only `repo.remote` is serialized. An unscoped policy can retain an
-event with an empty remote. The selftest probe bypasses repository policy because it tests machine delivery rather than
-repository activity.
+Apply collection policy to every harness event before enqueue:
+
+```text
+collect = !disabled && (repository_allowed || path_allowed)
+```
+
+Repository policy can use the local working directory and all git remotes to select an allowed normalized remote. Path
+policy can use harness workspace roots when repository attribution is missing or disallowed. Only `repo.remote` is
+serialized, and a path-only match retains a safe normalized remote when one is available. Local paths and path rules
+stay on the machine. An event can retain an empty remote when Git attribution is unavailable. The selftest probe
+bypasses collection policy because it tests machine delivery rather than repository activity. Path authorization does
+not choose an operation-specific root; that work remains [issue 66].
 
 Keep these content and identity fields excluded even when a hook supplies them:
 
@@ -90,6 +98,8 @@ number of distinct valid identifiers and detecting excessive cardinality.
 
 Token, cost, and usage attribution remain a separate decision. Those signals have different privacy and attribution
 properties across harnesses and are not part of this schema expansion.
+
+[issue 66]: https://github.com/Netcracker/qubership-ai-agent-telemetry/issues/66
 
 ## Consequences
 

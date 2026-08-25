@@ -58,7 +58,7 @@ There is no daemon. The configure workflow never updates the installation automa
 ## Configuration
 
 The CLI reads its collector settings from the environment or the provisioned
-`env` and `repo-allow` files under the config dir, delivered per machine out of band
+`env`, `repo-allow`, and `path-allow` files under the config dir, delivered per machine out of band
 (never git):
 
 - `AI_AGENT_TELEMETRY_ENDPOINT` — the OTLP/HTTP collector URL, for example
@@ -74,6 +74,10 @@ The CLI reads its collector settings from the environment or the provisioned
   a specific corporate host, but it can match an unrelated host with the same substring. Pass repeatable
   `--repo-allow <pattern>` values to replace the default scope.
 - `AI_AGENT_TELEMETRY_REPO_ALLOW` — optional environment override for scripts and CI.
+- `path-allow` — optional local path allowlist, one absolute positive glob per line. Repeatable
+  `configure --path-allow '<pattern>'` options replace the saved list, and `--clear-path-allow`
+  removes it. Path-authorized events retain a normalized `repo_remote` when Git attribution is available. Local paths
+  and rules are not serialized.
 
 Persist delivery overrides through the CLI instead of editing `env` directly:
 

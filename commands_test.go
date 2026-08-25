@@ -2,11 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +27,7 @@ func TestWriteEnvFileCreatesWithSecurePerms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := fi.Mode().Perm(); perm != 0o600 {
+	if perm := fi.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Fatalf("perm = %o, want 600 (the file may hold a token)", perm)
 	}
 }
@@ -134,6 +136,90 @@ func TestApplyConfigurePreservesExistingRepoAllow(t *testing.T) {
 	got := loadRepoAllowFile(filepath.Join(cfg, repoAllowFileName))
 	if strings.Join(got, ",") != allow {
 		t.Fatalf("repo allow = %v, want preserved %q", got, allow)
+	}
+}
+
+func TestApplyConfigurePathAllowReplacePreserveAndClear(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	first := pathAllowUpdate{Set: true, Patterns: []string{"/work/**", `C:\Users\Alice\**`}}
+	if err := applyConfigureWithPath(cfg, "", "", "", "", first, deliverySettingOverrides{}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(cfg, pathAllowFileName)
+	got, err := loadPathAllowFile(path)
+	if err != nil || !reflect.DeepEqual(got, first.Patterns) {
+		t.Fatalf("initial path allow = %#v, %v", got, err)
+	}
+
+	if err := applyConfigureWithPath(cfg, "https://otel.example/v1/logs", "", "", "", pathAllowUpdate{}, deliverySettingOverrides{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = loadPathAllowFile(path)
+	if err != nil || !reflect.DeepEqual(got, first.Patterns) {
+		t.Fatalf("preserved path allow = %#v, %v", got, err)
+	}
+
+	replacement := pathAllowUpdate{Set: true, Patterns: []string{"/projects/**"}}
+	if err := applyConfigureWithPath(cfg, "", "", "", "", replacement, deliverySettingOverrides{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = loadPathAllowFile(path)
+	if err != nil || !reflect.DeepEqual(got, replacement.Patterns) {
+		t.Fatalf("replacement path allow = %#v, %v", got, err)
+	}
+
+	if err := applyConfigureWithPath(cfg, "", "", "", "", pathAllowUpdate{Clear: true}, deliverySettingOverrides{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("path policy exists after clear: %v", err)
+	}
+}
+
+func TestApplyConfigureRejectsPathUpdateBeforeWritingAnything(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	initial := pathAllowUpdate{Set: true, Patterns: []string{"/work/**"}}
+	if err := applyConfigureWithPath(cfg, "", "", "", "", initial, deliverySettingOverrides{}); err != nil {
+		t.Fatal(err)
+	}
+
+	invalid := pathAllowUpdate{Set: true, Patterns: []string{"/work/[ab]"}}
+	err := applyConfigureWithPath(cfg, "https://must-not-be-written.invalid", "", "", "", invalid, deliverySettingOverrides{})
+	if err == nil {
+		t.Fatal("invalid replacement succeeded")
+	}
+	got, loadErr := loadPathAllowFile(filepath.Join(cfg, pathAllowFileName))
+	if loadErr != nil || !reflect.DeepEqual(got, initial.Patterns) {
+		t.Fatalf("previous path allow changed to %#v, %v", got, loadErr)
+	}
+	if endpoint := loadEnvFile(filepath.Join(cfg, "env"))["AI_AGENT_TELEMETRY_ENDPOINT"]; endpoint != "" {
+		t.Fatalf("endpoint was written before validation: %q", endpoint)
+	}
+	if _, err := os.Stat(filepath.Join(cfg, pathAllowFileName+".tmp")); !os.IsNotExist(err) {
+		t.Fatalf("temporary path policy remains: %v", err)
+	}
+
+	conflict := pathAllowUpdate{Set: true, Clear: true, Patterns: []string{"/work/**"}}
+	if err := applyConfigureWithPath(cfg, "", "", "", "", conflict, deliverySettingOverrides{}); err == nil {
+		t.Fatal("conflicting path update succeeded")
+	}
+}
+
+func TestParseConfigureFlagsSupportsPathAllowAndClear(t *testing.T) {
+	opts, err := parseConfigureFlags([]string{"--path-allow", "/work/**", "--path-allow=C:\\Users\\Alice\\**"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.PathAllowSet || opts.ClearPathAllow || !reflect.DeepEqual(opts.PathAllow, []string{"/work/**", `C:\Users\Alice\**`}) {
+		t.Fatalf("options = %#v", opts)
+	}
+
+	opts, err = parseConfigureFlags([]string{"--clear-path-allow"})
+	if err != nil || !opts.ClearPathAllow || opts.PathAllowSet {
+		t.Fatalf("clear options = %#v, %v", opts, err)
+	}
+	if _, err := parseConfigureFlags([]string{"--clear-path-allow", "--path-allow", "/work/**"}); err == nil {
+		t.Fatal("conflicting path flags succeeded")
 	}
 }
 
@@ -435,6 +521,57 @@ func TestGatherStatusReportsConfiguredState(t *testing.T) {
 	}
 	if r.Endpoint != "https://otel.example/v1/logs" {
 		t.Fatalf("endpoint = %q", r.Endpoint)
+	}
+}
+
+func TestGatherStatusReportsPathPolicyState(t *testing.T) {
+	s := &Outbox{Dir: t.TempDir()}
+	tests := []struct {
+		name   string
+		policy telemetryPolicy
+		want   string
+	}{
+		{name: "not configured", policy: telemetryPolicy{}, want: "not configured"},
+		{name: "configured", policy: telemetryPolicy{PathAllowList: []string{"/work/**"}}, want: "configured"},
+		{name: "invalid", policy: telemetryPolicy{PathAllowError: errors.New("permission denied")}, want: "invalid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report := gatherStatus(s, t.TempDir(), "", tt.policy, deliverySettings{})
+			if report.PathScope != tt.want {
+				t.Fatalf("path scope = %q, want %q", report.PathScope, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatStatusReportsPathPolicyWithoutLeakingCompactDetails(t *testing.T) {
+	configured := statusReport{
+		PathScope:     "configured",
+		PathAllowList: []string{"/Users/alice/work/**", `C:\Users\Alice\**`},
+	}
+	compact := formatStatus(configured, false)
+	if !strings.Contains(compact, "path_scope: configured") {
+		t.Fatalf("compact status = %q", compact)
+	}
+	if strings.Contains(compact, "/Users/alice") || strings.Contains(compact, `C:\Users\Alice`) {
+		t.Fatalf("compact status disclosed path patterns: %q", compact)
+	}
+	verbose := formatStatus(configured, true)
+	for _, want := range []string{"path_allow:", "    - /Users/alice/work/**", `    - C:\Users\Alice\**`} {
+		if !strings.Contains(verbose, want) {
+			t.Fatalf("verbose status = %q, want %q", verbose, want)
+		}
+	}
+
+	invalid := statusReport{PathScope: "invalid", PathAllowError: "/private/config/path-allow: permission denied"}
+	compact = formatStatus(invalid, false)
+	if !strings.Contains(compact, "path_scope: invalid") || strings.Contains(compact, "/private/config") {
+		t.Fatalf("compact invalid status = %q", compact)
+	}
+	verbose = formatStatus(invalid, true)
+	if !strings.Contains(verbose, "path_allow_error: /private/config/path-allow: permission denied") {
+		t.Fatalf("verbose invalid status = %q", verbose)
 	}
 }
 

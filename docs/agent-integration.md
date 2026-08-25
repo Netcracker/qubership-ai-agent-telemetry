@@ -152,10 +152,11 @@ durations do not drop an otherwise valid event.
 
 The adapter decodes only `taskId`, `workspaceRoots`, the tool name, success, duration, the three supported skill
 parameter names, and the two classic MCP identity fields. It does not decode or send the user ID, model, tool result,
-arguments, errors, workspace metadata, branch, commit, or Cline's associated remote URLs. A single workspace root is
-used only to resolve the Git remote under the normal repository policy. With multiple roots, all non-empty roots must
-resolve to one normalized repository; ambiguous or unresolved attribution produces no event. Local paths are not
-serialized.
+arguments, errors, workspace metadata, branch, commit, or Cline's associated remote URLs. A single workspace root can
+resolve the Git remote. With multiple roots, all non-empty roots must resolve to one normalized repository for remote
+attribution. Detection retains an event with empty repository attribution when resolution is ambiguous or fails, and
+passes every root to the collection policy. A repository or path rule must then authorize the event. Local paths are
+not serialized. Selecting an operation-specific root remains [issue 66].
 
 The hook discards stdout and stderr and exits with code `0`. Cline treats a successful empty response as
 `cancel=false`, so telemetry errors cannot corrupt the response or block a turn. Empty output removes the telemetry
@@ -202,12 +203,12 @@ skill load:
 ^Skill Name:\s*(\S+)
 ```
 
-Unlike Codex, the transcript carries no git data. The CLI uses operation paths in each
-transcript to resolve one unambiguous Git root within `workspace_roots`; otherwise it
-leaves repository identity empty. The repository allow policy still determines whether an
-unattributed event may be delivered. The manual-block scan is gated on the block being
-present, not bounded to it, so a stray `Skill Name:` line elsewhere in the same message
-would also match — the cost is a spurious name, never a missed turn.
+Unlike Codex, the transcript carries no git data. The CLI uses operation paths in each transcript to resolve one
+unambiguous Git root within `workspace_roots`; otherwise it leaves repository identity empty. Repository and path
+rules independently determine whether an unattributed event may be delivered. Local operation and workspace paths
+remain policy inputs and are not serialized. Selecting an operation-specific root remains [issue 66]. The manual-block
+scan is gated on the block being present, not bounded to it, so a stray `Skill Name:` line elsewhere in the same
+message would also match. The cost is a spurious name, never a missed turn.
 
 Cursor requires a numeric top-level `version` in `.cursor/hooks.json`. The CLI preserves an
 existing numeric value and adds `version: 1` when it is absent, so no manual step is needed. The
@@ -251,3 +252,4 @@ command aligned with the CLI-managed hooks while existing consumers migrate.
 
 [Codex spec]: superpowers/specs/2026-06-16-codex-session-parsing.md
 [Cursor workaround]: superpowers/decisions/2026-06-17-cursor-hooks-version-workaround.md
+[issue 66]: https://github.com/Netcracker/qubership-ai-agent-telemetry/issues/66

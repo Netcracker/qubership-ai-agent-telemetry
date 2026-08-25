@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -217,6 +218,9 @@ func TestCursorTranscriptEventsWithoutOperationEvidenceIsUnattributed(t *testing
 	if e.Agent != "cursor" || e.SessionID != "c1" || skillName(t, e) != "adr-authoring" ||
 		e.RepoRemote != "" || e.RepoDir != "" {
 		t.Fatalf("event = %+v", e)
+	}
+	if !reflect.DeepEqual(e.PolicyPaths, []string{"/repo"}) {
+		t.Fatalf("policy paths = %#v, want workspace root", e.PolicyPaths)
 	}
 }
 
