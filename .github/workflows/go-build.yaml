@@ -119,7 +119,7 @@ jobs:
         env:
           HOME: ${{ runner.temp }}/hook-home
           USERPROFILE: ${{ runner.temp }}/hook-user-profile
-        run: go test ./... -run '^Test.*(Hook|Configure($|[A-Z])|Path)' -count=1
+        run: go test ./... -run '^Test.*(Hook|Configure($|[A-Z])|Path(Allow|Pattern|Policy))' -count=1
 
   # This stable, always-created check is the branch-protection gate. The test
   # jobs are intentionally path-filtered, so their own skipped state cannot be
