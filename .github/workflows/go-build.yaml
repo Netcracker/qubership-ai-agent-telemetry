@@ -92,13 +92,13 @@ jobs:
         run: go test ./...
 
   hook-platform-tests:
-    name: "Global hooks (${{ matrix.os }})"
+    name: "Go suite (${{ matrix.os }})"
     needs: changes
     if: ${{ needs.changes.outputs.go == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        # Linux hook coverage is part of the full build job above.
+        # Linux coverage is part of the full build job above.
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -115,11 +115,11 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: "Test global hook files"
+      - name: "Test"
         env:
           HOME: ${{ runner.temp }}/hook-home
           USERPROFILE: ${{ runner.temp }}/hook-user-profile
-        run: go test ./... -run '^Test.*(Hook|Configure($|[A-Z])|Path(Allow|Pattern|Policy))' -count=1
+        run: go test ./... -count=1
 
   # This stable, always-created check is the branch-protection gate. The test
   # jobs are intentionally path-filtered, so their own skipped state cannot be
