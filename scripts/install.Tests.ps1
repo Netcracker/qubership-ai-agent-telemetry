@@ -222,6 +222,20 @@ function Test-StagedVersionOverridePrecedence {
   }
 }
 
+function Test-ProgressOutput {
+  $fixture = New-Fixture
+  try {
+    $result = Invoke-Fixture $fixture $Installer @('install')
+    Assert-True ($result.Code -eq 0) "progress run failed: $($result.Output)"
+    Assert-Contains $result.Output 'Downloading ai-agent-telemetry-windows-amd64.exe...' 'binary download stage missing'
+    Assert-Contains $result.Output 'Downloading SHA256SUMS...' 'checksum download stage missing'
+    Assert-Contains $result.Output 'Verifying ai-agent-telemetry-windows-amd64.exe checksum...' 'verification stage missing'
+    Assert-Contains $result.Output 'Starting ai-agent-telemetry install...' 'lifecycle stage missing'
+  } finally {
+    Remove-Item -Recurse -Force $fixture.Root -ErrorAction SilentlyContinue
+  }
+}
+
 function Test-NoResponseOrSecretLeakage {
   $fixture = New-Fixture
   try {
@@ -242,5 +256,6 @@ Test-Syntax
 Test-DefaultingAndExactArguments
 Test-UrlsChecksumExitAndCleanup
 Test-StagedVersionOverridePrecedence
+Test-ProgressOutput
 Test-NoResponseOrSecretLeakage
 Write-Output 'PASS: thin PowerShell bootstrap transport tests'

@@ -120,7 +120,7 @@ func normalizeTelemetryDeps(deps telemetryDeps) telemetryDeps {
 	}
 	if deps.PromptEndpoint == nil {
 		deps.PromptEndpoint = func(context.Context) (string, error) {
-			return readLine("Collector endpoint: "), nil
+			return readLine("Collector endpoint (for example, https://collector.example/v1/logs): "), nil
 		}
 	}
 	if deps.PromptToken == nil {

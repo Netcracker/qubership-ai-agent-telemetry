@@ -55,7 +55,7 @@ func configureEndpoint(flag string) string {
 	if endpoint := resolveEndpoint(""); endpoint != "" {
 		return endpoint
 	}
-	return readLine("Collector endpoint (leave blank to skip): ")
+	return readLine("Collector endpoint (for example, https://collector.example/v1/logs; leave blank to skip): ")
 }
 
 // readLine prompts on stderr and reads one line from the controlling terminal.
