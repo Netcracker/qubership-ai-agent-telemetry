@@ -134,10 +134,13 @@ func executePreparedLifecycle(ctx context.Context, opts lifecycleOptions, deps l
 				Detail: "managed CLI prerequisite was not installed; native hooks were preserved",
 			})
 		} else {
-			results = append(results, runComponent(ctx, opts, componentTelemetry, deps.Telemetry))
-		}
-		if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill); ok {
-			results = append(results, result)
+			telemetryResult := runComponent(ctx, opts, componentTelemetry, deps.Telemetry)
+			results = append(results, telemetryResult)
+			if telemetryResult.State == operationOK {
+				if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill); ok {
+					results = append(results, result)
+				}
+			}
 		}
 	case actionUninstall:
 		telemetryResult := runComponent(ctx, opts, componentTelemetry, deps.Telemetry)

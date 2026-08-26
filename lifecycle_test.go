@@ -60,6 +60,12 @@ func TestRunLifecycleSkipsTelemetryAfterManagedCLIFailure(t *testing.T) {
 		"managed:cli": errors.New("CLI copy failed"),
 	}
 	deps := fakeLifecycleDeps(&calls, nil, failures)
+	deps.ConfigureSkill = configureSkillService{
+		Install: func(context.Context, lifecycleOptions) operationResult {
+			calls = append(calls, "install:configure-skill")
+			return operationResult{Name: "configure-skill", State: operationOK}
+		},
+	}
 
 	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionInstall}, deps)
 	if summary.Err == nil {
@@ -80,6 +86,28 @@ func TestRunLifecycleSkipsTelemetryAfterManagedCLIFailure(t *testing.T) {
 	}
 	if detail := summary.Results[1].Detail; !strings.Contains(detail, "managed CLI") {
 		t.Fatalf("telemetry skip detail = %q, want managed CLI prerequisite", detail)
+	}
+}
+
+func TestRunLifecycleSkipsConfigureSkillAfterTelemetryFailure(t *testing.T) {
+	var calls []string
+	deps := fakeLifecycleDeps(&calls, nil, map[string]error{
+		"install:telemetry": errors.New("legacy telemetry migration failed"),
+	})
+	deps.ConfigureSkill = configureSkillService{
+		Install: func(context.Context, lifecycleOptions) operationResult {
+			calls = append(calls, "install:configure-skill")
+			return operationResult{Name: "configure-skill", State: operationOK}
+		},
+	}
+
+	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionInstall}, deps)
+	if summary.Err == nil || !strings.Contains(summary.Err.Error(), "legacy telemetry migration failed") {
+		t.Fatalf("runLifecycle() error = %v, want telemetry failure", summary.Err)
+	}
+	want := []string{"preflight:telemetry", "managed:cli", "install:telemetry"}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want configure skill skipped after telemetry failure %v", calls, want)
 	}
 }
 
