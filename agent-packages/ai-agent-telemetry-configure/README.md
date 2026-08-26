@@ -53,7 +53,9 @@ The default `install` lifecycle puts the binary on `PATH`, installs every compon
 registers all supported hooks. The skill diagnoses and repairs any gaps reported by the CLI. `ingest` writes
 normalized events to a machine-global outbox and opportunistically flushes them over OTLP/HTTPS.
 There is no daemon. The configure workflow never updates the installation automatically; use
-`ai-agent-telemetry update` or `ai-agent-telemetry update --cli-only` only for an explicit update request.
+`ai-agent-telemetry update` only for an explicit update request. If that update reports a legacy APM
+migration failure, the skill removes only the exact legacy telemetry dependency after APM is available,
+retries the update, and verifies native hooks.
 
 ## Configuration
 
