@@ -4,6 +4,8 @@
 
 Proposed
 
+<!-- markdownlint-disable MD001 -->
+
 #### Date
 
 #### Owner
@@ -19,6 +21,8 @@ Qubership AI Agent Telemetry maintainers; approval pending.
 - [0002: CLI invocation via bare binary name on PATH](0002-bare-binary-on-path.md)
 - [0005: CLI-managed global hooks](0005-cli-managed-global-hooks.md), superseded by this ADR when accepted
 - [0008: Cline hook installation and removal](0008-cline-hook-installation-and-removal.md)
+
+<!-- markdownlint-enable MD001 -->
 
 ## Context
 
