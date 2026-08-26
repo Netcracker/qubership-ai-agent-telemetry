@@ -3,8 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"io"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,38 +12,57 @@ import (
 	"testing"
 )
 
-func TestInstallManagedHooksWithCleansBeforeInstalling(t *testing.T) {
+func TestInstallManagedHooksWithMigratesBeforeInstalling(t *testing.T) {
 	var calls []string
-	var warnings strings.Builder
-	results := installManagedHooksWith(
+	results, err := installManagedHooksWith(
 		"/home/test",
 		[]hookTarget{hookClaude},
-		&warnings,
-		func(_ string, warnings io.Writer) {
-			calls = append(calls, "cleanup")
-			_, _ = fmt.Fprintln(warnings, "cleanup warning")
+		func(_ string) error {
+			calls = append(calls, "migrate")
+			return nil
 		},
 		func(_ string, _ []hookTarget) []hookInstallResult {
 			calls = append(calls, "install")
 			return []hookInstallResult{{Target: hookClaude, Path: "/hook"}}
 		},
 	)
-	if !reflect.DeepEqual(calls, []string{"cleanup", "install"}) {
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, []string{"migrate", "install"}) {
 		t.Fatalf("calls = %v", calls)
 	}
 	if err := hookInstallError(results); err != nil {
-		t.Fatalf("hook result changed by cleanup warning: %v", err)
+		t.Fatal(err)
 	}
 }
 
-func TestInstallManagedHooksWithSkipsCleanupForNoTargets(t *testing.T) {
-	cleanupCalled := false
+func TestInstallManagedHooksWithBlocksWritesOnMigrationFailure(t *testing.T) {
 	installCalled := false
-	results := installManagedHooksWith(
+	results, err := installManagedHooksWith(
+		"/home/test",
+		[]hookTarget{hookClaude},
+		func(string) error { return errors.New("legacy APM migration failed") },
+		func(string, []hookTarget) []hookInstallResult { installCalled = true; return nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "legacy APM migration failed") {
+		t.Fatalf("migration error = %v", err)
+	}
+	if installCalled {
+		t.Fatal("hook installation ran after migration failure")
+	}
+	if results != nil {
+		t.Fatalf("results = %#v, want nil", results)
+	}
+}
+
+func TestInstallManagedHooksWithSkipsMigrationForNoTargets(t *testing.T) {
+	migrationCalled := false
+	installCalled := false
+	results, err := installManagedHooksWith(
 		"/home/test",
 		nil,
-		io.Discard,
-		func(string, io.Writer) { cleanupCalled = true },
+		func(string) error { migrationCalled = true; return nil },
 		func(_ string, targets []hookTarget) []hookInstallResult {
 			installCalled = true
 			if len(targets) != 0 {
@@ -53,8 +71,11 @@ func TestInstallManagedHooksWithSkipsCleanupForNoTargets(t *testing.T) {
 			return nil
 		},
 	)
-	if cleanupCalled {
-		t.Fatal("cleanup called with no targets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrationCalled {
+		t.Fatal("migration called with no targets")
 	}
 	if !installCalled {
 		t.Fatal("install not called with empty targets")

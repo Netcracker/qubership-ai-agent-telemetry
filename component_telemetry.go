@@ -19,7 +19,7 @@ type telemetryDeps struct {
 	PromptEndpoint func(context.Context) (string, error)
 	PromptToken    func(context.Context) (string, error)
 	Configure      func(string, string, string, string, string, deliverySettingOverrides) error
-	InstallHooks   func(string, []hookTarget, io.Writer) []hookInstallResult
+	InstallHooks   func(string, []hookTarget, io.Writer) ([]hookInstallResult, error)
 	UninstallHooks func(string, []hookTarget, io.Writer) []hookInstallResult
 	Warnings       io.Writer
 }
@@ -69,7 +69,10 @@ func newTelemetryComponent(deps telemetryDeps) componentOps {
 		if err := deps.Configure(deps.ConfigDir(), endpoint, "", token, "", deliverySettingOverrides{}); err != nil {
 			return telemetryFailure("cannot apply telemetry configuration", err)
 		}
-		results := deps.InstallHooks(deps.Home(), opts.Harnesses, deps.Warnings)
+		results, err := deps.InstallHooks(deps.Home(), opts.Harnesses, deps.Warnings)
+		if err != nil {
+			return telemetryFailure("cannot install telemetry hooks", err)
+		}
 		if err := hookInstallError(results); err != nil {
 			return telemetryFailure("cannot install telemetry hooks", err)
 		}

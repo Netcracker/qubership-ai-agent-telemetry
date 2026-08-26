@@ -115,21 +115,22 @@ func installHooks(home string, targets []hookTarget) []hookInstallResult {
 	return results
 }
 
-func installManagedHooks(home string, targets []hookTarget, warnings io.Writer) []hookInstallResult {
-	return installManagedHooksWith(home, targets, warnings, cleanupLegacyTelemetryAPM, installHooks)
+func installManagedHooks(home string, targets []hookTarget, _ io.Writer) ([]hookInstallResult, error) {
+	return installManagedHooksWith(home, targets, migrateLegacyTelemetryAPM, installHooks)
 }
 
 func installManagedHooksWith(
 	home string,
 	targets []hookTarget,
-	warnings io.Writer,
-	cleanup func(string, io.Writer),
+	migrate func(string) error,
 	install func(string, []hookTarget) []hookInstallResult,
-) []hookInstallResult {
+) ([]hookInstallResult, error) {
 	if len(targets) > 0 {
-		cleanup(home, warnings)
+		if err := migrate(home); err != nil {
+			return nil, err
+		}
 	}
-	return install(home, targets)
+	return install(home, targets), nil
 }
 
 func hookInstallError(results []hookInstallResult) error {

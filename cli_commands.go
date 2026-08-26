@@ -249,7 +249,10 @@ func newConfigureCommand(deps appDeps) *cobra.Command {
 			); err != nil {
 				return fmt.Errorf("configure: %w", err)
 			}
-			results := installManagedHooks(deps.Home(), targets, cmd.ErrOrStderr())
+			results, err := installManagedHooks(deps.Home(), targets, cmd.ErrOrStderr())
+			if err != nil {
+				return fmt.Errorf("configure hooks: %w", err)
+			}
 			outbox, err := DefaultOutbox()
 			if err != nil {
 				return fmt.Errorf("outbox: %w", err)
@@ -309,7 +312,10 @@ func newHooksCommand(deps appDeps) *cobra.Command {
 			if home == "" {
 				return fmt.Errorf("hooks: no user home directory available")
 			}
-			results := installManagedHooks(home, targets, cmd.ErrOrStderr())
+			results, err := installManagedHooks(home, targets, cmd.ErrOrStderr())
+			if err != nil {
+				return fmt.Errorf("hooks: %w", err)
+			}
 			for _, result := range results {
 				state := "unchanged"
 				if result.Err != nil {

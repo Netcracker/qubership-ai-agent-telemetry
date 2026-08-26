@@ -32,9 +32,9 @@ func TestTelemetryComponentInteractivePreflightRetainsConfigurationUntilInstall(
 			configuredEndpoint, configuredToken = endpoint, token
 			return nil
 		},
-		InstallHooks: func(_ string, targets []hookTarget, _ io.Writer) []hookInstallResult {
+		InstallHooks: func(_ string, targets []hookTarget, _ io.Writer) ([]hookInstallResult, error) {
 			calls = append(calls, "hooks:"+joinHookTargets(targets))
-			return nil
+			return nil, nil
 		},
 	})
 	opts := lifecycleOptions{Action: actionInstall, Harnesses: []hookTarget{hookClaude}}
@@ -80,9 +80,9 @@ func TestTelemetryComponentInstallUsesFinalHarnessSelection(t *testing.T) {
 	component := newTelemetryComponent(telemetryDeps{
 		Endpoint:  func() string { return "https://collector.example/v1/logs" },
 		Configure: func(string, string, string, string, string, deliverySettingOverrides) error { return nil },
-		InstallHooks: func(_ string, targets []hookTarget, _ io.Writer) []hookInstallResult {
+		InstallHooks: func(_ string, targets []hookTarget, _ io.Writer) ([]hookInstallResult, error) {
 			installed = append([]hookTarget(nil), targets...)
-			return nil
+			return nil, nil
 		},
 	})
 	opts := lifecycleOptions{Action: actionUpdate, Harnesses: []hookTarget{hookCursor, hookClaude}}
@@ -94,6 +94,24 @@ func TestTelemetryComponentInstallUsesFinalHarnessSelection(t *testing.T) {
 	}
 	if !reflect.DeepEqual(installed, opts.Harnesses) {
 		t.Fatalf("installed = %v, want %v", installed, opts.Harnesses)
+	}
+}
+
+func TestTelemetryComponentInstallReturnsLegacyMigrationFailure(t *testing.T) {
+	component := newTelemetryComponent(telemetryDeps{
+		Endpoint:  func() string { return "https://collector.example/v1/logs" },
+		Configure: func(string, string, string, string, string, deliverySettingOverrides) error { return nil },
+		InstallHooks: func(string, []hookTarget, io.Writer) ([]hookInstallResult, error) {
+			return nil, errors.New("legacy telemetry migration failed")
+		},
+	})
+	opts := lifecycleOptions{Action: actionInstall, Harnesses: []hookTarget{hookClaude}}
+	if err := component.Preflight(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	result := component.Install(context.Background(), opts)
+	if result.State != operationFailed || !strings.Contains(result.Err.Error(), "legacy telemetry migration failed") {
+		t.Fatalf("Install() = %#v", result)
 	}
 }
 
