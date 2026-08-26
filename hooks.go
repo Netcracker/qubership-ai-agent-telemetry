@@ -401,17 +401,6 @@ func knownHookTarget(target hookTarget) bool {
 	return false
 }
 
-type configureOptions struct {
-	Endpoint       string
-	CAPath         string
-	RepoAllow      string
-	PathAllow      []string
-	PathAllowSet   bool
-	ClearPathAllow bool
-	Hooks          []hookTarget
-	Delivery       deliverySettingOverrides
-}
-
 type deliverySettingOverrides struct {
 	BufferCap    string
 	FlushTimeout string
