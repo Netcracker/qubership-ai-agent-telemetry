@@ -77,6 +77,39 @@ func TestApplyConfigureWritesEndpointTokenAndCA(t *testing.T) {
 	}
 }
 
+func TestApplyConfigureRejectsInvalidEndpointBeforeWriting(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), pkgName)
+	if err := applyConfigure(cfg, "https://old.example/v1/logs", "", "old-token", "", deliverySettingOverrides{}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(cfg, "env")
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, endpoint := range []string{
+		"http://collector.example/v1/logs",
+		"https:///v1/logs",
+		"https://:4318/v1/logs",
+		"https://collector.example/v1/traces",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			err := applyConfigure(cfg, endpoint, "", "new-token", "", deliverySettingOverrides{})
+			if err == nil || !strings.Contains(err.Error(), "https://collector.example/v1/logs") {
+				t.Fatalf("applyConfigure() error = %v, want endpoint example", err)
+			}
+			got, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if string(got) != string(want) {
+				t.Fatalf("configuration changed after invalid endpoint:\n%s", got)
+			}
+		})
+	}
+}
+
 func TestApplyConfigureWritesDeliverySettings(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), pkgName)
 	delivery := deliverySettingOverrides{BufferCap: "1000", FlushTimeout: "30s"}

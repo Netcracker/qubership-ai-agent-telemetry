@@ -160,7 +160,8 @@ jobs:
             "curl -fsSL file://$PWD/scripts/install.sh | AI_AGENT_TELEMETRY_INSTALL_BASE_URL=http://127.0.0.1:8765 AI_AGENT_TELEMETRY_INSTALL_VERSION=v0.2.0 sh" \
             /dev/null)
           printf '%s\n' "$output"
-          printf '%s' "$output" | grep -F 'Collector endpoint:' >/dev/null
+          printf '%s' "$output" |
+            grep -F 'Collector endpoint (for example, https://collector.example/v1/logs):' >/dev/null
           test -f "$XDG_CONFIG_HOME/ai-agent-telemetry/env"
 
       - name: Uninstall and purge through the canonical bootstrap
@@ -323,12 +324,188 @@ jobs:
           }
           if ((& $managed version) -ne 'v0.2.0') { throw "failed lifecycle did not retain the v0.2.0 CLI" }
 
+  wsl-lifecycle:
+    name: WSL Ubuntu 24.04 lifecycle
+    needs: changes
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.lifecycle == 'true' }}
+    runs-on: windows-2025
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build local Linux release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = 'test-release/latest/download'
+          New-Item -ItemType Directory -Force -Path $release | Out-Null
+          $asset = Join-Path $release 'ai-agent-telemetry-linux-amd64'
+          $env:GOOS = 'linux'
+          $env:GOARCH = 'amd64'
+          $env:CGO_ENABLED = '0'
+          go build -trimpath -ldflags '-s -w -X main.version=v0.2.0' -o $asset .
+          if ($LASTEXITCODE -ne 0) { throw "Linux build returned $LASTEXITCODE" }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText(
+            (Join-Path $release 'SHA256SUMS'),
+            "$hash  ai-agent-telemetry-linux-amd64`n",
+            [Text.Encoding]::ASCII
+          )
+          Copy-Item scripts/install.sh (Join-Path $release 'install.sh')
+
+      - name: Install Ubuntu 24.04 in WSL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          wsl.exe --install --distribution Ubuntu-24.04 --no-launch --web-download
+          if ($LASTEXITCODE -ne 0) { throw "WSL install returned $LASTEXITCODE" }
+          wsl.exe --distribution Ubuntu-24.04 --user root -- uname -r
+          if ($LASTEXITCODE -ne 0) { throw "Ubuntu initialization returned $LASTEXITCODE" }
+
+      - name: Verify zsh bootstrap, prompt, status, and selftest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:WSLENV = 'GITHUB_WORKSPACE/p'
+          $test = @'
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y ca-certificates curl git openssl python3 util-linux zsh
+          git clone --depth 1 --branch v1.20.0 https://github.com/romkatv/powerlevel10k.git /root/powerlevel10k
+          test "$(git -C /root/powerlevel10k rev-parse HEAD)" = 35833ea15f14b71dbcebc7e54c104d8d56ca5268
+          printf '%s\n' \
+            'POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true' \
+            'POWERLEVEL9K_DISABLE_GITSTATUS=true' \
+            'source /root/powerlevel10k/powerlevel10k.zsh-theme' > /root/.zshrc
+
+          export HOME=/root
+          export XDG_CACHE_HOME=/tmp/qaat-v120-cache
+          export XDG_CONFIG_HOME=/tmp/qaat-v120-config
+          export XDG_DATA_HOME=/tmp/qaat-v120-data
+          legacy_installer=https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.sh
+          legacy_output=$(AI_AGENT_TELEMETRY_ENDPOINT=https://localhost:8443/v1/logs \
+            TERM=xterm-256color zsh -ic \
+            "curl -fsSL $legacy_installer | sh -s -- install --components telemetry --non-interactive" \
+            2>&1)
+          printf '%s\n' "$legacy_output"
+          test "$(/root/.local/bin/ai-agent-telemetry version)" = v1.2.0
+
+          pids=
+          trap 'kill $pids 2>/dev/null || true' EXIT
+          python3 -m http.server 8765 --directory test-release >/tmp/qaat-release.log 2>&1 &
+          pids="$pids $!"
+          for _ in 1 2 3 4 5; do
+            curl -fsS http://127.0.0.1:8765/latest/download/SHA256SUMS >/dev/null && break
+            sleep 1
+          done
+
+          export XDG_CACHE_HOME=/tmp/qaat-cache
+          export XDG_CONFIG_HOME=/tmp/qaat-config
+          export XDG_DATA_HOME=/tmp/qaat-data
+          export AI_AGENT_TELEMETRY_ENDPOINT=https://localhost:8443/v1/logs
+          export AI_AGENT_TELEMETRY_INSTALL_BASE_URL=http://127.0.0.1:8765
+          install_output=$(TERM=xterm-256color zsh -ic \
+            'curl -fsSL http://127.0.0.1:8765/latest/download/install.sh | sh' 2>&1)
+          printf '%s\n' "$install_output"
+          printf '%s\n' "$install_output" | awk '
+            BEGIN {
+              expected[1] = "Downloading ai-agent-telemetry-linux-amd64..."
+              expected[2] = "Downloading SHA256SUMS..."
+              expected[3] = "Verifying ai-agent-telemetry-linux-amd64 checksum..."
+              expected[4] = "Starting ai-agent-telemetry install..."
+              expected[5] = "Starting managed-cli..."
+              expected[6] = "Starting telemetry..."
+              expected[7] = "Starting configure-skill..."
+              stage = 1
+            }
+            $0 == expected[stage] { stage++ }
+            END { exit stage == 8 ? 0 : 1 }
+          '
+
+          managed=/root/.local/bin/ai-agent-telemetry
+          test "$($managed version)" = v0.2.0
+          unset AI_AGENT_TELEMETRY_ENDPOINT
+          status_output=$($managed status)
+          printf '%s\n' "$status_output"
+          printf '%s' "$status_output" | grep -F 'endpoint: https://localhost:8443/v1/logs' >/dev/null
+
+          export XDG_CACHE_HOME=/tmp/qaat-pty-cache
+          export XDG_CONFIG_HOME=/tmp/qaat-pty-config
+          export XDG_DATA_HOME=/tmp/qaat-pty-data
+          prompt_output=$(printf 'https://localhost:8443/v1/logs\n\n' | script -qfec \
+            "TERM=xterm-256color zsh -ic 'curl -fsSL http://127.0.0.1:8765/latest/download/install.sh | sh'" \
+            /dev/null)
+          printf '%s\n' "$prompt_output"
+          printf '%s' "$prompt_output" |
+            grep -F 'Collector endpoint (for example, https://collector.example/v1/logs):' >/dev/null
+
+          export XDG_CACHE_HOME=/tmp/qaat-configure-cache
+          export XDG_CONFIG_HOME=/tmp/qaat-configure-config
+          configure_prompt_output=$(printf '\n\n' | script -qfec "$managed configure --hooks=none" /dev/null)
+          printf '%s\n' "$configure_prompt_output"
+          printf '%s' "$configure_prompt_output" |
+            grep -F 'Collector endpoint (for example, https://collector.example/v1/logs; leave blank to skip):' \
+              >/dev/null
+
+          export XDG_CACHE_HOME=/tmp/qaat-cache
+          export XDG_CONFIG_HOME=/tmp/qaat-config
+          export XDG_DATA_HOME=/tmp/qaat-data
+          mkdir -p /tmp/qaat-tls
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout /tmp/qaat-tls/key.pem -out /tmp/qaat-tls/ca.pem \
+            -subj /CN=localhost -addext subjectAltName=DNS:localhost >/dev/null 2>&1
+          python3 - /tmp/qaat-tls/ca.pem /tmp/qaat-tls/key.pem <<'PY' >/tmp/qaat-tls.log 2>&1 &
+          import http.server
+          import ssl
+          import sys
+
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  self.send_response(200)
+                  self.end_headers()
+
+              def log_message(self, format, *args):
+                  pass
+
+          server = http.server.HTTPServer(("127.0.0.1", 8443), Handler)
+          context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+          context.load_cert_chain(sys.argv[1], sys.argv[2])
+          server.socket = context.wrap_socket(server.socket, server_side=True)
+          server.serve_forever()
+          PY
+          pids="$pids $!"
+          for _ in 1 2 3 4 5; do
+            curl -fsS --cacert /tmp/qaat-tls/ca.pem -X POST https://localhost:8443/v1/logs >/dev/null && break
+            sleep 1
+          done
+
+          $managed configure --ca=/tmp/qaat-tls/ca.pem --hooks=none >/dev/null
+          selftest_output=$($managed selftest)
+          printf '%s\n' "$selftest_output"
+          printf '%s' "$selftest_output" |
+            grep -F 'selftest: ok: probe accepted by the collector and cleared from the outbox' >/dev/null
+          '@
+          $test | wsl.exe --distribution Ubuntu-24.04 --user root -- bash -s
+          if ($LASTEXITCODE -ne 0) { throw "WSL lifecycle test returned $LASTEXITCODE" }
+
   # This stable, always-created check is the branch-protection gate. The test
   # jobs are intentionally path-filtered, so their own skipped state cannot be
   # required directly.
   ci-gate:
     name: Installer CI Gate
-    needs: [changes, posix-lifecycle, windows-lifecycle]
+    needs: [changes, posix-lifecycle, windows-lifecycle, wsl-lifecycle]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -336,7 +513,7 @@ jobs:
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
       RUN_TESTS: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.lifecycle == 'true' }}
-      JOB_RESULTS: ${{ needs.posix-lifecycle.result }} ${{ needs.windows-lifecycle.result }}
+      JOB_RESULTS: ${{ needs.posix-lifecycle.result }} ${{ needs.windows-lifecycle.result }} ${{ needs.wsl-lifecycle.result }}
     steps:
       - name: Fail when a required job did not succeed
         shell: bash
