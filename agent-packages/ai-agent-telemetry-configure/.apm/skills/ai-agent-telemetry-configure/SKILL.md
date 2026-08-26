@@ -200,9 +200,9 @@ lifecycle command:
 ai-agent-telemetry update
 ```
 
-This updates the managed CLI and every selected component. `update` performs verified release downloads
-and mutates the installation, so run it only for an explicit update request. In Codex, the
-execution-policy rule deliberately leaves `update`
+This updates the managed CLI and selected native telemetry hooks while preserving saved telemetry state. `update`
+performs verified release downloads and mutates the installation, so run it only for an explicit update request. In
+Codex, the execution-policy rule deliberately leaves `update`
 sandboxed. Run it in a regular terminal or request permission to leave the sandbox. On Windows,
 the lifecycle hands control to the verified new image before replacing the managed executable.
 

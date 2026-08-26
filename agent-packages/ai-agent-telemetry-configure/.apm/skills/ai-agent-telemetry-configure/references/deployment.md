@@ -3,13 +3,12 @@
 These values depend on where the collector runs, so the skill stays generic and asks for them
 rather than hardcoding any one deployment.
 
-## Install the baseline
+## Install telemetry
 
-Use the canonical release bootstrap to install the managed CLI and all components. The bootstrap
-downloads and verifies the current lifecycle CLI, which installs APM and
-`qubership-global-essentials`, telemetry, Git hooks, and the Claude Code, Cline, Codex, and
-Cursor integrations by default. The managed binary is installed at `~/.local/bin/ai-agent-telemetry`
-(`.exe` on Windows), and the lifecycle adds `~/.local/bin` to `PATH`.
+Use the canonical release bootstrap to install the managed CLI, telemetry configuration, and native
+telemetry hooks for Claude Code, Cline, Codex, and Cursor. The bootstrap downloads and verifies the
+current lifecycle CLI. The managed binary is installed at `~/.local/bin/ai-agent-telemetry` (`.exe`
+on Windows), and the lifecycle adds `~/.local/bin` to `PATH`.
 
 ```sh
 # macOS / Linux
@@ -18,11 +17,10 @@ curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/l
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
 
-Interactive installation asks for missing prerequisites and telemetry configuration. For an
-unattended install, set the collector endpoint and optional token before passing
-`--non-interactive`. Existing saved telemetry configuration also satisfies the endpoint
-requirement. Noninteractive mode disables prerequisite and telemetry prompts; a missing endpoint or
-prerequisite fails preflight before the managed CLI or any component changes.
+Interactive installation asks for missing telemetry configuration. For an unattended install, set
+the collector endpoint and optional token before passing `--non-interactive`. Existing saved
+telemetry configuration also satisfies the endpoint requirement. Noninteractive mode disables
+telemetry prompts; a missing endpoint fails preflight before the managed CLI or native hooks change.
 
 ```sh
 # macOS / Linux

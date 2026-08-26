@@ -91,7 +91,8 @@ func TestCodexPolicyUsesLifecycleUpdateCommand(t *testing.T) {
 
 func TestHooksPackageConfigureSkillUpdateMigrationContract(t *testing.T) {
 	packageDir := filepath.Join("agent-packages", "ai-agent-telemetry-configure")
-	skillPath := filepath.Join(packageDir, ".apm", "skills", "ai-agent-telemetry-configure", "SKILL.md")
+	skillDir := filepath.Join(packageDir, ".apm", "skills", "ai-agent-telemetry-configure")
+	skillPath := filepath.Join(skillDir, "SKILL.md")
 	skill, err := os.ReadFile(skillPath)
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +116,9 @@ func TestHooksPackageConfigureSkillUpdateMigrationContract(t *testing.T) {
 	if strings.Contains(string(skill), "--cli-only") {
 		t.Fatalf("%s still documents --cli-only", skillPath)
 	}
+	if strings.Contains(string(skill), "every selected component") {
+		t.Fatalf("%s still describes the removed component lifecycle", skillPath)
+	}
 
 	readme, err := os.ReadFile(filepath.Join(packageDir, "README.md"))
 	if err != nil {
@@ -122,6 +126,19 @@ func TestHooksPackageConfigureSkillUpdateMigrationContract(t *testing.T) {
 	}
 	if strings.Contains(string(readme), "--cli-only") {
 		t.Fatalf("%s still documents --cli-only", filepath.Join(packageDir, "README.md"))
+	}
+
+	deploymentPath := filepath.Join(skillDir, "references", "deployment.md")
+	deployment, err := os.ReadFile(deploymentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, removed := range []string{
+		"all components", "installs APM", "qubership-global-essentials", "Git hooks", "prerequisite fails",
+	} {
+		if strings.Contains(string(deployment), removed) {
+			t.Errorf("%s still documents removed lifecycle behavior %q", deploymentPath, removed)
+		}
 	}
 
 	manifest, err := os.ReadFile(filepath.Join(packageDir, "apm.yml"))
