@@ -26,6 +26,9 @@
 
 ## Validation
 
+- Before each push, derive the validation set from `git diff --name-only origin/main...HEAD`, not from the task's
+  apparent subsystem. Match every changed path against the workflow trigger filters and internal `paths-filter` rules,
+  then run every locally available command from each activated workflow. Record platform-only checks as unavailable.
 - For Go changes, run `make test` and `go vet ./...`; `make test` includes the race detector.
 - The root `Makefile` does not cover backend or installer behavior. For those changes, follow the commands in
   `.github/workflows/telemetry-backend-tests.yaml`, `.github/workflows/installer-tests.yaml`, and
