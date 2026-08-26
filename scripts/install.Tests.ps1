@@ -134,7 +134,16 @@ function Test-DefaultingAndExactArguments {
     Assert-True ($result.Code -eq 0) "explicit update failed: $($result.Output)"
     $want = "update`n--harnesses`nclaude,codex"
     Assert-True ((Get-Content -Raw $fixture.ExecLog).Trim() -eq $want) 'explicit update arguments changed'
+    Clear-Content -LiteralPath $fixture.DownloadLog
+    $env:AI_AGENT_TELEMETRY_INSTALL_VERSION = 'v1.2.0'
+    $result = Invoke-Fixture $fixture $Installer @('uninstall', '--components', 'apm,git-hooks')
+    Assert-True ($result.Code -eq 0) "legacy cleanup failed: $($result.Output)"
+    $want = "uninstall`n--components`napm,git-hooks"
+    Assert-True ((Get-Content -Raw $fixture.ExecLog).Trim() -eq $want) 'legacy cleanup arguments changed'
+    $urls = Get-Content -LiteralPath $fixture.DownloadLog
+    Assert-True ($urls -contains 'https://release.example.test/releases/download/v1.2.0/ai-agent-telemetry-windows-amd64.exe') 'legacy cleanup did not use the pinned bootstrap version'
   } finally {
+    Remove-Item Env:AI_AGENT_TELEMETRY_INSTALL_VERSION -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $fixture.Root -ErrorAction SilentlyContinue
   }
 }

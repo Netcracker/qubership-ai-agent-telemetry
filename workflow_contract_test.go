@@ -4,9 +4,76 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+func TestInstallerDocumentationWorkflowContract(t *testing.T) {
+	documents := []string{
+		"README.md",
+		"docs/lifecycle-installer.md",
+		"docs/cli.md",
+		"docs/agent-integration.md",
+		"docs/release.md",
+		"docs/manual-uninstall.md",
+		"agent-packages/ai-agent-telemetry/README.md",
+		"telemetry-backend/native-otlp-onboarding.md",
+	}
+	obsoleteFlag := regexp.MustCompile(`--skip(?:[ =,\x60]|$)`)
+	forbidden := []string{
+		"--force-git-hooks",
+		"--cli-only",
+		"--remove-cli",
+		"qubership-global-essentials",
+		"CYBER_FERRET_PASSWORD",
+		"CyberFerret",
+		"developer baseline",
+		"Git and Java prerequisites",
+		"partial uninstall",
+	}
+
+	for _, path := range documents {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if obsoleteFlag.MatchString(text) {
+			t.Errorf("%s documents the removed --skip flag", path)
+		}
+		for _, value := range forbidden {
+			if strings.Contains(text, value) {
+				t.Errorf("%s documents removed installer behavior %q", path, value)
+			}
+		}
+		for lineNumber, line := range strings.Split(text, "\n") {
+			if !strings.Contains(line, "--components") {
+				continue
+			}
+			if !strings.Contains(line, "releases/download/v1.2.0/") ||
+				!strings.Contains(line, "uninstall --components apm,git-hooks") {
+				t.Errorf("%s:%d documents --components outside the pinned legacy cleanup command", path, lineNumber+1)
+			}
+		}
+	}
+
+	for _, path := range []string{"README.md", "docs/manual-uninstall.md"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, command := range []string{
+			"https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.sh | sh -s -- uninstall --components apm,git-hooks",
+			"https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.ps1",
+			"uninstall --components apm,git-hooks",
+		} {
+			if !strings.Contains(string(data), command) {
+				t.Errorf("%s does not document the pinned legacy cleanup command %q", path, command)
+			}
+		}
+	}
+}
 
 func TestWindowsLifecycleBootstrapCallsUseCheckedChildProcesses(t *testing.T) {
 	data, err := os.ReadFile(".github/workflows/installer-tests.yaml")

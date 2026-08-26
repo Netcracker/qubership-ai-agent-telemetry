@@ -1,147 +1,147 @@
 # Lifecycle installer
 
-Install and manage the baseline developer tools with one Go lifecycle CLI. The canonical bootstraps are `install.sh`
-and `install.ps1`; both verify a release binary and run the same `install`, `update`, or `uninstall` command.
+The lifecycle installer manages the `ai-agent-telemetry` CLI, machine configuration, native harness hooks, and an
+optional configure skill. It does not manage unrelated developer tools.
 
 ## Install
 
-macOS or Linux:
+Run the release bootstrap on macOS or Linux:
 
 ```sh
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
 ```
 
-Windows PowerShell:
+Run the PowerShell bootstrap on Windows:
 
 ```powershell
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
 
-The default selection installs the managed CLI, APM and `qubership-global-essentials`, AI agent telemetry, and global
-Git hooks. It targets Claude Code, Cline, Codex, and Cursor.
+The bootstrap downloads the platform binary and `SHA256SUMS`, verifies the binary, and runs
+`ai-agent-telemetry install`. Install then:
 
-## Select components and harnesses
+1. resolves the collector endpoint and optional token before mutation;
+2. installs the managed CLI under `~/.local/bin` and records any installer-owned `PATH` change;
+3. writes the telemetry configuration; and
+4. registers native hooks for the selected harnesses.
 
-Components are `apm`, `telemetry`, and `git-hooks`. Harnesses are `claude`, `cline`, `codex`, and `cursor`. `all` is
-the default for both selections. Use lowercase, double-dash options in every shell.
+Install selects Claude Code, Cline, Codex, and Cursor by default. Use `--harnesses` for a subset:
 
 ```sh
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh \
-  | sh -s -- --components apm,telemetry --harnesses claude,cursor
+  | sh -s -- --harnesses claude,codex
 ```
 
-```powershell
-$release = 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download'
-powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod '$release/install.ps1'))) --components 'apm,telemetry' --harnesses 'claude,cursor'"
-```
+The option accepts comma-separated or repeated values. `all` selects every supported harness.
 
-`--skip` subtracts components from the selected set. `--skip all` is invalid because it would leave no component; use
-`update --cli-only` for an explicit CLI-only update.
+For unattended installation, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optional
+`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. A missing endpoint stops preflight before the managed CLI,
+configuration, or hooks change.
 
-```sh
-ai-agent-telemetry install --skip git-hooks
-ai-agent-telemetry install --components telemetry --harnesses codex
-```
+## Optional configure skill
 
-The lifecycle keeps harness selection separate from APM deployment targets. Selecting `cline` installs the global
-Cline file hook and deploys skills through APM's `agent-skills` target. Cline has no native APM target. The same global
-hook covers the Cline VS Code and JetBrains extensions, compatible VS Code hosts, and Cline CLI.
+If APM is already on `PATH` and the CLI reports a release tag, install also installs
+`agent-packages/ai-agent-telemetry-configure` globally for the selected harnesses. Cline maps to APM's
+`agent-skills` target. Update refreshes the skill to the CLI release, and uninstall removes it when the global manifest
+contains the package.
 
-Install and update accept `--force-git-hooks` to replace an unrelated global `core.hooksPath`. They also accept
-`--non-interactive`, which disables prerequisite and telemetry prompts.
-
-## Noninteractive telemetry
-
-Set a collector endpoint before selecting telemetry in noninteractive mode. The token is optional:
-
-```sh
-AI_AGENT_TELEMETRY_ENDPOINT=https://collector.example/v1/logs \
-AI_AGENT_TELEMETRY_TOKEN=<token> \
-ai-agent-telemetry install --non-interactive
-```
-
-Existing saved configuration satisfies the same requirement. A missing endpoint fails preflight before the managed
-CLI or any component changes. Excluding `git-hooks` also excludes its Git and Java prerequisite checks.
+The installer does not install APM. A missing APM executable or unavailable release tag skips skill installation. An
+APM command failure produces a `WARN` result but does not fail a working managed CLI and native-hook lifecycle.
 
 ## Update
 
-Update the managed CLI and all components, or select a subset:
+Run:
 
 ```sh
 ai-agent-telemetry update
-ai-agent-telemetry update --components telemetry --harnesses claude,codex
-ai-agent-telemetry update --cli-only
+ai-agent-telemetry update --harnesses claude,codex
 ```
 
-Update refreshes selected existing components and installs selected missing components. `--cli-only` skips component
-and prerequisite preflight. It cannot be combined with `--components`, `--skip`, `--harnesses`,
-`--force-git-hooks`, or `--non-interactive`.
+Update downloads and verifies the release when needed, installs the managed CLI, refreshes the selected hooks, and
+preserves telemetry configuration, machine identity, repository and path policy, certificates, delivery settings,
+diagnostics, offsets, and buffered events.
 
-On Windows, direct update verifies a new release, hands control to the new image, and replaces the managed executable
-before component changes. A helper removes the exact renamed old image after the old process exits. If bounded cleanup
-retries fail, stderr prints the exact path that you may remove manually after both update processes exit.
+Before writing native hooks, the CLI checks `~/.apm/apm.yml` for the exact global legacy dependency:
+
+```text
+Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
+```
+
+If the dependency is absent, APM is not required. If it is present, the CLI must remove it through APM before it writes
+native hooks. An unreadable or invalid global manifest, a missing APM executable, or a failed removal stops migration
+with a nonzero result. The diagnostic prints these recovery commands:
+
+```sh
+apm uninstall -g Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
+ai-agent-telemetry update
+```
+
+This migration reads only the global APM manifest. It does not edit a repository-local manifest or remove the retained
+compatibility package from consumer repositories.
+
+On Windows, direct update hands control to the verified new binary before replacing the managed executable. The old
+process returns the new process's exit code. If stale-image cleanup exhausts its retries, the diagnostic names the exact
+file that you can remove after both update processes exit.
 
 ## Uninstall and purge
 
-Full uninstall removes every component and then removes the managed CLI and its installer-owned `PATH` mutation:
+Run normal uninstall to remove native telemetry hooks, the optional configure skill when available, the managed CLI,
+and its receipt-owned `PATH` entry:
 
 ```sh
 ai-agent-telemetry uninstall
 ```
 
-A partial uninstall preserves the CLI unless you pass `--remove-cli`. The flag requires telemetry in the final
-selection so hook cleanup cannot leave active hooks without their executable.
+Normal uninstall preserves telemetry configuration, credentials, repository and path policy, delivery settings,
+diagnostics, offsets, buffered events, and machine identity. A later install can resume the same configuration.
 
-```sh
-ai-agent-telemetry uninstall --components telemetry
-ai-agent-telemetry uninstall --components telemetry --remove-cli
-```
-
-Normal uninstall preserves telemetry configuration, credentials, repository policy, delivery settings, diagnostics,
-offsets, buffered events, and machine identity. Add `--purge` to remove the telemetry-specific configuration and cache
-after successful hook cleanup:
+Use purge only when you also want to remove telemetry configuration and cache:
 
 ```sh
 ai-agent-telemetry uninstall --purge
 ```
 
-The CLI reverses only a `PATH` mutation proven by its ownership receipt. It preserves unrelated shell-profile and
-Windows user-PATH content and never removes `~/.local/bin`, even when that directory is empty.
+Purge runs after native hook cleanup. It removes the telemetry configuration and cache directories, including the
+machine ID and outbox, but preserves their shared parent directories.
 
-Cline uninstall deletes its canonical hook only when the bytes match the current template or a supported legacy
-template. If a different regular file retains the telemetry ownership comment, uninstall preserves it, the managed
-CLI, its owned `PATH` entry, and telemetry data, then returns an error with the exact path and a link to the
-[manual conflict-resolution procedure](manual-uninstall.md). Remove the telemetry invocation and ownership comment
-while keeping any user commands, then rerun the original uninstall command. A Cline entry without the ownership
-comment is preserved as user-owned and does not block cleanup.
-
-The installed Windows executable rejects full uninstall and partial uninstall with `--remove-cli` before making any
-changes. Use the temporary bootstrap so the managed executable is not running:
+The installed Windows executable cannot remove itself. Use the temporary release bootstrap for uninstall:
 
 ```powershell
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall"
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --purge"
-powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --components telemetry --remove-cli"
 ```
 
-## Git and Java prerequisites
+Uninstall removes only telemetry-owned hook entries and exact owned files. A modified Cline hook with the telemetry
+ownership marker blocks managed CLI removal so the hook cannot lose its executable. Follow the
+[manual conflict-resolution procedure](manual-uninstall.md), then rerun the same uninstall command.
 
-Git and Java 21 or newer are required only for `git-hooks`. Interactive mode asks once whether you installed or
-updated missing tools, then checks again. Noninteractive mode fails without prompting. No component changes occur when
-preflight fails.
+## Clean up tools installed by version 1.2.0 or earlier
 
-The installer validates the global hooks clone, its expected origin, and its worktree before changing
-`core.hooksPath`. It preserves unrelated or locally modified state unless ownership is proven. A missing
-`CYBER_FERRET_PASSWORD` remains a warning; the installer does not collect or store it.
+Cleanup of tools from the old lifecycle is voluntary and separate from telemetry. Run the pinned old bootstrap only if
+you want to remove those old installations:
+
+```sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.sh | sh -s -- uninstall --components apm,git-hooks
+```
+
+```powershell
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.ps1'))) uninstall --components apm,git-hooks"
+```
+
+Normal install, update, and uninstall never run these commands. The current CLI does not accept the old component
+options.
 
 ## Results and exit codes
 
-The summary lists the managed CLI and selected components as `OK`, `SKIPPED`, or `FAILED`. Independent components
-continue after an operational failure.
+The lifecycle prints one result per operation:
 
-- `0`: every selected operation is `OK` or `SKIPPED`.
-- `1`: preflight or at least one operation failed.
-- `2`: command syntax, selection, or an option combination is invalid.
+- `OK` means the operation completed or was already in the requested state.
+- `SKIPPED` means an optional operation was unavailable or a prerequisite operation failed.
+- `WARN` means an optional configure-skill operation failed while the core telemetry lifecycle succeeded.
+- `FAILED` means a required operation failed.
 
-The old update-check, self-update, force-update, force, skip-config, and PowerShell named-parameter contracts were
-removed. They are breaking changes, not supported aliases. Use `update`, `update --cli-only`, component selection, or
-`--skip telemetry` for the corresponding new operation.
+Usage errors return `2`. Operational failures return `1`. Successful lifecycles, including optional `SKIPPED` or
+`WARN` results, return `0`.
+
+The installer records only its own `PATH` mutation. Removal reverses that exact change and preserves unrelated shell
+profile or Windows user-PATH content. It never removes `~/.local/bin`, even when the directory becomes empty.

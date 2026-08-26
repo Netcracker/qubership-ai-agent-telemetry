@@ -245,6 +245,16 @@ claude,codex
   expected='uninstall
 --purge'
   [ "$(cat "$QDI_EXEC_LOG")" = "$expected" ] || fail "explicit uninstall argv changed"
+  : > "$QDI_TEST_LOG"
+  AI_AGENT_TELEMETRY_INSTALL_VERSION=v1.2.0
+  export AI_AGENT_TELEMETRY_INSTALL_VERSION
+  run_installer uninstall --components apm,git-hooks
+  expected='uninstall
+--components
+apm,git-hooks'
+  [ "$(cat "$QDI_EXEC_LOG")" = "$expected" ] || fail "legacy cleanup argv changed"
+  grep -Fx 'https://release.example.test/releases/download/v1.2.0/ai-agent-telemetry-linux-amd64' "$QDI_TEST_LOG" >/dev/null ||
+    fail 'legacy cleanup did not use the pinned bootstrap version'
   teardown_fixture
 }
 

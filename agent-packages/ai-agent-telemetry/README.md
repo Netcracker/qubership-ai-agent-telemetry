@@ -5,8 +5,9 @@ New setups use the platform installer in the [root README](../../README.md#insta
 registers machine-wide hooks.
 
 This compatibility package contains native APM hook assets for Claude Code, Codex, and Cursor. Cline is supported by
-the machine-wide lifecycle installer, which manages Cline's single global file hook and deploys skills through the
-APM `agent-skills` target. This package does not define a duplicate Cline hook.
+the machine-wide lifecycle installer, which manages Cline's single global file hook. If APM is already on `PATH`, the
+lifecycle installs the optional configure skill for Cline through APM's `agent-skills` target. This package does not
+define a duplicate Cline hook.
 
 ## How it works
 
@@ -41,8 +42,7 @@ On Windows PowerShell:
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
 
-Use `--components telemetry` when you do not want the default APM and global Git-hook components. For unattended
-setup, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optional `AI_AGENT_TELEMETRY_TOKEN`, then pass
+For unattended setup, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optional `AI_AGENT_TELEMETRY_TOKEN`, then pass
 `--non-interactive`.
 
 Existing repositories may keep the package while they migrate. Its manifest and three native hook
@@ -53,9 +53,12 @@ same APM target already selected by that repository, for example:
 apm install Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry --target claude
 ```
 
-After the platform installer has refreshed the machine-wide hooks, verify the setup and remove the package dependency
-through the repository's normal APM workflow. The CLI canonicalizes recognized APM telemetry entries without removing
-unrelated hooks.
+Before the platform installer writes machine-wide hooks, it strictly removes the exact legacy dependency from the
+global APM manifest. A missing APM executable, an invalid global manifest, or a failed removal stops migration. The CLI
+does not edit repository-local APM manifests, so existing repositories may keep this package while they migrate.
+
+After the platform installer has refreshed the machine-wide hooks, verify the setup and remove the repository-local
+package dependency through the repository's normal APM workflow.
 
 After refreshing the Codex hook, fully restart Codex. If prompted, inspect and approve exactly
 `ai-agent-telemetry ingest --agent=codex`.

@@ -1,8 +1,8 @@
 # CLI-managed global hooks
 
-> **Superseded installer details:** CLI-managed global hooks remain active. The unified Go lifecycle now runs hook
-> installation and removal through component selection, preflight, and ownership-aware uninstall. The original text
-> below remains unchanged as historical context.
+> **Proposed follow-up:** [ADR 0010](0010-telemetry-installer-scope-and-lifecycle.md) proposes retaining CLI-managed
+> global hooks while replacing the installer scope and legacy migration details. This ADR remains Accepted until the
+> team accepts the follow-up decision.
 
 ## Status
 
@@ -18,6 +18,8 @@ Accepted
   the harness events and transcript detection.
 - [0002-bare-binary-on-path.md](0002-bare-binary-on-path.md) defines the portable command used by every hook.
 - [0003-config-cache-dirs-xdg.md](0003-config-cache-dirs-xdg.md) defines the machine-level configuration paths.
+- [0010-telemetry-installer-scope-and-lifecycle.md](0010-telemetry-installer-scope-and-lifecycle.md) proposes a narrower
+  installer lifecycle and strict legacy migration.
 
 ## Context
 
