@@ -43,6 +43,26 @@ func TestConfigureSkillSkipsDevBuild(t *testing.T) {
 	}
 }
 
+func TestConfigureSkillSkipsLocalBuild(t *testing.T) {
+	service := newConfigureSkillService(configureSkillDeps{
+		Home:    t.TempDir(),
+		Version: "v0.0.0-local+abcdef",
+		LookPath: func(string) (string, error) {
+			t.Fatal("LookPath called")
+			return "", nil
+		},
+		Run: func(context.Context, string, ...string) (string, error) {
+			t.Fatal("Run called")
+			return "", nil
+		},
+	})
+
+	result := service.Install(context.Background(), lifecycleOptions{Harnesses: []hookTarget{hookClaude}})
+	if result.State != operationSkipped || !strings.Contains(result.Detail, "release tag") {
+		t.Fatalf("Install() = %#v, want skipped local build", result)
+	}
+}
+
 func TestConfigureSkillInstallUsesPinnedReleaseSource(t *testing.T) {
 	var commands []string
 	service := newConfigureSkillService(configureSkillDeps{

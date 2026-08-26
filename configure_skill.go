@@ -31,7 +31,7 @@ func newConfigureSkillService(deps configureSkillDeps) configureSkillService {
 	deps = normalizeConfigureSkillDeps(deps)
 	apply := func(ctx context.Context, opts lifecycleOptions, verb string) operationResult {
 		tag := strings.TrimSpace(deps.Version)
-		if tag == "" || tag == "dev" {
+		if !isConfigureSkillReleaseTag(tag) {
 			return configureSkillSkipped("release tag is unavailable")
 		}
 		apm, err := deps.LookPath("apm")
@@ -53,7 +53,7 @@ func newConfigureSkillService(deps configureSkillDeps) configureSkillService {
 		Update:  func(ctx context.Context, opts lifecycleOptions) operationResult { return apply(ctx, opts, "update") },
 		Uninstall: func(ctx context.Context, _ lifecycleOptions) operationResult {
 			tag := strings.TrimSpace(deps.Version)
-			if tag == "" || tag == "dev" {
+			if !isConfigureSkillReleaseTag(tag) {
 				return configureSkillSkipped("release tag is unavailable")
 			}
 			if strings.TrimSpace(deps.Home) == "" {
@@ -97,6 +97,27 @@ func normalizeConfigureSkillDeps(deps configureSkillDeps) configureSkillDeps {
 		}
 	}
 	return deps
+}
+
+func isConfigureSkillReleaseTag(tag string) bool {
+	if !strings.HasPrefix(tag, "v") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(tag, "v"), ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, character := range part {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func joinConfigureSkillTargets(targets []hookTarget) string {
