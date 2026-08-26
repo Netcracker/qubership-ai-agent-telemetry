@@ -497,7 +497,7 @@ jobs:
           printf '%s' "$selftest_output" |
             grep -F 'selftest: ok: probe accepted by the collector and cleared from the outbox' >/dev/null
           '@
-          $test | wsl.exe --distribution Ubuntu-24.04 --user root -- bash -s
+          $test.Replace("`r`n", "`n") | wsl.exe --distribution Ubuntu-24.04 --user root -- bash -s
           if ($LASTEXITCODE -ne 0) { throw "WSL lifecycle test returned $LASTEXITCODE" }
 
   # This stable, always-created check is the branch-protection gate. The test
