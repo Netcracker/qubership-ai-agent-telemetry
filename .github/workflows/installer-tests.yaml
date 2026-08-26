@@ -395,11 +395,15 @@ jobs:
           export XDG_CONFIG_HOME=/tmp/qaat-v120-config
           export XDG_DATA_HOME=/tmp/qaat-v120-data
           legacy_installer=https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.sh
-          legacy_output=$(AI_AGENT_TELEMETRY_ENDPOINT=https://localhost:8443/v1/logs \
-            TERM=xterm-256color zsh -ic \
-            "curl -fsSL $legacy_installer | sh -s -- install --components telemetry --non-interactive" \
-            2>&1)
+          set +e
+          legacy_output=$(timeout 120s script -qfec \
+            "AI_AGENT_TELEMETRY_ENDPOINT=https://localhost:8443/v1/logs TERM=xterm-256color zsh -ic \
+            'curl -fsSL $legacy_installer | sh -s -- install --components telemetry --non-interactive'" \
+            /dev/null 2>&1)
+          legacy_status=$?
+          set -e
           printf '%s\n' "$legacy_output"
+          test "$legacy_status" -eq 0
           test "$(/root/.local/bin/ai-agent-telemetry version)" = v1.2.0
 
           pids=
