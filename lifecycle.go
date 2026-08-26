@@ -41,6 +41,7 @@ type operationState string
 const (
 	operationOK      operationState = "OK"
 	operationSkipped operationState = "SKIPPED"
+	operationWarn    operationState = "WARN"
 	operationFailed  operationState = "FAILED"
 )
 
@@ -76,6 +77,7 @@ type lifecycleDeps struct {
 	ManagedCLI           managedCLIService
 	ManagedInstallSource func() (string, error)
 	Components           map[componentName]componentOps
+	ConfigureSkill       configureSkillService
 }
 
 func defaultLifecycleDeps(home string, warnings io.Writer) lifecycleDeps {
@@ -87,6 +89,7 @@ func defaultLifecycleDeps(home string, warnings io.Writer) lifecycleDeps {
 			componentTelemetry: newTelemetryComponent(telemetryDeps{Home: func() string { return home }, Warnings: warnings}),
 			componentGitHooks:  newGitHooksComponent(gitHooksDeps{Home: home, Warn: warnings}),
 		},
+		ConfigureSkill: newConfigureSkillService(configureSkillDeps{Home: home, Version: version}),
 	}
 }
 
@@ -160,6 +163,9 @@ func executePreparedLifecycle(ctx context.Context, opts lifecycleOptions, deps l
 				}
 				results = append(results, runComponent(ctx, opts, component, deps.Components[component]))
 			}
+			if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill); ok {
+				results = append(results, result)
+			}
 		}
 	case actionUninstall:
 		telemetryFailed := false
@@ -169,6 +175,9 @@ func executePreparedLifecycle(ctx context.Context, opts lifecycleOptions, deps l
 			if component == componentTelemetry && result.State == operationFailed {
 				telemetryFailed = true
 			}
+		}
+		if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill); ok {
+			results = append(results, result)
 		}
 		if removeCLI {
 			if telemetryFailed {
@@ -188,6 +197,22 @@ func executePreparedLifecycle(ctx context.Context, opts lifecycleOptions, deps l
 	}
 
 	return lifecycleSummary{Results: results, Err: failedResultError(results)}
+}
+
+func runConfigureSkill(ctx context.Context, opts lifecycleOptions, service configureSkillService) (operationResult, bool) {
+	var operation func(context.Context, lifecycleOptions) operationResult
+	switch opts.Action {
+	case actionInstall:
+		operation = service.Install
+	case actionUpdate:
+		operation = service.Update
+	case actionUninstall:
+		operation = service.Uninstall
+	}
+	if operation == nil {
+		return operationResult{}, false
+	}
+	return normalizeOperationResult(operation(ctx, opts), "configure-skill"), true
 }
 
 func runManagedInstall(service managedCLIService, source func() (string, error)) operationResult {
@@ -235,10 +260,10 @@ func normalizeOperationResult(result operationResult, fallback string) operation
 		result.Name = fallback
 	}
 	switch result.State {
-	case operationOK, operationSkipped, operationFailed:
+	case operationOK, operationSkipped, operationWarn, operationFailed:
 		return result
 	default:
-		detail := fmt.Sprintf("invalid operation state %q; report OK, SKIPPED, or FAILED", result.State)
+		detail := fmt.Sprintf("invalid operation state %q; report OK, SKIPPED, WARN, or FAILED", result.State)
 		result.State = operationFailed
 		result.Detail = detail
 		result.Err = errors.New(detail)

@@ -87,6 +87,33 @@ func TestRunLifecycleContinuesIndependentComponentsAfterFailures(t *testing.T) {
 	}
 }
 
+func TestRunLifecycleContinuesAfterOptionalConfigureSkillWarning(t *testing.T) {
+	var calls []string
+	deps := fakeLifecycleDeps(&calls, nil, nil)
+	deps.ConfigureSkill = configureSkillService{
+		Install: func(context.Context, lifecycleOptions) operationResult {
+			calls = append(calls, "install:configure-skill")
+			return operationResult{Name: "configure-skill", State: operationWarn, Detail: "APM command failed", Err: errors.New("failed")}
+		},
+	}
+
+	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionInstall}, deps)
+	if summary.Err != nil {
+		t.Fatalf("runLifecycle() error = %v, want optional warning to stay non-fatal", summary.Err)
+	}
+	wantCalls := []string{
+		"preflight:apm", "preflight:telemetry", "preflight:git-hooks",
+		"managed:cli", "install:apm", "install:telemetry", "install:git-hooks", "install:configure-skill",
+	}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("calls = %v, want lifecycle continuation %v", calls, wantCalls)
+	}
+	last := summary.Results[len(summary.Results)-1]
+	if last.Name != "configure-skill" || last.State != operationWarn {
+		t.Fatalf("last result = %#v, want visible configure-skill WARN", last)
+	}
+}
+
 func TestRunLifecycleUninstallsComponentsBeforeRemovingCLI(t *testing.T) {
 	var calls []string
 	deps := fakeLifecycleDeps(&calls, nil, nil)
@@ -181,7 +208,7 @@ func TestRunLifecycleRejectsInvalidOperationStates(t *testing.T) {
 			if result.State != operationFailed {
 				t.Fatalf("result = %#v, want FAILED", result)
 			}
-			if !strings.Contains(result.Detail, "report OK, SKIPPED, or FAILED") {
+			if !strings.Contains(result.Detail, "report OK, SKIPPED, WARN, or FAILED") {
 				t.Fatalf("detail = %q, want actionable valid-state guidance", result.Detail)
 			}
 		})
