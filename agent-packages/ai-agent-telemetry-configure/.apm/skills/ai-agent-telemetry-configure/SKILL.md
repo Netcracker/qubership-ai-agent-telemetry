@@ -211,11 +211,10 @@ the lifecycle hands control to the verified new image before replacing the manag
 Only handle this branch when the explicitly requested `ai-agent-telemetry update` stops with
 `legacy telemetry APM migration failed`. If it says `apm was not found on PATH`, stop. Explain that
 APM must be installed or restored on `PATH`; do not install or repair it automatically. First confirm
-the executable is available:
+the executable is available in the current shell:
 
-```sh
-command -v apm
-```
+- POSIX or WSL: `command -v apm`
+- PowerShell: `Get-Command apm`
 
 After `apm` is available, remove only the exact legacy telemetry dependency, retry the one update,
 then verify the native hooks:

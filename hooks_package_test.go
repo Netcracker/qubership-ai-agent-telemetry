@@ -101,10 +101,6 @@ func TestHooksPackageConfigureSkillUpdateMigrationContract(t *testing.T) {
 	for _, want := range []string{
 		"legacy telemetry APM migration failed",
 		"apm was not found on PATH",
-		"command -v apm",
-		"apm uninstall -g " + legacyTelemetryAPMPackage,
-		"ai-agent-telemetry update",
-		"ai-agent-telemetry status --verbose",
 		"Do not run `ai-agent-telemetry hooks install` manually.",
 		"Do not remove unrelated global packages",
 		"edit a project-local manifest.",
@@ -112,6 +108,25 @@ func TestHooksPackageConfigureSkillUpdateMigrationContract(t *testing.T) {
 		if !strings.Contains(string(skill), want) {
 			t.Fatalf("%s does not document %q", skillPath, want)
 		}
+	}
+	_, recovery, found := strings.Cut(string(skill), "### Legacy APM migration during an explicit update")
+	if !found {
+		t.Fatalf("%s does not contain the legacy migration recovery section", skillPath)
+	}
+	recovery, _, _ = strings.Cut(recovery, "\n## Failure")
+	offset := 0
+	for _, want := range []string{
+		"command -v apm",
+		"Get-Command apm",
+		"apm uninstall -g " + legacyTelemetryAPMPackage,
+		"\nai-agent-telemetry update\n",
+		"ai-agent-telemetry status --verbose",
+	} {
+		index := strings.Index(recovery[offset:], want)
+		if index < 0 {
+			t.Fatalf("%s recovery section does not document %q in order", skillPath, want)
+		}
+		offset += index + len(want)
 	}
 	if strings.Contains(string(skill), "--cli-only") {
 		t.Fatalf("%s still documents --cli-only", skillPath)
