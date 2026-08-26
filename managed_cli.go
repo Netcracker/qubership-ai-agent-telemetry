@@ -180,7 +180,7 @@ func newManagedCLIService(config managedCLIConfig) managedCLIService {
 			return validateManagedCLIHome(config.Home)
 		},
 		PreflightRemove: func(opts lifecycleOptions) error {
-			if config.GOOS != "windows" || opts.Action != actionUninstall || (!opts.RemoveCLI && !isCompleteSelection(opts.Components)) {
+			if config.GOOS != "windows" || opts.Action != actionUninstall {
 				return nil
 			}
 			current, err := config.Executable()
@@ -204,20 +204,8 @@ func validateManagedCLIHome(home string) error {
 
 func windowsBootstrapUninstallCommand(opts lifecycleOptions) string {
 	arguments := []string{"uninstall"}
-	if !isCompleteSelection(opts.Components) {
-		components := make([]string, 0, len(opts.Components))
-		for _, candidate := range allComponents() {
-			if containsComponent(opts.Components, candidate) {
-				components = append(components, string(candidate))
-			}
-		}
-		arguments = append(arguments, "--components", strings.Join(components, ","))
-	}
 	if opts.Purge {
 		arguments = append(arguments, "--purge")
-	}
-	if opts.RemoveCLI {
-		arguments = append(arguments, "--remove-cli")
 	}
 	bootstrap := "& ([scriptblock]::Create((Invoke-RestMethod '" + windowsBootstrapURL + "'))) " +
 		strings.Join(arguments, " ")

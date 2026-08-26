@@ -56,9 +56,9 @@ func TestRootDiscoveryAndCommandRouting(t *testing.T) {
 func TestLifecycleCommandsArePublicWithDocumentedFlags(t *testing.T) {
 	root := newRootCommand(appDeps{})
 	want := map[string][]string{
-		"install":   {"components", "skip", "harnesses", "force-git-hooks", "non-interactive"},
-		"update":    {"components", "skip", "harnesses", "force-git-hooks", "non-interactive", "cli-only"},
-		"uninstall": {"components", "skip", "purge", "remove-cli"},
+		"install":   {"harnesses", "non-interactive"},
+		"update":    {"harnesses", "non-interactive"},
+		"uninstall": {"purge"},
 	}
 	for name, flags := range want {
 		command, _, err := root.Find([]string{name})
@@ -70,6 +70,11 @@ func TestLifecycleCommandsArePublicWithDocumentedFlags(t *testing.T) {
 				t.Errorf("%s --%s was not registered", name, flag)
 			}
 		}
+		for _, flag := range []string{"components", "skip", "force-git-hooks", "cli-only", "remove-cli"} {
+			if command.Flags().Lookup(flag) != nil {
+				t.Errorf("%s still registers removed flag --%s", name, flag)
+			}
+		}
 	}
 }
 
@@ -79,12 +84,14 @@ func TestLifecycleEnumFlagsDescribeAcceptedValues(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d; stderr = %q", code, errOut.String())
 	}
-	for _, want := range []string{
-		"all, apm, telemetry, git-hooks",
-		"all, claude, cline, codex, cursor",
-	} {
+	for _, want := range []string{"all, claude, cline, codex, cursor"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("help = %q, want %q", out.String(), want)
+		}
+	}
+	for _, removed := range []string{"components", "apm", "git-hooks", "force-git-hooks"} {
+		if strings.Contains(out.String(), removed) {
+			t.Fatalf("help = %q, contains removed lifecycle text %q", out.String(), removed)
 		}
 	}
 }
@@ -94,8 +101,6 @@ func TestUnknownLifecycleEnumListsAcceptedValues(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"install", "--components", "bogus"},
-			"valid components: all, apm, telemetry, git-hooks"},
 		{[]string{"install", "--harnesses", "bogus"},
 			"valid harnesses: all, claude, cline, codex, cursor"},
 	} {
@@ -122,35 +127,29 @@ func TestConfigureHooksCompletionUsesDocumentedValues(t *testing.T) {
 	}
 }
 
-func TestCompletionLifecycleCSVFlags(t *testing.T) {
+func TestCompletionLifecycleHarnessFlag(t *testing.T) {
 	command, _, err := newRootCommand(appDeps{}).Find([]string{"install"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	completion, ok := command.GetFlagCompletionFunc("components")
+	completion, ok := command.GetFlagCompletionFunc("harnesses")
 	if !ok {
-		t.Fatal("install --components completion was not registered")
+		t.Fatal("install --harnesses completion was not registered")
 	}
-	got, directive := completion(command, nil, "apm,t")
-	if want := []string{"apm,telemetry"}; !reflect.DeepEqual(got, want) {
+	got, directive := completion(command, nil, "claude,co")
+	if want := []string{"claude,codex"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("completion = %v, want %v", got, want)
 	}
 	if directive&cobra.ShellCompDirectiveNoFileComp == 0 {
 		t.Fatalf("directive = %v, want NoFileComp", directive)
 	}
-	for commandName, flags := range map[string][]string{
-		"install":   {"components", "skip", "harnesses"},
-		"update":    {"components", "skip", "harnesses"},
-		"uninstall": {"components", "skip"},
-	} {
+	for _, commandName := range []string{"install", "update"} {
 		command, _, err := newRootCommand(appDeps{}).Find([]string{commandName})
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, flag := range flags {
-			if _, ok := command.GetFlagCompletionFunc(flag); !ok {
-				t.Errorf("%s --%s completion was not registered", commandName, flag)
-			}
+		if _, ok := command.GetFlagCompletionFunc("harnesses"); !ok {
+			t.Errorf("%s --harnesses completion was not registered", commandName)
 		}
 	}
 }
@@ -161,12 +160,11 @@ func TestLifecycleCommandRoutesNormalizedOptionsAndSummary(t *testing.T) {
 		args []string
 		want lifecycleOptions
 	}{
-		{name: "separate values", args: []string{"install", "--components", "telemetry,apm", "--skip", "apm", "--harnesses", "codex,claude", "--force-git-hooks", "--non-interactive"},
-			want: lifecycleOptions{Action: actionInstall, Components: []componentName{componentTelemetry}, Harnesses: []hookTarget{hookClaude, hookCodex}, ForceGitHooks: true, NonInteractive: true}},
-		{name: "equals values", args: []string{"uninstall", "--components=telemetry", "--purge", "--remove-cli"},
-			want: lifecycleOptions{Action: actionUninstall, Components: []componentName{componentTelemetry}, Purge: true, RemoveCLI: true}},
-		{name: "defaults", args: []string{"install"}, want: lifecycleOptions{Action: actionInstall, Components: allComponents(), Harnesses: append([]hookTarget(nil), allHookTargets...)}},
-		{name: "CLI only", args: []string{"update", "--cli-only"}, want: lifecycleOptions{Action: actionUpdate, CLIOnly: true}},
+		{name: "selected harnesses", args: []string{"install", "--harnesses", "codex,claude", "--non-interactive"},
+			want: lifecycleOptions{Action: actionInstall, Harnesses: []hookTarget{hookClaude, hookCodex}, NonInteractive: true}},
+		{name: "uninstall purge", args: []string{"uninstall", "--purge"},
+			want: lifecycleOptions{Action: actionUninstall, Purge: true}},
+		{name: "defaults", args: []string{"install"}, want: lifecycleOptions{Action: actionInstall, Harnesses: append([]hookTarget(nil), allHookTargets...)}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var got lifecycleOptions
@@ -178,14 +176,11 @@ func TestLifecycleCommandRoutesNormalizedOptionsAndSummary(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("code = %d; stderr = %q", code, errOut.String())
 			}
-			if !tt.want.CLIOnly && !reflect.DeepEqual(got, tt.want) {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("options = %#v, want %#v", got, tt.want)
 			}
 			if !strings.Contains(out.String(), "managed-cli  OK") {
 				t.Fatalf("summary = %q", out.String())
-			}
-			if tt.want.CLIOnly && (got.Action != "" || strings.Contains(out.String(), "apm") || strings.Contains(out.String(), "telemetry") || strings.Contains(out.String(), "git-hooks")) {
-				t.Fatalf("CLI-only update ran a component: options = %#v, summary = %q", got, out.String())
 			}
 		})
 	}
@@ -199,14 +194,12 @@ func TestLifecycleCommandUsageAndOperationalExitCodes(t *testing.T) {
 		wantCode int
 		want     string
 	}{
-		{name: "invalid combination", args: []string{"update", "--cli-only", "--components", "apm"}, wantCode: 2, want: "--cli-only cannot be combined"},
-		{name: "CLI only with skip", args: []string{"update", "--cli-only", "--skip", "apm"}, wantCode: 2, want: "--cli-only cannot be combined"},
-		{name: "CLI only with harnesses", args: []string{"update", "--cli-only", "--harnesses", "codex"}, wantCode: 2, want: "--cli-only cannot be combined"},
-		{name: "CLI only with force Git hooks", args: []string{"update", "--cli-only", "--force-git-hooks"}, wantCode: 2, want: "--cli-only cannot be combined"},
-		{name: "CLI only noninteractive", args: []string{"update", "--cli-only", "--non-interactive"}, wantCode: 2, want: "--cli-only cannot be combined"},
-		{name: "skip all", args: []string{"install", "--skip", "all"}, wantCode: 2, want: "component selection must not be empty"},
-		{name: "purge without telemetry", args: []string{"uninstall", "--components", "apm", "--purge"}, wantCode: 2, want: "--purge requires telemetry"},
-		{name: "remove CLI without telemetry", args: []string{"uninstall", "--components", "git-hooks", "--remove-cli"}, wantCode: 2, want: "--remove-cli requires telemetry"},
+		{name: "components removed", args: []string{"install", "--components", "telemetry"}, wantCode: 2, want: "unknown flag: --components"},
+		{name: "skip removed", args: []string{"install", "--skip", "telemetry"}, wantCode: 2, want: "unknown flag: --skip"},
+		{name: "force Git hooks removed", args: []string{"update", "--force-git-hooks"}, wantCode: 2, want: "unknown flag: --force-git-hooks"},
+		{name: "CLI only removed", args: []string{"update", "--cli-only"}, wantCode: 2, want: "unknown flag: --cli-only"},
+		{name: "remove CLI removed", args: []string{"uninstall", "--remove-cli"}, wantCode: 2, want: "unknown flag: --remove-cli"},
+		{name: "install purge", args: []string{"install", "--purge"}, wantCode: 2, want: "unknown flag: --purge"},
 		{name: "uninstall harnesses", args: []string{"uninstall", "--harnesses", "codex"}, wantCode: 2, want: "unknown flag: --harnesses"},
 		{name: "unknown option", args: []string{"install", "--wat"}, wantCode: 2, want: "unknown flag: --wat"},
 		{name: "operational failure", args: []string{"install"}, failure: errors.New("disk full"), wantCode: 1, want: "disk full"},
@@ -227,15 +220,19 @@ func TestLifecycleCommandUsageAndOperationalExitCodes(t *testing.T) {
 }
 
 func TestLegacyOptionErrorsAreActionable(t *testing.T) {
-	for _, tt := range []struct{ option, hint string }{
-		{"--force-update", "use update"}, {"--force", "update --components telemetry"}, {"--skip-config", "--skip telemetry"},
-		{"--force=false", "update --components telemetry"}, {"--force-update=false", "use update"}, {"--skip-config=false", "--skip telemetry"},
-		{"-ForceUpdate", "use update"}, {"-Force", "update --components telemetry"}, {"-SkipConfig", "--skip telemetry"},
+	for _, option := range []string{
+		"--force-update", "--force", "--skip-config", "--force=false", "--force-update=false", "--skip-config=false",
+		"-ForceUpdate", "-Force", "-SkipConfig",
 	} {
 		var errOut bytes.Buffer
-		code := execute([]string{"install", tt.option}, appDeps{ErrOut: &errOut, Home: t.TempDir})
-		if code != 2 || !strings.Contains(errOut.String(), tt.hint) {
-			t.Errorf("%s: code = %d, stderr = %q", tt.option, code, errOut.String())
+		code := execute([]string{"install", option}, appDeps{ErrOut: &errOut, Home: t.TempDir})
+		if code != 2 || !strings.Contains(errOut.String(), "no longer supported") {
+			t.Errorf("%s: code = %d, stderr = %q", option, code, errOut.String())
+		}
+		for _, removed := range []string{"--components", "--skip telemetry", "--cli-only"} {
+			if strings.Contains(errOut.String(), removed) {
+				t.Errorf("%s: stale migration hint = %q", option, errOut.String())
+			}
 		}
 	}
 	var errOut bytes.Buffer
@@ -251,7 +248,7 @@ func TestLegacyOptionErrorsAreActionable(t *testing.T) {
 func TestRemovedCommandsReturnActionableMigrationErrors(t *testing.T) {
 	for _, tt := range []struct{ command, hint string }{
 		{"update-check", "use update"},
-		{"self-update", "use update --cli-only"},
+		{"self-update", "use update"},
 	} {
 		t.Run(tt.command, func(t *testing.T) {
 			var out, errOut bytes.Buffer
@@ -260,6 +257,9 @@ func TestRemovedCommandsReturnActionableMigrationErrors(t *testing.T) {
 			})
 			if code != 2 || !strings.Contains(errOut.String(), tt.hint) || out.Len() != 0 {
 				t.Fatalf("%s: code = %d, stdout = %q, stderr = %q", tt.command, code, out.String(), errOut.String())
+			}
+			if strings.Contains(errOut.String(), "--cli-only") {
+				t.Fatalf("%s: stale migration hint = %q", tt.command, errOut.String())
 			}
 		})
 	}
@@ -296,40 +296,26 @@ func failingLifecycleDeps(t *testing.T) lifecycleDeps {
 			Install: func(string) operationResult { fail(); return operationResult{} },
 			Remove:  func() operationResult { fail(); return operationResult{} },
 		},
-		Components: map[componentName]componentOps{},
-	}
-	for _, name := range allComponents() {
-		deps.Components[name] = componentOps{
+		Telemetry: componentOps{
 			Install: func(context.Context, lifecycleOptions) operationResult { fail(); return operationResult{} },
 			Update:  func(context.Context, lifecycleOptions) operationResult { fail(); return operationResult{} },
 			Uninstall: func(context.Context, lifecycleOptions) operationResult {
 				fail()
 				return operationResult{}
 			},
-		}
+		},
 	}
 	return deps
 }
 
-func TestCompletionCommandReturnsConcreteLifecycleCandidates(t *testing.T) {
+func TestCompletionCommandReturnsConcreteHarnessCandidates(t *testing.T) {
 	var out, errOut bytes.Buffer
-	code := execute([]string{"__complete", "install", "--components", "apm,t"}, appDeps{Out: &out, ErrOut: &errOut, Home: t.TempDir})
+	code := execute([]string{"__complete", "install", "--harnesses", "claude,co"}, appDeps{Out: &out, ErrOut: &errOut, Home: t.TempDir})
 	if code != 0 {
 		t.Fatalf("code = %d; stderr = %q", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "apm,telemetry") || !strings.Contains(out.String(), ":6") {
+	if !strings.Contains(out.String(), "claude,codex") || !strings.Contains(out.String(), ":6") {
 		t.Fatalf("completion output = %q, want retained-prefix candidate and NoFileComp|NoSpace directive", out.String())
-	}
-}
-
-func TestCompletionSkipDoesNotSuggestInvalidAllSelection(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := execute([]string{"__complete", "install", "--skip", "a"}, appDeps{Out: &out, ErrOut: &errOut, Home: t.TempDir})
-	if code != 0 {
-		t.Fatalf("code = %d; stderr = %q", code, errOut.String())
-	}
-	if strings.Contains(out.String(), "all") || !strings.Contains(out.String(), "apm") {
-		t.Fatalf("skip completion = %q, want apm without invalid all", out.String())
 	}
 }
 
@@ -337,7 +323,7 @@ func TestLifecycleCommandPreservesHandoffExitStatus(t *testing.T) {
 	for _, childCode := range []int{2, 37} {
 		t.Run(fmt.Sprintf("code_%d", childCode), func(t *testing.T) {
 			var out, errOut bytes.Buffer
-			code := execute([]string{"update", "--cli-only"}, appDeps{
+			code := execute([]string{"update", "--harnesses", "codex"}, appDeps{
 				Out: &out, ErrOut: &errOut, Home: t.TempDir,
 				Update: updateHandoff{Prepare: func(context.Context, []string) (handoffResult, error) {
 					return handoffResult{HandedOff: true, ExitCode: childCode}, nil
@@ -362,11 +348,13 @@ func TestHiddenUpdateRunnerUsesCanonicalManagedSource(t *testing.T) {
 			source = value
 			return operationResult{Name: "managed-cli", State: operationOK, Detail: "unchanged"}
 		}},
-		Components: map[componentName]componentOps{},
+		Telemetry: componentOps{Update: func(context.Context, lifecycleOptions) operationResult {
+			return operationResult{Name: "telemetry", State: operationOK, Detail: "done"}
+		}},
 	}
 	var out, errOut bytes.Buffer
 	code := execute([]string{
-		"__update-runner", "--managed-path", managed, "--parent-pid", "42", "--release", "v1.0.0", "--", "--cli-only",
+		"__update-runner", "--managed-path", managed, "--parent-pid", "42", "--release", "v1.0.0", "--", "--harnesses", "codex",
 	}, appDeps{Out: &out, ErrOut: &errOut, Home: func() string { return home }, Lifecycle: deps})
 	if code != 0 || source != managed {
 		t.Fatalf("code = %d, managed install source = %q, want canonical %q; stderr = %q", code, source, managed, errOut.String())
@@ -375,20 +363,17 @@ func TestHiddenUpdateRunnerUsesCanonicalManagedSource(t *testing.T) {
 
 func lifecycleCaptureDeps(captured *lifecycleOptions, failure error) lifecycleDeps {
 	result := func(name string) operationResult {
-		if failure != nil && name == string(componentTelemetry) {
+		if failure != nil && name == "telemetry" {
 			return operationResult{Name: name, State: operationFailed, Detail: failure.Error(), Err: failure}
 		}
 		return operationResult{Name: name, State: operationOK, Detail: "done"}
 	}
-	deps := lifecycleDeps{ManagedCLI: managedCLIService{Install: func(string) operationResult { return result("managed-cli") }, Remove: func() operationResult { return result("managed-cli") }}, Components: map[componentName]componentOps{}}
-	for _, name := range allComponents() {
-		component := name
-		capture := func(_ context.Context, opts lifecycleOptions) operationResult {
-			*captured = opts
-			return result(string(component))
-		}
-		deps.Components[component] = componentOps{Install: capture, Update: capture, Uninstall: capture}
+	deps := lifecycleDeps{ManagedCLI: managedCLIService{Install: func(string) operationResult { return result("managed-cli") }, Remove: func() operationResult { return result("managed-cli") }}}
+	capture := func(_ context.Context, opts lifecycleOptions) operationResult {
+		*captured = opts
+		return result("telemetry")
 	}
+	deps.Telemetry = componentOps{Install: capture, Update: capture, Uninstall: capture}
 	return deps
 }
 
@@ -415,14 +400,14 @@ func TestUpdateHandoffHiddenModesRouteOutsideCobra(t *testing.T) {
 	}
 	runnerArgs := []string{
 		"__update-runner", "--managed-path", managed, "--parent-pid", "42",
-		"--release", "v0.8.0", "--", "--components", "telemetry,apm", "--non-interactive",
+		"--release", "v0.8.0", "--", "--harnesses", "codex", "--non-interactive",
 	}
 	if code := execute(runnerArgs, deps); code != 17 {
 		t.Fatalf("runner exit code = %d, want 17", code)
 	}
 	wantRunner := updateRunnerOptions{
 		ManagedPath: managed, ParentPID: 42, Release: "v0.8.0",
-		LifecycleArgs: []string{"--components", "telemetry,apm", "--non-interactive"},
+		LifecycleArgs: []string{"--harnesses", "codex", "--non-interactive"},
 	}
 	if !reflect.DeepEqual(runner, wantRunner) {
 		t.Fatalf("runner options = %#v, want %#v", runner, wantRunner)
@@ -500,14 +485,14 @@ func TestUpdateRejectsInvalidManagedHomeBeforeHandoff(t *testing.T) {
 			ManagedCLI: newManagedCLIService(managedCLIConfig{
 				Home: "relative/home", GOOS: "linux", Paths: &fakeManagedPathManager{},
 			}),
-			Components: map[componentName]componentOps{},
+			Telemetry: componentOps{},
 		},
 		Update: updateHandoff{Prepare: func(context.Context, []string) (handoffResult, error) {
 			handoffCalled = true
 			return handoffResult{}, nil
 		}},
 	}
-	code := execute([]string{"update", "--cli-only"}, deps)
+	code := execute([]string{"update"}, deps)
 	if code != 1 || handoffCalled {
 		t.Fatalf("execute() = %d, handoff called = %t; want pre-handoff rejection", code, handoffCalled)
 	}

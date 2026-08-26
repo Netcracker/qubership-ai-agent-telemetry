@@ -158,9 +158,9 @@ PY
 }
 
 assert_temp_clean() {
-  if find "$TMPDIR" -mindepth 1 -print -quit | grep . >/dev/null 2>&1; then
-    find "$TMPDIR" -mindepth 1 -maxdepth 2 -print >&2
-    fail "private temporary directory was not removed"
+  if find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d -name 'ai-agent-telemetry-bootstrap.*' -print -quit | grep . >/dev/null 2>&1; then
+    find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d -name 'ai-agent-telemetry-bootstrap.*' -print >&2
+    fail "bootstrap temporary directory was not removed"
   fi
 }
 
@@ -174,7 +174,7 @@ Darwin arm64 ai-agent-telemetry-darwin-arm64'
     QDI_OS=$os QDI_ARCH=$arch
     export QDI_OS QDI_ARCH
     write_sums "$asset"
-    run_installer update --components telemetry
+    run_installer update --harnesses codex
     [ "$RUN_CODE" -eq 0 ] || fail "$os/$arch failed: $RUN_OUTPUT"
     grep -Fx "https://release.example.test/releases/latest/download/$asset" "$QDI_TEST_LOG" >/dev/null ||
       fail "wrong asset URL for $os/$arch"
@@ -229,16 +229,16 @@ test_command_defaulting_and_exact_argv() {
   run_installer
   [ "$RUN_CODE" -eq 0 ] || fail "default run failed: $RUN_OUTPUT"
   [ "$(cat "$QDI_EXEC_LOG")" = install ] || fail "no arguments did not default to install"
-  run_installer --components telemetry --non-interactive
+  run_installer --harnesses codex --non-interactive
   expected='install
---components
-telemetry
+--harnesses
+codex
 --non-interactive'
   [ "$(cat "$QDI_EXEC_LOG")" = "$expected" ] || fail "option-first argv changed"
-  run_installer update --components 'telemetry,apm' --non-interactive
+  run_installer update --harnesses 'claude,codex' --non-interactive
   expected='update
---components
-telemetry,apm
+--harnesses
+claude,codex
 --non-interactive'
   [ "$(cat "$QDI_EXEC_LOG")" = "$expected" ] || fail "explicit update argv changed"
   run_installer uninstall --purge

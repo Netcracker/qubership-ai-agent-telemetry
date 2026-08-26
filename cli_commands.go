@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -13,9 +12,8 @@ import (
 )
 
 type lifecycleFlagValues struct {
-	components, skip, harnesses                              []string
-	forceGitHooks, nonInteractive, purge, removeCLI, cliOnly bool
-	legacyForceUpdate, legacyForce, legacySkipConfig         bool
+	harnesses             []string
+	nonInteractive, purge bool
 }
 
 func newLifecycleCommand(action lifecycleAction, deps appDeps) *cobra.Command {
@@ -25,9 +23,6 @@ func newLifecycleCommand(action lifecycleAction, deps appDeps) *cobra.Command {
 		Short: lifecycleCommandDescription(action),
 		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := legacyLifecycleOptionError(cmd, values); err != nil {
-				return usageError{err: err}
-			}
 			opts, err := lifecycleOptionsFromFlags(action, cmd, values)
 			if err != nil {
 				return usageError{err: err}
@@ -70,50 +65,27 @@ func newLifecycleCommand(action lifecycleAction, deps appDeps) *cobra.Command {
 func lifecycleCommandDescription(action lifecycleAction) string {
 	switch action {
 	case actionInstall:
-		return "Install the managed CLI and selected components"
+		return "Install the managed CLI and telemetry"
 	case actionUpdate:
-		return "Update the managed CLI and selected components"
+		return "Update the managed CLI and telemetry"
 	default:
-		return "Remove selected components and the managed CLI when appropriate"
+		return "Remove telemetry and the managed CLI"
 	}
 }
 
 func bindLifecycleFlags(cmd *cobra.Command, action lifecycleAction, values *lifecycleFlagValues) {
-	cmd.Flags().StringSliceVar(&values.components, "components", nil,
-		"Select a comma-separated component subset: "+enumValuesDescription(componentFlagValues(true)))
-	cmd.Flags().StringSliceVar(&values.skip, "skip", nil,
-		"Skip a comma-separated component subset: "+enumValuesDescription(componentFlagValues(false)))
 	if action != actionUninstall {
 		cmd.Flags().StringSliceVar(&values.harnesses, "harnesses", nil,
 			"Select a comma-separated harness subset: "+enumValuesDescription(harnessFlagValues(true)))
-		cmd.Flags().BoolVar(&values.forceGitHooks, "force-git-hooks", false, "Replace an unrelated global Git hooks path")
 		cmd.Flags().BoolVar(&values.nonInteractive, "non-interactive", false, "Disable interactive prompts")
-	}
-	if action == actionUpdate {
-		cmd.Flags().BoolVar(&values.cliOnly, "cli-only", false, "Update only the managed CLI")
 	}
 	if action == actionUninstall {
 		cmd.Flags().BoolVar(&values.purge, "purge", false, "Remove telemetry configuration and cache")
-		cmd.Flags().BoolVar(&values.removeCLI, "remove-cli", false, "Remove the managed CLI after a partial uninstall")
 	}
-	cmd.Flags().BoolVar(&values.legacyForceUpdate, "force-update", false, "")
-	cmd.Flags().BoolVar(&values.legacyForce, "force", false, "")
-	cmd.Flags().BoolVar(&values.legacySkipConfig, "skip-config", false, "")
-	_ = cmd.Flags().MarkHidden("force-update")
-	_ = cmd.Flags().MarkHidden("force")
-	_ = cmd.Flags().MarkHidden("skip-config")
 }
 
 func lifecycleOptionsFromFlags(action lifecycleAction, cmd *cobra.Command, values lifecycleFlagValues) (lifecycleOptions, error) {
-	opts := lifecycleOptions{Action: action, ForceGitHooks: values.forceGitHooks, NonInteractive: values.nonInteractive,
-		Purge: values.purge, RemoveCLI: values.removeCLI, CLIOnly: values.cliOnly}
-	if cmd.Flags().Changed("components") || cmd.Flags().Changed("skip") {
-		components, err := normalizeSelection(values.components, values.skip)
-		if err != nil {
-			return lifecycleOptions{}, err
-		}
-		opts.Components = components
-	}
+	opts := lifecycleOptions{Action: action, NonInteractive: values.nonInteractive, Purge: values.purge}
 	if action != actionUninstall && cmd.Flags().Changed("harnesses") {
 		harnesses, err := normalizeHarnesses(values.harnesses)
 		if err != nil {
@@ -135,35 +107,11 @@ func parseLifecycleArgs(action lifecycleAction, args []string) (lifecycleOptions
 	if len(cmd.Flags().Args()) != 0 {
 		return lifecycleOptions{}, fmt.Errorf("%s accepts no arguments", action)
 	}
-	if err := legacyLifecycleOptionError(cmd, values); err != nil {
-		return lifecycleOptions{}, err
-	}
 	return lifecycleOptionsFromFlags(action, cmd, values)
 }
 
-func legacyLifecycleOptionError(cmd *cobra.Command, values lifecycleFlagValues) error {
-	switch {
-	case cmd.Flags().Changed("force-update") || values.legacyForceUpdate:
-		return errors.New("--force-update is no longer supported; use update")
-	case cmd.Flags().Changed("force") || values.legacyForce:
-		return errors.New("--force is no longer supported; use update --components telemetry")
-	case cmd.Flags().Changed("skip-config") || values.legacySkipConfig:
-		return errors.New("--skip-config is no longer supported; use --skip telemetry")
-	default:
-		return nil
-	}
-}
-
 func lifecycleArgs(opts lifecycleOptions) []string {
-	args := make([]string, 0, 10)
-	if opts.CLIOnly {
-		return []string{"--cli-only"}
-	}
-	components := make([]string, len(opts.Components))
-	for i, component := range opts.Components {
-		components[i] = string(component)
-	}
-	args = append(args, "--components", strings.Join(components, ","))
+	args := make([]string, 0, 5)
 	if opts.Action != actionUninstall {
 		harnesses := make([]string, len(opts.Harnesses))
 		for i, harness := range opts.Harnesses {
@@ -171,29 +119,16 @@ func lifecycleArgs(opts lifecycleOptions) []string {
 		}
 		args = append(args, "--harnesses", strings.Join(harnesses, ","))
 	}
-	if opts.ForceGitHooks {
-		args = append(args, "--force-git-hooks")
-	}
 	if opts.NonInteractive {
 		args = append(args, "--non-interactive")
 	}
 	if opts.Purge {
 		args = append(args, "--purge")
 	}
-	if opts.RemoveCLI {
-		args = append(args, "--remove-cli")
-	}
 	return args
 }
 
 func registerLifecycleCompletion(cmd *cobra.Command, action lifecycleAction) {
-	components := componentFlagValues(true)
-	_ = cmd.RegisterFlagCompletionFunc("components", func(_ *cobra.Command, _ []string, value string) ([]string, cobra.ShellCompDirective) {
-		return completeCSV(components, value)
-	})
-	_ = cmd.RegisterFlagCompletionFunc("skip", func(_ *cobra.Command, _ []string, value string) ([]string, cobra.ShellCompDirective) {
-		return completeCSV(components[1:], value)
-	})
 	if action != actionUninstall {
 		_ = cmd.RegisterFlagCompletionFunc("harnesses", func(_ *cobra.Command, _ []string, value string) ([]string, cobra.ShellCompDirective) {
 			return completeCSV(harnessFlagValues(true), value)

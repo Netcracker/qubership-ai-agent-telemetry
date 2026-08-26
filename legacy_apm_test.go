@@ -174,8 +174,9 @@ func TestHasLegacyTelemetryAPMDependencyRejectsInvalidAPMEntryType(t *testing.T)
 }
 
 func TestGlobalAPMManifestMatchesMappingDependency(t *testing.T) {
-	data := []byte("dependencies:\n  apm:\n    " + testAPMPackage + ": main\n")
-	installed, err := hasGlobalAPMDependency(data, testAPMPackage)
+	const packageName = "example/package"
+	data := []byte("dependencies:\n  apm:\n    " + packageName + ": main\n")
+	installed, err := hasGlobalAPMDependency(data, packageName)
 	if err != nil {
 		t.Fatal(err)
 	}

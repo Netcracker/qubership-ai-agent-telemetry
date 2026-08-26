@@ -17,23 +17,13 @@ const (
 	actionUninstall lifecycleAction = "uninstall"
 )
 
-type componentName string
-
-const (
-	componentAPM       componentName = "apm"
-	componentTelemetry componentName = "telemetry"
-	componentGitHooks  componentName = "git-hooks"
-)
+const componentTelemetry = "telemetry"
 
 type lifecycleOptions struct {
 	Action         lifecycleAction
-	Components     []componentName
 	Harnesses      []hookTarget
-	ForceGitHooks  bool
 	NonInteractive bool
 	Purge          bool
-	RemoveCLI      bool
-	CLIOnly        bool
 }
 
 type operationState string
@@ -76,7 +66,7 @@ type managedCLIService struct {
 type lifecycleDeps struct {
 	ManagedCLI           managedCLIService
 	ManagedInstallSource func() (string, error)
-	Components           map[componentName]componentOps
+	Telemetry            componentOps
 	ConfigureSkill       configureSkillService
 }
 
@@ -84,12 +74,8 @@ func defaultLifecycleDeps(home string, warnings io.Writer) lifecycleDeps {
 	return lifecycleDeps{
 		ManagedCLI:           defaultManagedCLIService(home),
 		ManagedInstallSource: os.Executable,
-		Components: map[componentName]componentOps{
-			componentAPM:       newAPMComponent(apmDeps{Home: home}),
-			componentTelemetry: newTelemetryComponent(telemetryDeps{Home: func() string { return home }, Warnings: warnings}),
-			componentGitHooks:  newGitHooksComponent(gitHooksDeps{Home: home, Warn: warnings}),
-		},
-		ConfigureSkill: newConfigureSkillService(configureSkillDeps{Home: home, Version: version}),
+		Telemetry:            newTelemetryComponent(telemetryDeps{Home: func() string { return home }, Warnings: warnings}),
+		ConfigureSkill:       newConfigureSkillService(configureSkillDeps{Home: home, Version: version}),
 	}
 }
 
@@ -106,23 +92,16 @@ func runLifecycle(ctx context.Context, opts lifecycleOptions, deps lifecycleDeps
 }
 
 func preflightLifecycle(ctx context.Context, opts lifecycleOptions, deps lifecycleDeps) error {
-	removeCLI := opts.Action == actionUninstall && (opts.RemoveCLI || isCompleteSelection(opts.Components))
 	var preflightErrors []error
 	if err := preflightManagedCLI(opts, deps.ManagedCLI); err != nil {
 		preflightErrors = append(preflightErrors, err)
 	}
-	if !opts.CLIOnly {
-		for _, component := range opts.Components {
-			operation := deps.Components[component]
-			if operation.Preflight == nil {
-				continue
-			}
-			if err := operation.Preflight(ctx, opts); err != nil {
-				preflightErrors = append(preflightErrors, fmt.Errorf("%s preflight: %w", component, err))
-			}
+	if deps.Telemetry.Preflight != nil {
+		if err := deps.Telemetry.Preflight(ctx, opts); err != nil {
+			preflightErrors = append(preflightErrors, fmt.Errorf("telemetry preflight: %w", err))
 		}
 	}
-	if removeCLI && deps.ManagedCLI.PreflightRemove != nil {
+	if opts.Action == actionUninstall && deps.ManagedCLI.PreflightRemove != nil {
 		if err := deps.ManagedCLI.PreflightRemove(opts); err != nil {
 			preflightErrors = append(preflightErrors, fmt.Errorf("managed CLI removal preflight: %w", err))
 		}
@@ -134,9 +113,7 @@ func preflightLifecycle(ctx context.Context, opts lifecycleOptions, deps lifecyc
 }
 
 func preflightManagedCLI(opts lifecycleOptions, service managedCLIService) error {
-	touched := opts.Action == actionInstall || opts.Action == actionUpdate ||
-		(opts.Action == actionUninstall && (opts.RemoveCLI || isCompleteSelection(opts.Components)))
-	if !touched || service.Preflight == nil {
+	if service.Preflight == nil {
 		return nil
 	}
 	if err := service.Preflight(opts); err != nil {
@@ -146,53 +123,35 @@ func preflightManagedCLI(opts lifecycleOptions, service managedCLIService) error
 }
 
 func executePreparedLifecycle(ctx context.Context, opts lifecycleOptions, deps lifecycleDeps) lifecycleSummary {
-	removeCLI := opts.Action == actionUninstall && (opts.RemoveCLI || isCompleteSelection(opts.Components))
-	results := make([]operationResult, 0, len(opts.Components)+1)
+	results := make([]operationResult, 0, 3)
 	switch opts.Action {
 	case actionInstall, actionUpdate:
 		managedResult := runManagedInstall(deps.ManagedCLI, deps.ManagedInstallSource)
 		results = append(results, managedResult)
-		if !opts.CLIOnly {
-			for _, component := range opts.Components {
-				if component == componentTelemetry && managedResult.State != operationOK {
-					results = append(results, operationResult{
-						Name: string(componentTelemetry), State: operationSkipped,
-						Detail: "managed CLI prerequisite was not installed; native hooks were preserved",
-					})
-					continue
-				}
-				results = append(results, runComponent(ctx, opts, component, deps.Components[component]))
-			}
-			if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill); ok {
-				results = append(results, result)
-			}
-		}
-	case actionUninstall:
-		telemetryFailed := false
-		for _, component := range opts.Components {
-			result := runComponent(ctx, opts, component, deps.Components[component])
-			results = append(results, result)
-			if component == componentTelemetry && result.State == operationFailed {
-				telemetryFailed = true
-			}
+		if managedResult.State != operationOK {
+			results = append(results, operationResult{
+				Name: componentTelemetry, State: operationSkipped,
+				Detail: "managed CLI prerequisite was not installed; native hooks were preserved",
+			})
+		} else {
+			results = append(results, runComponent(ctx, opts, componentTelemetry, deps.Telemetry))
 		}
 		if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill); ok {
 			results = append(results, result)
 		}
-		if removeCLI {
-			if telemetryFailed {
-				results = append(results, operationResult{
-					Name: "managed-cli", State: operationSkipped,
-					Detail: "telemetry cleanup failed; managed CLI was preserved",
-				})
-			} else {
-				results = append(results, runManagedRemove(deps.ManagedCLI))
-			}
-		} else {
+	case actionUninstall:
+		telemetryResult := runComponent(ctx, opts, componentTelemetry, deps.Telemetry)
+		results = append(results, telemetryResult)
+		if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill); ok {
+			results = append(results, result)
+		}
+		if telemetryResult.State == operationFailed {
 			results = append(results, operationResult{
 				Name: "managed-cli", State: operationSkipped,
-				Detail: "preserved for partial uninstall",
+				Detail: "telemetry cleanup failed; managed CLI was preserved",
 			})
+		} else {
+			results = append(results, runManagedRemove(deps.ManagedCLI))
 		}
 	}
 
@@ -239,7 +198,7 @@ func runManagedRemove(service managedCLIService) operationResult {
 	return normalizeOperationResult(service.Remove(), "managed-cli")
 }
 
-func runComponent(ctx context.Context, opts lifecycleOptions, name componentName, operations componentOps) operationResult {
+func runComponent(ctx context.Context, opts lifecycleOptions, name string, operations componentOps) operationResult {
 	var operation func(context.Context, lifecycleOptions) operationResult
 	switch opts.Action {
 	case actionInstall:
@@ -250,9 +209,9 @@ func runComponent(ctx context.Context, opts lifecycleOptions, name componentName
 		operation = operations.Uninstall
 	}
 	if operation == nil {
-		return operationResult{Name: string(name), State: operationSkipped, Detail: "component operation is unavailable"}
+		return operationResult{Name: name, State: operationSkipped, Detail: "component operation is unavailable"}
 	}
-	return normalizeOperationResult(operation(ctx, opts), string(name))
+	return normalizeOperationResult(operation(ctx, opts), name)
 }
 
 func normalizeOperationResult(result operationResult, fallback string) operationResult {

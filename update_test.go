@@ -94,7 +94,8 @@ func TestUpdateHandoffVerifiedReleaseRunsChildAndSkipsOldLifecycle(t *testing.T)
 		},
 	})
 	oldLifecycleCalled := false
-	code, err := runUpdateWithHandoff(context.Background(), []string{"--components", "telemetry,apm", "--non-interactive"}, handoff,
+	lifecycleArgs := []string{"--harnesses", "claude,codex", "--non-interactive"}
+	code, err := runUpdateWithHandoff(context.Background(), lifecycleArgs, handoff,
 		func(context.Context, []string) int {
 			oldLifecycleCalled = true
 			return 0
@@ -108,7 +109,7 @@ func TestUpdateHandoffVerifiedReleaseRunsChildAndSkipsOldLifecycle(t *testing.T)
 	wantArgs := []string{
 		"__update-runner", "--managed-path", "/home/test/.local/bin/ai-agent-telemetry",
 		"--parent-pid", "42", "--release", "v0.8.0", "--",
-		"--components", "telemetry,apm", "--non-interactive",
+		"--harnesses", "claude,codex", "--non-interactive",
 	}
 	if !reflect.DeepEqual(childArgs, wantArgs) {
 		t.Fatalf("child args = %q, want %q", childArgs, wantArgs)
@@ -131,7 +132,7 @@ func TestUpdateHandoffCurrentVersionRunsLifecycleDirectly(t *testing.T) {
 			return 0, nil
 		},
 	})
-	wantArgs := []string{"--components", "telemetry"}
+	wantArgs := []string{"--harnesses", "codex"}
 	code, err := runUpdateWithHandoff(context.Background(), wantArgs, handoff, func(_ context.Context, args []string) int {
 		if !reflect.DeepEqual(args, wantArgs) {
 			t.Fatalf("direct args = %q, want %q", args, wantArgs)
@@ -152,7 +153,7 @@ func TestUpdateHandoffBootstrapRunnerSkipsReleaseLookup(t *testing.T) {
 		}},
 	})
 	called := false
-	code, err := runUpdateWithHandoff(context.Background(), []string{"--cli-only"}, handoff, func(context.Context, []string) int {
+	code, err := runUpdateWithHandoff(context.Background(), []string{"--non-interactive"}, handoff, func(context.Context, []string) int {
 		called = true
 		return 0
 	})
@@ -176,7 +177,7 @@ func TestUpdateHandoffRunnerPreflightsBeforeSwapAndLifecycle(t *testing.T) {
 	}
 	var calls []string
 	code := runPreparedUpdateRunner(context.Background(), updateRunnerOptions{
-		ManagedPath: managed, ParentPID: 42, Release: "v0.8.0", LifecycleArgs: []string{"--cli-only"},
+		ManagedPath: managed, ParentPID: 42, Release: "v0.8.0", LifecycleArgs: []string{"--harnesses", "codex"},
 	}, updateRunnerCallbacks{
 		Executable: func() (string, error) { return source, nil },
 		Preflight: func(_ context.Context, args []string) error {
@@ -197,7 +198,7 @@ func TestUpdateHandoffRunnerPreflightsBeforeSwapAndLifecycle(t *testing.T) {
 		},
 		Stdout: io.Discard, Stderr: io.Discard,
 	})
-	if code != 41 || !reflect.DeepEqual(calls, []string{"preflight:--cli-only", "lifecycle:--cli-only"}) {
+	if code != 41 || !reflect.DeepEqual(calls, []string{"preflight:--harnesses codex", "lifecycle:--harnesses codex"}) {
 		t.Fatalf("runner code = %d, calls = %v", code, calls)
 	}
 }
@@ -357,20 +358,20 @@ func TestWindowsUpdateRunnerDoesNotReinstallCanonicalImageDuringPreparedLifecycl
 	managed := managedCLIPath(home, "windows")
 	paths := &fakeManagedPathManager{}
 	preflights, lifecycleCalls, canonicalInstalls := 0, 0, 0
-	opts, err := normalizeLifecycleOptions(lifecycleOptions{Action: actionUpdate, Components: []componentName{componentAPM}})
+	opts, err := normalizeLifecycleOptions(lifecycleOptions{Action: actionUpdate, Harnesses: []hookTarget{hookCodex}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	deps := lifecycleDeps{
 		ManagedCLI:           newManagedCLIService(managedCLIConfig{Home: home, GOOS: "windows", Paths: paths}),
 		ManagedInstallSource: func() (string, error) { return managed, nil },
-		Components: map[componentName]componentOps{componentAPM: {
+		Telemetry: componentOps{
 			Preflight: func(context.Context, lifecycleOptions) error { preflights++; return nil },
 			Update: func(context.Context, lifecycleOptions) operationResult {
 				lifecycleCalls++
-				return operationResult{Name: string(componentAPM), State: operationOK, Detail: "done"}
+				return operationResult{Name: "telemetry", State: operationOK, Detail: "done"}
 			},
-		}},
+		},
 	}
 	if err := preflightLifecycle(context.Background(), opts, deps); err != nil {
 		t.Fatal(err)

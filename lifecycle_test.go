@@ -13,17 +13,17 @@ import (
 	"testing"
 )
 
-func TestRunLifecyclePreflightsAllSelectedComponentsBeforeMutation(t *testing.T) {
+func TestRunLifecyclePreflightsTelemetryBeforeMutation(t *testing.T) {
 	var calls []string
-	deps := fakeLifecycleDeps(&calls, map[componentName]error{componentTelemetry: errors.New("collector unavailable")}, nil)
+	deps := fakeLifecycleDeps(&calls, errors.New("collector unavailable"), nil)
 
 	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionInstall}, deps)
 	if summary.Err == nil || !strings.Contains(summary.Err.Error(), "collector unavailable") {
 		t.Fatalf("runLifecycle() error = %v, want telemetry preflight failure", summary.Err)
 	}
-	want := []string{"preflight:apm", "preflight:telemetry", "preflight:git-hooks"}
+	want := []string{"preflight:telemetry"}
 	if !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %v, want all preflights and no mutation %v", calls, want)
+		t.Fatalf("calls = %v, want telemetry preflight and no mutation %v", calls, want)
 	}
 	if len(summary.Results) != 0 {
 		t.Fatalf("results = %v, want none after preflight failure", summary.Results)
@@ -35,21 +35,18 @@ func TestRunLifecycleUsesFixedInstallAndUpdateOrder(t *testing.T) {
 		t.Run(string(action), func(t *testing.T) {
 			var calls []string
 			deps := fakeLifecycleDeps(&calls, nil, nil)
-			summary := runLifecycle(context.Background(), lifecycleOptions{
-				Action: action, Components: []componentName{componentGitHooks, componentTelemetry, componentAPM},
-			}, deps)
+			summary := runLifecycle(context.Background(), lifecycleOptions{Action: action}, deps)
 			if summary.Err != nil {
 				t.Fatal(summary.Err)
 			}
 			verb := string(action)
 			wantCalls := []string{
-				"preflight:apm", "preflight:telemetry", "preflight:git-hooks",
-				"managed:cli", verb + ":apm", verb + ":telemetry", verb + ":git-hooks",
+				"preflight:telemetry", "managed:cli", verb + ":telemetry",
 			}
 			if !reflect.DeepEqual(calls, wantCalls) {
 				t.Fatalf("calls = %v, want %v", calls, wantCalls)
 			}
-			wantNames := []string{"managed-cli", "apm", "telemetry", "git-hooks"}
+			wantNames := []string{"managed-cli", "telemetry"}
 			if got := resultNames(summary.Results); !reflect.DeepEqual(got, wantNames) {
 				t.Fatalf("result names = %v, want %v", got, wantNames)
 			}
@@ -57,7 +54,7 @@ func TestRunLifecycleUsesFixedInstallAndUpdateOrder(t *testing.T) {
 	}
 }
 
-func TestRunLifecycleContinuesIndependentComponentsAfterFailures(t *testing.T) {
+func TestRunLifecycleSkipsTelemetryAfterManagedCLIFailure(t *testing.T) {
 	var calls []string
 	failures := map[string]error{
 		"managed:cli": errors.New("CLI copy failed"),
@@ -72,17 +69,16 @@ func TestRunLifecycleContinuesIndependentComponentsAfterFailures(t *testing.T) {
 		t.Fatalf("joined error %q does not contain managed CLI failure", summary.Err)
 	}
 	wantCalls := []string{
-		"preflight:apm", "preflight:telemetry", "preflight:git-hooks",
-		"managed:cli", "install:apm", "install:git-hooks",
+		"preflight:telemetry", "managed:cli",
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %v, want only independent components to continue %v", calls, wantCalls)
 	}
-	wantStates := []operationState{operationFailed, operationOK, operationSkipped, operationOK}
+	wantStates := []operationState{operationFailed, operationSkipped}
 	if got := resultStates(summary.Results); !reflect.DeepEqual(got, wantStates) {
 		t.Fatalf("states = %v, want %v", got, wantStates)
 	}
-	if detail := summary.Results[2].Detail; !strings.Contains(detail, "managed CLI") {
+	if detail := summary.Results[1].Detail; !strings.Contains(detail, "managed CLI") {
 		t.Fatalf("telemetry skip detail = %q, want managed CLI prerequisite", detail)
 	}
 }
@@ -102,8 +98,7 @@ func TestRunLifecycleContinuesAfterOptionalConfigureSkillWarning(t *testing.T) {
 		t.Fatalf("runLifecycle() error = %v, want optional warning to stay non-fatal", summary.Err)
 	}
 	wantCalls := []string{
-		"preflight:apm", "preflight:telemetry", "preflight:git-hooks",
-		"managed:cli", "install:apm", "install:telemetry", "install:git-hooks", "install:configure-skill",
+		"preflight:telemetry", "managed:cli", "install:telemetry", "install:configure-skill",
 	}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %v, want lifecycle continuation %v", calls, wantCalls)
@@ -114,54 +109,23 @@ func TestRunLifecycleContinuesAfterOptionalConfigureSkillWarning(t *testing.T) {
 	}
 }
 
-func TestRunLifecycleUninstallsComponentsBeforeRemovingCLI(t *testing.T) {
+func TestRunLifecycleUninstallsTelemetryAndConfigureSkillBeforeRemovingCLI(t *testing.T) {
 	var calls []string
 	deps := fakeLifecycleDeps(&calls, nil, nil)
+	deps.ConfigureSkill = configureSkillService{Uninstall: func(context.Context, lifecycleOptions) operationResult {
+		calls = append(calls, "uninstall:configure-skill")
+		return operationResult{Name: "configure-skill", State: operationWarn, Detail: "APM unavailable"}
+	}}
 	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionUninstall}, deps)
 	if summary.Err != nil {
 		t.Fatal(summary.Err)
 	}
 	want := []string{
-		"preflight:apm", "preflight:telemetry", "preflight:git-hooks", "preflight-remove:cli",
-		"uninstall:apm", "uninstall:telemetry", "uninstall:git-hooks", "uninstall:cli",
+		"preflight:telemetry", "preflight-remove:cli", "uninstall:telemetry",
+		"uninstall:configure-skill", "uninstall:cli",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
-	}
-}
-
-func TestRunLifecyclePartialUninstallPreservesCLIUnlessRequested(t *testing.T) {
-	for _, tt := range []struct {
-		name      string
-		removeCLI bool
-		wantCLI   bool
-	}{
-		{name: "preserve", wantCLI: false},
-		{name: "remove", removeCLI: true, wantCLI: true},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			var calls []string
-			deps := fakeLifecycleDeps(&calls, nil, nil)
-			summary := runLifecycle(context.Background(), lifecycleOptions{
-				Action: actionUninstall, Components: []componentName{componentTelemetry}, RemoveCLI: tt.removeCLI,
-			}, deps)
-			if summary.Err != nil {
-				t.Fatal(summary.Err)
-			}
-			gotCLI := containsString(calls, "uninstall:cli")
-			if gotCLI != tt.wantCLI {
-				t.Fatalf("calls = %v, CLI removal = %t, want %t", calls, gotCLI, tt.wantCLI)
-			}
-			if !tt.removeCLI {
-				want := []operationResult{
-					{Name: "telemetry", State: operationOK, Detail: "done"},
-					{Name: "managed-cli", State: operationSkipped, Detail: "preserved for partial uninstall"},
-				}
-				if !reflect.DeepEqual(summary.Results, want) {
-					t.Fatalf("results = %#v, want %#v", summary.Results, want)
-				}
-			}
-		})
 	}
 }
 
@@ -181,13 +145,11 @@ func TestRunLifecycleRejectsInvalidOperationStates(t *testing.T) {
 			result: 0,
 		},
 		{
-			name: "component unknown state",
+			name: "telemetry unknown state",
 			configure: func(deps *lifecycleDeps) {
-				operations := deps.Components[componentAPM]
-				operations.Install = func(context.Context, lifecycleOptions) operationResult {
-					return operationResult{Name: "apm", State: "PENDING", Detail: "waiting"}
+				deps.Telemetry.Install = func(context.Context, lifecycleOptions) operationResult {
+					return operationResult{Name: "telemetry", State: "PENDING", Detail: "waiting"}
 				}
-				deps.Components[componentAPM] = operations
 			},
 			result: 1,
 		},
@@ -198,9 +160,7 @@ func TestRunLifecycleRejectsInvalidOperationStates(t *testing.T) {
 			var calls []string
 			deps := fakeLifecycleDeps(&calls, nil, nil)
 			tt.configure(&deps)
-			summary := runLifecycle(context.Background(), lifecycleOptions{
-				Action: actionInstall, Components: []componentName{componentAPM},
-			}, deps)
+			summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionInstall}, deps)
 			if summary.Err == nil || !strings.Contains(summary.Err.Error(), "invalid operation state") {
 				t.Fatalf("runLifecycle() error = %v, want invalid-state failure", summary.Err)
 			}
@@ -218,14 +178,19 @@ func TestRunLifecycleRejectsInvalidOperationStates(t *testing.T) {
 func TestRunLifecycleTelemetryFailurePreventsCLIRemoval(t *testing.T) {
 	var calls []string
 	deps := fakeLifecycleDeps(&calls, nil, map[string]error{"uninstall:telemetry": errors.New("hook cleanup failed")})
-	summary := runLifecycle(context.Background(), lifecycleOptions{
-		Action: actionUninstall, Components: []componentName{componentTelemetry}, RemoveCLI: true,
-	}, deps)
+	deps.ConfigureSkill = configureSkillService{Uninstall: func(context.Context, lifecycleOptions) operationResult {
+		calls = append(calls, "uninstall:configure-skill")
+		return operationResult{Name: "configure-skill", State: operationWarn, Detail: "APM unavailable"}
+	}}
+	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionUninstall}, deps)
 	if summary.Err == nil || !strings.Contains(summary.Err.Error(), "hook cleanup failed") {
 		t.Fatalf("runLifecycle() error = %v, want cleanup failure", summary.Err)
 	}
 	if containsString(calls, "uninstall:cli") {
 		t.Fatalf("calls = %v, CLI removal must not run after telemetry cleanup failure", calls)
+	}
+	if !containsString(calls, "uninstall:configure-skill") {
+		t.Fatalf("calls = %v, configure-skill cleanup must remain best effort", calls)
 	}
 	last := summary.Results[len(summary.Results)-1]
 	if last.Name != "managed-cli" || last.State != operationSkipped {
@@ -236,28 +201,16 @@ func TestRunLifecycleTelemetryFailurePreventsCLIRemoval(t *testing.T) {
 func TestRunLifecyclePreservesCLIAndTelemetryDataForModifiedClineHook(t *testing.T) {
 	tests := []struct {
 		name            string
-		opts            lifecycleOptions
 		modifiedContent []byte
 	}{
-		{
-			name: "full uninstall",
-			opts: lifecycleOptions{Action: actionUninstall, Purge: true},
-		},
-		{
-			name: "telemetry uninstall with remove CLI",
-			opts: lifecycleOptions{
-				Action: actionUninstall, Components: []componentName{componentTelemetry}, Purge: true, RemoveCLI: true,
-			},
-		},
+		{name: "default"},
 		{
 			name: "UTF-8 BOM ownership comment",
-			opts: lifecycleOptions{Action: actionUninstall, Purge: true},
 			modifiedContent: append([]byte{0xef, 0xbb, 0xbf},
 				[]byte("# "+clineHookOwner+"\ncustom-hook-command\n")...),
 		},
 		{
 			name: "UTF-16LE ownership comment with incomplete tail",
-			opts: lifecycleOptions{Action: actionUninstall, Purge: true},
 			modifiedContent: append(encodeUTF16Test(
 				"# "+clineHookOwner+"\r\ncustom-hook-command\r\n",
 				binary.LittleEndian, []byte{0xff, 0xfe}), 0x23),
@@ -289,12 +242,12 @@ func TestRunLifecyclePreservesCLIAndTelemetryDataForModifiedClineHook(t *testing
 
 			var calls []string
 			deps := fakeLifecycleDeps(&calls, nil, nil)
-			deps.Components[componentTelemetry] = newTelemetryComponent(telemetryDeps{
+			deps.Telemetry = newTelemetryComponent(telemetryDeps{
 				Home: func() string { return home }, ConfigDir: func() string { return configDir },
 				CacheDir: func() string { return cacheDir }, Warnings: &bytes.Buffer{},
 			})
 
-			summary := runLifecycle(context.Background(), tt.opts, deps)
+			summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionUninstall, Purge: true}, deps)
 			if summary.Err == nil || !strings.Contains(summary.Err.Error(), "cline") {
 				t.Fatalf("runLifecycle() error = %v, want incomplete Cline cleanup", summary.Err)
 			}
@@ -344,13 +297,11 @@ func TestRunLifecycleResolvesModifiedClineHookAfterManualEdit(t *testing.T) {
 
 	var firstCalls []string
 	firstDeps := fakeLifecycleDeps(&firstCalls, nil, nil)
-	firstDeps.Components[componentTelemetry] = newTelemetryComponent(telemetryDeps{
+	firstDeps.Telemetry = newTelemetryComponent(telemetryDeps{
 		Home: func() string { return home }, ConfigDir: func() string { return configDir },
 		CacheDir: func() string { return cacheDir }, Warnings: &bytes.Buffer{},
 	})
-	opts := lifecycleOptions{
-		Action: actionUninstall, Components: []componentName{componentTelemetry}, Purge: true, RemoveCLI: true,
-	}
+	opts := lifecycleOptions{Action: actionUninstall, Purge: true}
 	first := runLifecycle(context.Background(), opts, firstDeps)
 	if first.Err == nil || !strings.Contains(first.Err.Error(), "docs/manual-uninstall.md") {
 		t.Fatalf("first uninstall error = %v, want manual conflict-resolution guidance", first.Err)
@@ -370,7 +321,7 @@ func TestRunLifecycleResolvesModifiedClineHookAfterManualEdit(t *testing.T) {
 	}
 	var secondCalls []string
 	secondDeps := fakeLifecycleDeps(&secondCalls, nil, nil)
-	secondDeps.Components[componentTelemetry] = newTelemetryComponent(telemetryDeps{
+	secondDeps.Telemetry = newTelemetryComponent(telemetryDeps{
 		Home: func() string { return home }, ConfigDir: func() string { return configDir },
 		CacheDir: func() string { return cacheDir }, Warnings: &bytes.Buffer{},
 	})
@@ -431,13 +382,11 @@ func TestRunLifecycleRemovesCLIAndTelemetryDataForUnrelatedClineHook(t *testing.
 
 			var calls []string
 			deps := fakeLifecycleDeps(&calls, nil, nil)
-			deps.Components[componentTelemetry] = newTelemetryComponent(telemetryDeps{
+			deps.Telemetry = newTelemetryComponent(telemetryDeps{
 				Home: func() string { return home }, ConfigDir: func() string { return configDir },
 				CacheDir: func() string { return cacheDir }, Warnings: &bytes.Buffer{},
 			})
-			summary := runLifecycle(context.Background(), lifecycleOptions{
-				Action: actionUninstall, Components: []componentName{componentTelemetry}, Purge: true, RemoveCLI: true,
-			}, deps)
+			summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionUninstall, Purge: true}, deps)
 			if summary.Err != nil {
 				t.Fatalf("runLifecycle() error = %v, want unrelated hook preserved without blocking cleanup", summary.Err)
 			}
@@ -456,26 +405,12 @@ func TestRunLifecycleRemovesCLIAndTelemetryDataForUnrelatedClineHook(t *testing.
 	}
 }
 
-func TestRunLifecycleCLIOnlySkipsComponentPreflightAndExecution(t *testing.T) {
-	var calls []string
-	deps := fakeLifecycleDeps(&calls, map[componentName]error{componentAPM: errors.New("must not run")}, nil)
-	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionUpdate, CLIOnly: true}, deps)
-	if summary.Err != nil {
-		t.Fatal(summary.Err)
-	}
-	if want := []string{"managed:cli"}; !reflect.DeepEqual(calls, want) {
-		t.Fatalf("calls = %v, want %v", calls, want)
-	}
-}
-
 func TestRunLifecycleNormalizesBeforeSideEffects(t *testing.T) {
 	var calls []string
 	deps := fakeLifecycleDeps(&calls, nil, nil)
-	summary := runLifecycle(context.Background(), lifecycleOptions{
-		Action: actionUninstall, Components: []componentName{componentAPM}, Purge: true,
-	}, deps)
-	if summary.Err == nil || !strings.Contains(summary.Err.Error(), "--purge requires telemetry") {
-		t.Fatalf("runLifecycle() error = %v, want invalid purge selection", summary.Err)
+	summary := runLifecycle(context.Background(), lifecycleOptions{Action: actionInstall, Purge: true}, deps)
+	if summary.Err == nil || !strings.Contains(summary.Err.Error(), "--purge is valid only for uninstall") {
+		t.Fatalf("runLifecycle() error = %v, want invalid purge action", summary.Err)
 	}
 	if len(calls) != 0 {
 		t.Fatalf("calls = %v, want no side effects for invalid options", calls)
@@ -485,11 +420,11 @@ func TestRunLifecycleNormalizesBeforeSideEffects(t *testing.T) {
 func TestRunLifecycleFormatsDeterministicFixedWidthSummary(t *testing.T) {
 	summary := lifecycleSummary{Results: []operationResult{
 		{Name: "managed-cli", State: operationOK, Detail: "installed"},
-		{Name: "apm", State: operationSkipped, Detail: "already configured"},
+		{Name: "configure-skill", State: operationSkipped, Detail: "APM unavailable"},
 		{Name: "telemetry", State: operationFailed, Detail: "collector unavailable"},
 	}}
 	want := "managed-cli  OK       installed\n" +
-		"apm          SKIPPED  already configured\n" +
+		"configure-skill SKIPPED  APM unavailable\n" +
 		"telemetry    FAILED   collector unavailable\n"
 	if got := formatLifecycleSummary(summary); got != want {
 		t.Fatalf("formatLifecycleSummary() = %q, want %q", got, want)
@@ -511,15 +446,14 @@ func TestPreparedLifecycleDoesNotRepeatPreflightAfterUpdateSwap(t *testing.T) {
 		t.Fatal(summary.Err)
 	}
 	want := []string{
-		"preflight:apm", "preflight:telemetry", "preflight:git-hooks",
-		"managed:cli", "update:apm", "update:telemetry", "update:git-hooks",
+		"preflight:telemetry", "managed:cli", "update:telemetry",
 	}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want exactly-once preflight and execution %v", calls, want)
 	}
 }
 
-func fakeLifecycleDeps(calls *[]string, preflightFailures map[componentName]error, operationFailures map[string]error) lifecycleDeps {
+func fakeLifecycleDeps(calls *[]string, preflightFailure error, operationFailures map[string]error) lifecycleDeps {
 	result := func(call, name string) operationResult {
 		*calls = append(*calls, call)
 		if err := operationFailures[call]; err != nil {
@@ -538,25 +472,21 @@ func fakeLifecycleDeps(calls *[]string, preflightFailures map[componentName]erro
 				return nil
 			},
 		},
-		Components: make(map[componentName]componentOps),
-	}
-	for _, component := range allComponents() {
-		component := component
-		deps.Components[component] = componentOps{
+		Telemetry: componentOps{
 			Preflight: func(context.Context, lifecycleOptions) error {
-				*calls = append(*calls, "preflight:"+string(component))
-				return preflightFailures[component]
+				*calls = append(*calls, "preflight:telemetry")
+				return preflightFailure
 			},
 			Install: func(context.Context, lifecycleOptions) operationResult {
-				return result("install:"+string(component), string(component))
+				return result("install:telemetry", "telemetry")
 			},
 			Update: func(context.Context, lifecycleOptions) operationResult {
-				return result("update:"+string(component), string(component))
+				return result("update:telemetry", "telemetry")
 			},
 			Uninstall: func(context.Context, lifecycleOptions) operationResult {
-				return result("uninstall:"+string(component), string(component))
+				return result("uninstall:telemetry", "telemetry")
 			},
-		}
+		},
 	}
 	return deps
 }

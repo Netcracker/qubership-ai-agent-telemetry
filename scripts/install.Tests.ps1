@@ -126,13 +126,13 @@ function Test-DefaultingAndExactArguments {
     $result = Invoke-Fixture $fixture $Installer @()
     Assert-True ($result.Code -eq 0) "default install failed: $($result.Output)"
     Assert-True ((Get-Content -Raw $fixture.ExecLog).Trim() -eq 'install') 'no arguments did not default to install'
-    $result = Invoke-Fixture $fixture $Installer @('--components', 'telemetry', '--non-interactive')
+    $result = Invoke-Fixture $fixture $Installer @('--harnesses', 'codex', '--non-interactive')
     Assert-True ($result.Code -eq 0) "option-first install failed: $($result.Output)"
-    $want = "install`n--components`ntelemetry`n--non-interactive"
+    $want = "install`n--harnesses`ncodex`n--non-interactive"
     Assert-True ((Get-Content -Raw $fixture.ExecLog).Trim() -eq $want) 'option-first arguments changed'
-    $result = Invoke-Fixture $fixture $Installer @('update', '--components', 'telemetry,apm')
+    $result = Invoke-Fixture $fixture $Installer @('update', '--harnesses', 'claude,codex')
     Assert-True ($result.Code -eq 0) "explicit update failed: $($result.Output)"
-    $want = "update`n--components`ntelemetry,apm"
+    $want = "update`n--harnesses`nclaude,codex"
     Assert-True ((Get-Content -Raw $fixture.ExecLog).Trim() -eq $want) 'explicit update arguments changed'
   } finally {
     Remove-Item -Recurse -Force $fixture.Root -ErrorAction SilentlyContinue
