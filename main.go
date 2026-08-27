@@ -52,8 +52,8 @@ func configureEndpoint(flag string) string {
 	if flag != "" {
 		return flag
 	}
-	if endpoint := resolveEndpoint(""); endpoint != "" {
-		return endpoint
+	if resolveEndpoint("") != "" {
+		return ""
 	}
 	return readLine("Collector endpoint (for example, https://collector.example/v1/logs; leave blank to skip): ")
 }

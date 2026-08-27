@@ -166,7 +166,7 @@ func normalizeAppDeps(deps appDeps) appDeps {
 		deps.Lifecycle = defaultLifecycleDeps(deps.Home(), deps.ErrOut)
 	}
 	if deps.Lifecycle.Progress == nil {
-		deps.Lifecycle.Progress = deps.Out
+		deps.Lifecycle.Progress = deps.ErrOut
 	}
 	if deps.Update.Prepare == nil {
 		executable, _ := os.Executable()

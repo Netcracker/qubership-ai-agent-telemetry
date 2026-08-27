@@ -35,6 +35,7 @@ func newTelemetryComponent(deps telemetryDeps) componentOps {
 		}
 		endpoint = strings.TrimSpace(deps.Endpoint())
 		token = deps.Token()
+		promptedEndpoint := false
 		if endpoint == "" && !opts.NonInteractive {
 			var err error
 			endpoint, err = deps.PromptEndpoint(ctx)
@@ -42,15 +43,20 @@ func newTelemetryComponent(deps telemetryDeps) componentOps {
 			if err != nil {
 				return fmt.Errorf("cannot read collector endpoint: %w", err)
 			}
-			if endpoint != "" && token == "" {
-				token, err = deps.PromptToken(ctx)
-				if err != nil {
-					return fmt.Errorf("cannot read collector token: %w", err)
-				}
-			}
+			promptedEndpoint = true
 		}
 		if endpoint == "" {
 			return errors.New("collector endpoint is required")
+		}
+		if err := validateCollectorEndpoint(endpoint); err != nil {
+			return err
+		}
+		if promptedEndpoint && token == "" {
+			var err error
+			token, err = deps.PromptToken(ctx)
+			if err != nil {
+				return fmt.Errorf("cannot read collector token: %w", err)
+			}
 		}
 		if strings.TrimSpace(deps.ConfigDir()) == "" {
 			return errors.New("no user config directory available")

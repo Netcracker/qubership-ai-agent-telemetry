@@ -191,8 +191,8 @@ func TestLifecycleCommandReportsEachOperationBeforeItStarts(t *testing.T) {
 	wantProgress := ""
 	started := func(name string) operationResult {
 		wantProgress += "Starting " + name + "...\n"
-		if out.String() != wantProgress {
-			t.Fatalf("output when %s started = %q, want %q", name, out.String(), wantProgress)
+		if errOut.String() != wantProgress {
+			t.Fatalf("stderr when %s started = %q, want %q", name, errOut.String(), wantProgress)
 		}
 		return operationResult{Name: name, State: operationOK, Detail: "done"}
 	}
@@ -210,8 +210,8 @@ func TestLifecycleCommandReportsEachOperationBeforeItStarts(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d; stderr = %q", code, errOut.String())
 	}
-	if !strings.HasPrefix(out.String(), wantProgress) {
-		t.Fatalf("output = %q, want progress prefix %q", out.String(), wantProgress)
+	if strings.Contains(out.String(), "Starting ") || !strings.Contains(out.String(), "managed-cli  OK") {
+		t.Fatalf("stdout = %q, want only the final summary", out.String())
 	}
 }
 
