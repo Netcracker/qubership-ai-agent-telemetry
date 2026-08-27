@@ -35,16 +35,8 @@ func applyConfigureWithPath(
 	pathUpdate pathAllowUpdate,
 	delivery deliverySettingOverrides,
 ) error {
-	if endpoint != "" {
-		parsed, err := url.Parse(endpoint)
-		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Hostname() == "" ||
-			!strings.HasSuffix(parsed.Path, "/v1/logs") {
-			return fmt.Errorf(
-				"collector endpoint %q must use HTTPS, include a host, and end in /v1/logs; "+
-					"use https://collector.example/v1/logs",
-				endpoint,
-			)
-		}
+	if err := validateCollectorEndpoint(endpoint); err != nil {
+		return err
 	}
 	if pathUpdate.Set && pathUpdate.Clear {
 		return fmt.Errorf("--path-allow and --clear-path-allow cannot be combined")
@@ -98,6 +90,22 @@ func applyConfigureWithPath(
 		}
 	}
 	return nil
+}
+
+func validateCollectorEndpoint(endpoint string) error {
+	if endpoint == "" {
+		return nil
+	}
+	parsed, err := url.Parse(endpoint)
+	if err == nil && strings.EqualFold(parsed.Scheme, "https") && parsed.Hostname() != "" &&
+		strings.HasSuffix(parsed.Path, "/v1/logs") {
+		return nil
+	}
+	return fmt.Errorf(
+		"collector endpoint %q must use HTTPS, include a host, and end in /v1/logs; "+
+			"use https://collector.example/v1/logs",
+		endpoint,
+	)
 }
 
 func writePathAllowFile(configDir string, patterns []string) error {

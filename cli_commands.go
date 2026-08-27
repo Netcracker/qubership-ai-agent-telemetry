@@ -173,6 +173,9 @@ func newConfigureCommand(deps appDeps) *cobra.Command {
 				return fmt.Errorf("configure: no user config directory available")
 			}
 			collectorEndpoint := configureEndpoint(endpoint)
+			if err := validateCollectorEndpoint(collectorEndpoint); err != nil {
+				return fmt.Errorf("configure: %w", err)
+			}
 			token := readSecret("Collector token (leave blank to skip): ")
 			pathUpdate := pathAllowUpdate{
 				Patterns: pathAllow,

@@ -75,6 +75,31 @@ func TestTelemetryComponentNonInteractiveMissingEndpointFailsBeforeMutation(t *t
 	}
 }
 
+func TestTelemetryComponentInvalidEndpointFailsBeforeTokenPromptOrMutation(t *testing.T) {
+	promptedToken, mutated := false, false
+	component := newTelemetryComponent(telemetryDeps{
+		Endpoint: func() string { return "" },
+		PromptEndpoint: func(context.Context) (string, error) {
+			return "http://collector.example/v1/logs", nil
+		},
+		PromptToken: func(context.Context) (string, error) {
+			promptedToken = true
+			return "", nil
+		},
+		Configure: func(string, string, string, string, string, deliverySettingOverrides) error {
+			mutated = true
+			return nil
+		},
+	})
+	err := component.Preflight(context.Background(), lifecycleOptions{Action: actionInstall})
+	if err == nil || !strings.Contains(err.Error(), "must use HTTPS") {
+		t.Fatalf("Preflight() error = %v, want invalid endpoint", err)
+	}
+	if promptedToken || mutated {
+		t.Fatalf("promptedToken = %t, mutated = %t; want false", promptedToken, mutated)
+	}
+}
+
 func TestTelemetryComponentInstallUsesFinalHarnessSelection(t *testing.T) {
 	var installed []hookTarget
 	component := newTelemetryComponent(telemetryDeps{

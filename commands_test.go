@@ -274,13 +274,13 @@ func TestConfigureEndpointUsesFlag(t *testing.T) {
 	}
 }
 
-func TestConfigureEndpointUsesEnvironment(t *testing.T) {
+func TestConfigureEndpointPreservesExistingEnvironment(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("AI_AGENT_TELEMETRY_ENDPOINT", "https://env/v1/logs")
 
-	if got := configureEndpoint(""); got != "https://env/v1/logs" {
-		t.Fatalf("endpoint = %q, want env value", got)
+	if got := configureEndpoint(""); got != "" {
+		t.Fatalf("endpoint = %q, want no update", got)
 	}
 }
 

@@ -373,6 +373,54 @@ func TestRunConfigureHooksNoneSkipsLegacyAPMCleanup(t *testing.T) {
 	}
 }
 
+func TestRunConfigureRejectsInvalidEndpointBeforeTokenPrompt(t *testing.T) {
+	_, _ = isolateRunConfigure(t)
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStderr := os.Stderr
+	os.Stderr = writer
+	var stderr strings.Builder
+	code := runCLIWithStderr(
+		[]string{"configure", "--endpoint=http://otel.example/v1/logs", "--hooks=none"},
+		func(string) {},
+		&stderr,
+	)
+	_ = writer.Close()
+	os.Stderr = originalStderr
+	prompt, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 1 || !strings.Contains(stderr.String(), "must use HTTPS") {
+		t.Fatalf("code = %d, stderr = %q, want invalid endpoint", code, stderr.String())
+	}
+	if strings.Contains(string(prompt), "Collector token") {
+		t.Fatalf("prompt = %q, token prompt must not run after endpoint validation failure", prompt)
+	}
+}
+
+func TestRunConfigurePreservesLegacyEndpointDuringUnrelatedUpdate(t *testing.T) {
+	_, configHome := isolateRunConfigure(t)
+	configDir := filepath.Join(configHome, pkgName)
+	const legacyEndpoint = "http://legacy.example/v1/logs"
+	if err := writeEnvFile(configDir, map[string]string{"AI_AGENT_TELEMETRY_ENDPOINT": legacyEndpoint}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out string
+	code := runCLI([]string{"configure", "--buffer-cap=42", "--hooks=none"}, func(value string) { out += value })
+	if code != 0 {
+		t.Fatalf("code = %d, output = %q, want unrelated update to succeed", code, out)
+	}
+	env := loadEnvFile(filepath.Join(configDir, "env"))
+	if env["AI_AGENT_TELEMETRY_ENDPOINT"] != legacyEndpoint || env[envBufferCap] != "42" {
+		t.Fatalf("env = %#v, want legacy endpoint preserved and buffer updated", env)
+	}
+}
+
 func TestRunHooksInstallRejectsEmptyTargetWithoutWritingFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
