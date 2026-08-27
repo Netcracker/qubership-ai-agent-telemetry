@@ -192,8 +192,8 @@ curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/l
 ```
 
 For unattended telemetry installation, set `AI_AGENT_TELEMETRY_ENDPOINT` and the optional
-`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. A missing endpoint fails before the managed CLI or any
-component changes.
+`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. A missing endpoint fails before the lifecycle changes the
+managed CLI, telemetry configuration, or native hooks.
 
 ### Update or remove the installation
 

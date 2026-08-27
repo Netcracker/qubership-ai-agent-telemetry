@@ -8,8 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 const configureSkillPackage = "Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry-configure"
@@ -67,7 +65,7 @@ func newConfigureSkillService(deps configureSkillDeps) configureSkillService {
 			if err != nil {
 				return configureSkillWarning("cannot read global APM manifest", err)
 			}
-			installed, err := hasConfigureSkillDependency(data)
+			installed, err := hasGlobalAPMDependency(data, configureSkillPackage)
 			if err != nil {
 				return configureSkillWarning("cannot parse global APM manifest", fmt.Errorf("parse %s: %w", manifestPath, err))
 			}
@@ -137,62 +135,12 @@ func joinConfigureSkillTargets(targets []hookTarget) string {
 	return strings.Join(values, ",")
 }
 
-func hasConfigureSkillDependency(data []byte) (bool, error) {
-	var manifest struct {
-		Dependencies struct {
-			APM yaml.Node `yaml:"apm"`
-		} `yaml:"dependencies"`
-	}
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return false, err
-	}
-	apm := manifest.Dependencies.APM
-	if apm.Kind == 0 {
-		return false, nil
-	}
-	if apm.Kind == yaml.MappingNode {
-		for index := 0; index < len(apm.Content); index += 2 {
-			dependency := apm.Content[index]
-			if dependency.Kind != yaml.ScalarNode || dependency.Tag != "!!str" {
-				return false, fmt.Errorf("dependencies.apm key %d must be a string", index/2)
-			}
-			if isConfigureSkillDependency(dependency.Value) {
-				return true, nil
-			}
-		}
-		return false, nil
-	}
-	if apm.Kind != yaml.SequenceNode {
-		return false, errors.New("dependencies.apm must be a sequence or mapping")
-	}
-	for index, dependency := range apm.Content {
-		if dependency.Kind == yaml.MappingNode {
-			continue
-		}
-		if dependency.Kind != yaml.ScalarNode || dependency.Tag != "!!str" {
-			return false, fmt.Errorf("dependencies.apm entry %d must be a string or mapping", index)
-		}
-		if isConfigureSkillDependency(dependency.Value) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func isConfigureSkillDependency(value string) bool {
-	value = strings.TrimSpace(value)
-	if revision := strings.IndexByte(value, '#'); revision >= 0 {
-		value = value[:revision]
-	}
-	return strings.EqualFold(strings.TrimSpace(value), configureSkillPackage)
-}
-
 func runConfigureSkillCommand(ctx context.Context, deps configureSkillDeps, apm string, args ...string) (string, error) {
 	output, err := deps.Run(ctx, apm, args...)
 	if err == nil {
 		return output, nil
 	}
-	diagnostic, truncated := limitConfigureSkillDiagnostic(output)
+	diagnostic, truncated := limitAPMDiagnostic(output)
 	message := fmt.Sprintf("%s %s: %v", apm, strings.Join(args, " "), err)
 	if diagnostic != "" {
 		message += "\napm output:\n" + diagnostic
@@ -201,15 +149,6 @@ func runConfigureSkillCommand(ctx context.Context, deps configureSkillDeps, apm 
 		message += "\n[apm output truncated]"
 	}
 	return output, errors.New(message)
-}
-
-func limitConfigureSkillDiagnostic(output string) (string, bool) {
-	const limit = 4 << 10
-	output = strings.TrimSpace(output)
-	if len(output) <= limit {
-		return output, false
-	}
-	return output[:limit], true
 }
 
 func configureSkillSkipped(detail string) operationResult {

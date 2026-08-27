@@ -194,11 +194,11 @@ func TestLifecycleCommandUsageAndOperationalExitCodes(t *testing.T) {
 		wantCode int
 		want     string
 	}{
-		{name: "components removed", args: []string{"install", "--components", "telemetry"}, wantCode: 2, want: "unknown flag: --components"},
-		{name: "skip removed", args: []string{"install", "--skip", "telemetry"}, wantCode: 2, want: "unknown flag: --skip"},
-		{name: "force Git hooks removed", args: []string{"update", "--force-git-hooks"}, wantCode: 2, want: "unknown flag: --force-git-hooks"},
-		{name: "CLI only removed", args: []string{"update", "--cli-only"}, wantCode: 2, want: "unknown flag: --cli-only"},
-		{name: "remove CLI removed", args: []string{"uninstall", "--remove-cli"}, wantCode: 2, want: "unknown flag: --remove-cli"},
+		{name: "components removed", args: []string{"install", "--components", "telemetry"}, wantCode: 2, want: "use the v1.2.0 bootstrap with uninstall --components apm,git-hooks"},
+		{name: "skip removed", args: []string{"install", "--skip", "telemetry"}, wantCode: 2, want: "telemetry is required; use --harnesses to select native hooks"},
+		{name: "force Git hooks removed", args: []string{"update", "--force-git-hooks"}, wantCode: 2, want: "native harness hooks are refreshed automatically"},
+		{name: "CLI only removed", args: []string{"update", "--cli-only"}, wantCode: 2, want: "update always refreshes telemetry"},
+		{name: "remove CLI removed", args: []string{"uninstall", "--remove-cli"}, wantCode: 2, want: "uninstall always removes the managed CLI"},
 		{name: "install purge", args: []string{"install", "--purge"}, wantCode: 2, want: "unknown flag: --purge"},
 		{name: "uninstall harnesses", args: []string{"uninstall", "--harnesses", "codex"}, wantCode: 2, want: "unknown flag: --harnesses"},
 		{name: "unknown option", args: []string{"install", "--wat"}, wantCode: 2, want: "unknown flag: --wat"},

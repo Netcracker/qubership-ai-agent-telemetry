@@ -146,7 +146,7 @@ jobs:
           set -e
           printf '%s\n' "$output"
           test "$code" -eq 2
-          printf '%s' "$output" | grep -F 'unknown flag: --cli-only' >/dev/null
+          printf '%s' "$output" | grep -F 'update always refreshes telemetry' >/dev/null
 
       - name: Prompt through curl and a pseudoterminal
         env:
@@ -260,7 +260,7 @@ jobs:
           $rejectedCode = $LASTEXITCODE
           $rejected | Out-Host
           if ($rejectedCode -ne 2) { throw "obsolete flag returned $rejectedCode" }
-          if (($rejected -join "`n") -notmatch 'unknown flag: --cli-only') {
+          if (($rejected -join "`n") -notmatch 'update always refreshes telemetry') {
             throw "obsolete flag rejection was not reported"
           }
 

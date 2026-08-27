@@ -28,8 +28,8 @@ fails an agent turn. For its internals, see [the ai-agent-telemetry CLI](cli.md)
 After installation, follow the README's [verification, restart, and trust steps](../README.md#installation).
 
 For unattended installation, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optional
-`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. The lifecycle resolves required telemetry input before any
-hook, managed CLI, or component change.
+`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. The lifecycle resolves required telemetry input before
+changing the managed CLI, telemetry configuration, or native hooks.
 
 ## Capability matrix
 

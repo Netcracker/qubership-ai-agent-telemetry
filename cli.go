@@ -109,6 +109,16 @@ func legacyArgumentError(args []string) error {
 			name = name[:index]
 		}
 		switch name {
+		case "--components":
+			return fmt.Errorf("%s is no longer supported; use the v1.2.0 bootstrap with uninstall --components apm,git-hooks for legacy cleanup", name)
+		case "--skip":
+			return fmt.Errorf("%s is no longer supported; telemetry is required; use --harnesses to select native hooks", name)
+		case "--force-git-hooks":
+			return fmt.Errorf("%s is no longer supported; native harness hooks are refreshed automatically", name)
+		case "--cli-only":
+			return fmt.Errorf("%s is no longer supported; update always refreshes telemetry", name)
+		case "--remove-cli":
+			return fmt.Errorf("%s is no longer supported; uninstall always removes the managed CLI", name)
 		case "--force-update", "-ForceUpdate":
 			return fmt.Errorf("%s is no longer supported; use update", name)
 		case "--force", "-Force":

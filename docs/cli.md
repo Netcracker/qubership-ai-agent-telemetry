@@ -180,8 +180,8 @@ infer identifiers.
 ## Updating on Windows
 
 Direct `update` downloads and verifies the new Windows image, transfers control to it, completes read-only preflight,
-and replaces the managed executable before component changes. The old process waits and returns the new process's exit
-code. A helper then removes the one renamed old image after the old process exits.
+and replaces the managed executable before changing telemetry configuration or native hooks. The old process waits and
+returns the new process's exit code. A helper then removes the one renamed old image after the old process exits.
 
 If helper cleanup exhausts its bounded retries, stderr names the exact stale image that you may remove manually after
 the update processes exit. Later updates do not scan for or delete stale-looking sibling files.
