@@ -26,6 +26,7 @@ function Get-DownloadUrl([string]$Asset) {
 }
 
 function Save-ReleaseFile([string]$Asset, [string]$Destination) {
+  [Console]::Error.WriteLine("Downloading $Asset...")
   try {
     $null = Invoke-WebRequest -UseBasicParsing -Uri (Get-DownloadUrl $Asset) -OutFile $Destination
   } catch {
@@ -50,6 +51,7 @@ try {
   Save-ReleaseFile $asset $binary
   Save-ReleaseFile 'SHA256SUMS' $sumsPath
 
+  [Console]::Error.WriteLine("Verifying $asset checksum...")
   $escapedAsset = [regex]::Escape($asset)
   $checksumLine = Get-Content -LiteralPath $sumsPath |
     Where-Object { $_ -match "^\s*([A-Fa-f0-9]{64})\s+\*?$escapedAsset\s*$" } |
@@ -63,6 +65,7 @@ try {
     throw "checksum mismatch for $asset (expected $expected, got $actual)"
   }
 
+  [Console]::Error.WriteLine("Starting ai-agent-telemetry $($ForwardArgs[0])...")
   & $binary @ForwardArgs
   $ExitCode = $LASTEXITCODE
 } catch {

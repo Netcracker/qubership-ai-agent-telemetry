@@ -165,6 +165,9 @@ func normalizeAppDeps(deps appDeps) appDeps {
 		deps.Lifecycle.Telemetry.Uninstall == nil {
 		deps.Lifecycle = defaultLifecycleDeps(deps.Home(), deps.ErrOut)
 	}
+	if deps.Lifecycle.Progress == nil {
+		deps.Lifecycle.Progress = deps.ErrOut
+	}
 	if deps.Update.Prepare == nil {
 		executable, _ := os.Executable()
 		managedPath := managedCLIPath(deps.Home(), runtime.GOOS)

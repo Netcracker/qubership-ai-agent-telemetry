@@ -186,6 +186,35 @@ func TestLifecycleCommandRoutesNormalizedOptionsAndSummary(t *testing.T) {
 	}
 }
 
+func TestLifecycleCommandReportsEachOperationBeforeItStarts(t *testing.T) {
+	var out, errOut bytes.Buffer
+	wantProgress := ""
+	started := func(name string) operationResult {
+		wantProgress += "Starting " + name + "...\n"
+		if errOut.String() != wantProgress {
+			t.Fatalf("stderr when %s started = %q, want %q", name, errOut.String(), wantProgress)
+		}
+		return operationResult{Name: name, State: operationOK, Detail: "done"}
+	}
+	deps := lifecycleDeps{
+		ManagedCLI: managedCLIService{Install: func(string) operationResult { return started("managed-cli") }},
+		Telemetry: componentOps{Install: func(context.Context, lifecycleOptions) operationResult {
+			return started("telemetry")
+		}},
+		ConfigureSkill: configureSkillService{Install: func(context.Context, lifecycleOptions) operationResult {
+			return started("configure-skill")
+		}},
+	}
+
+	code := execute([]string{"install"}, appDeps{Out: &out, ErrOut: &errOut, Home: t.TempDir, Lifecycle: deps})
+	if code != 0 {
+		t.Fatalf("code = %d; stderr = %q", code, errOut.String())
+	}
+	if strings.Contains(out.String(), "Starting ") || !strings.Contains(out.String(), "managed-cli  OK") {
+		t.Fatalf("stdout = %q, want only the final summary", out.String())
+	}
+}
+
 func TestLifecycleCommandUsageAndOperationalExitCodes(t *testing.T) {
 	tests := []struct {
 		name     string

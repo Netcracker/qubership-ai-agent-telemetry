@@ -202,6 +202,18 @@ test_versioned_and_latest_urls() {
   teardown_fixture
 }
 
+test_progress_output() {
+  setup_fixture
+  run_installer install
+  [ "$RUN_CODE" -eq 0 ] || fail "progress run failed: $RUN_OUTPUT"
+  expected='Downloading ai-agent-telemetry-linux-amd64...
+Downloading SHA256SUMS...
+Verifying ai-agent-telemetry-linux-amd64 checksum...
+Starting ai-agent-telemetry install...'
+  [ "$RUN_OUTPUT" = "$expected" ] || fail "progress output was: $RUN_OUTPUT"
+  teardown_fixture
+}
+
 test_staged_version_override_precedence() {
   setup_fixture
   staged=$FIXTURE_ROOT/install.sh
@@ -415,6 +427,7 @@ test_no_terminal_and_noninteractive_behavior() {
 
 test_asset_selection
 test_versioned_and_latest_urls
+test_progress_output
 test_staged_version_override_precedence
 test_command_defaulting_and_exact_argv
 test_checksum_failures_do_not_execute

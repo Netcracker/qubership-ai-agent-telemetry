@@ -32,7 +32,7 @@ upgrades, so these commands rarely need to be run by hand.
 | `install` | Install the managed CLI, configure telemetry, register native hooks, and optionally install the configure skill. |
 | `update` | Update the managed CLI, strictly migrate the legacy global telemetry hook package, refresh native hooks, and optionally update the configure skill. |
 | `uninstall` | Remove native hooks, optionally remove the configure skill, and remove the managed CLI. Add `--purge` to remove telemetry state. |
-| `configure` | Write the per-machine endpoint, repository policy, optional CA, and optional token. Install all global hooks by default; use `--hooks=all`, `--hooks=none`, or `--hooks=<list>`. |
+| `configure` | Write the per-machine endpoint, repository policy, optional CA, and optional token. The endpoint must use HTTPS, include a host, and have a path ending in `/v1/logs`. Install all global hooks by default; use `--hooks=all`, `--hooks=none`, or `--hooks=<list>`. |
 | `hooks install` | Install or repair global hooks and required harness policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
 | `hooks uninstall` | Remove telemetry-owned hooks and canonical policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
 | `status` | Read-only check of configuration, delivery backlog, and each global hook. Sends nothing. Use `--verbose` for native paths and parse errors. |
@@ -72,7 +72,8 @@ buffered events.
 
 Telemetry preflight resolves the collector endpoint and optional token before any changes. Interactive mode prompts
 when no endpoint is configured. With `--non-interactive`, set `AI_AGENT_TELEMETRY_ENDPOINT` and optionally
-`AI_AGENT_TELEMETRY_TOKEN`, or configure them beforehand. A missing endpoint fails the complete lifecycle preflight.
+`AI_AGENT_TELEMETRY_TOKEN`, or configure them beforehand. The endpoint must use HTTPS, include a host, and have a path
+ending in `/v1/logs`. A missing or invalid endpoint fails the complete lifecycle preflight.
 
 Uninstall removes telemetry-owned native hooks first and then removes the managed CLI and its receipt-owned `PATH`
 entry. A telemetry hook-cleanup failure preserves the CLI.
