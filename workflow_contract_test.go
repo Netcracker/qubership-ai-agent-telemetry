@@ -4,9 +4,126 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+func TestInstallerDocumentationWorkflowContract(t *testing.T) {
+	documents := []string{
+		"README.md",
+		"docs/lifecycle-installer.md",
+		"docs/cli.md",
+		"docs/agent-integration.md",
+		"docs/release.md",
+		"docs/manual-uninstall.md",
+		"agent-packages/ai-agent-telemetry/README.md",
+		"agent-packages/ai-agent-telemetry-configure/README.md",
+		"telemetry-backend/native-otlp-onboarding.md",
+	}
+	obsoleteFlag := regexp.MustCompile(`--skip(?:[ =,\x60]|$)`)
+	const allowedSkipConfigRejection = "`--skip-config`, `bootstrap.sh`, `bootstrap.ps1`, and PowerShell named parameters are not supported aliases."
+	forbidden := []string{
+		"--force-git-hooks",
+		"--cli-only",
+		"--remove-cli",
+		"qubership-global-essentials",
+		"CYBER_FERRET_PASSWORD",
+		"CyberFerret",
+		"developer baseline",
+		"Git and Java prerequisites",
+		"partial uninstall",
+	}
+
+	for _, path := range documents {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if obsoleteFlag.MatchString(text) {
+			t.Errorf("%s documents the removed --skip flag", path)
+		}
+		for _, value := range forbidden {
+			if strings.Contains(text, value) {
+				t.Errorf("%s documents removed installer behavior %q", path, value)
+			}
+		}
+		withoutAllowedSkipConfig := text
+		if path == "docs/cli.md" {
+			if strings.Count(text, allowedSkipConfigRejection) != 1 {
+				t.Errorf("%s must document the exact --skip-config rejection once", path)
+			}
+			withoutAllowedSkipConfig = strings.Replace(text, allowedSkipConfigRejection, "", 1)
+		}
+		if strings.Contains(withoutAllowedSkipConfig, "--skip-config") {
+			t.Errorf("%s documents --skip-config outside the exact rejection context", path)
+		}
+		for lineNumber, line := range strings.Split(text, "\n") {
+			if !strings.Contains(line, "--components") {
+				continue
+			}
+			if !strings.Contains(line, "releases/download/v1.2.0/") ||
+				!strings.Contains(line, "uninstall --components apm,git-hooks") {
+				t.Errorf("%s:%d documents --components outside the pinned legacy cleanup command", path, lineNumber+1)
+			}
+		}
+	}
+
+	configureReadmePath := "agent-packages/ai-agent-telemetry-configure/README.md"
+	configureReadme, err := os.ReadFile(configureReadmePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{
+		"Install the APM CLI first",
+		"managed CLI, components",
+		"installs every component",
+	} {
+		if strings.Contains(string(configureReadme), value) {
+			t.Errorf("%s documents removed installer behavior %q", configureReadmePath, value)
+		}
+	}
+	for _, value := range []string{
+		"optional configure skill",
+		"only when APM is already on `PATH`",
+		"does not install APM",
+	} {
+		if !strings.Contains(string(configureReadme), value) {
+			t.Errorf("%s does not document %q", configureReadmePath, value)
+		}
+	}
+
+	adr, err := os.ReadFile("docs/adr/0010-telemetry-installer-scope-and-lifecycle.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adrText := string(adr)
+	metadataStart := strings.Index(adrText, "<!-- markdownlint-disable MD001 -->")
+	dateHeading := strings.Index(adrText, "#### Date\n\n#### Owner")
+	metadataEnd := strings.Index(adrText, "<!-- markdownlint-enable MD001 -->")
+	contextHeading := strings.Index(adrText, "## Context")
+	if !strings.Contains(adrText, "## Status\n\nProposed") || metadataStart == -1 || dateHeading < metadataStart ||
+		metadataEnd < dateHeading || contextHeading < metadataEnd {
+		t.Error("ADR 0010 must keep its Proposed, blank-date metadata inside the repository MD001 exception")
+	}
+
+	for _, path := range []string{"README.md", "docs/manual-uninstall.md"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, command := range []string{
+			"https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.sh | sh -s -- uninstall --components apm,git-hooks",
+			"https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.ps1",
+			"uninstall --components apm,git-hooks",
+		} {
+			if !strings.Contains(string(data), command) {
+				t.Errorf("%s does not document the pinned legacy cleanup command %q", path, command)
+			}
+		}
+	}
+}
 
 func TestWindowsLifecycleBootstrapCallsUseCheckedChildProcesses(t *testing.T) {
 	data, err := os.ReadFile(".github/workflows/installer-tests.yaml")

@@ -285,7 +285,7 @@ func TestRunHooksInstallAcceptsTargets(t *testing.T) {
 	}
 }
 
-func TestRunHooksInstallContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
+func TestRunHooksInstallBlocksNativeHookWriteOnLegacyAPMMigrationFailure(t *testing.T) {
 	home := writeGlobalAPMManifest(t, "dependencies: [\n")
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -295,18 +295,18 @@ func TestRunHooksInstallContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
 		func(value string) { out.WriteString(value) },
 		&stderr,
 	)
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0; output = %q", code, out.String())
+	if code == 0 {
+		t.Fatalf("exit code = %d, want failure; output = %q", code, out.String())
 	}
-	if !strings.Contains(stderr.String(), "could not verify or remove") {
+	if !strings.Contains(stderr.String(), "apm uninstall -g "+legacyTelemetryAPMPackage) || !strings.Contains(stderr.String(), "ai-agent-telemetry update") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
-	if _, err := os.Stat(hookPath(home, hookClaude)); err != nil {
-		t.Fatalf("Claude hook not installed after cleanup warning: %v", err)
+	if _, err := os.Stat(hookPath(home, hookClaude)); !os.IsNotExist(err) {
+		t.Fatalf("Claude hook exists after migration failure: %v", err)
 	}
 }
 
-func TestRunConfigureContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
+func TestRunConfigureBlocksNativeHookWriteOnLegacyAPMMigrationFailure(t *testing.T) {
 	home := writeGlobalAPMManifest(t, "dependencies: [\n")
 	configHome := t.TempDir()
 	t.Setenv("HOME", home)
@@ -322,18 +322,18 @@ func TestRunConfigureContinuesAfterLegacyAPMCleanupWarning(t *testing.T) {
 		func(value string) { out.WriteString(value) },
 		&stderr,
 	)
-	if code != 0 {
-		t.Fatalf("exit code = %d, want 0; output = %q", code, out.String())
+	if code == 0 {
+		t.Fatalf("exit code = %d, want failure; output = %q", code, out.String())
 	}
-	if !strings.Contains(stderr.String(), "could not verify or remove") {
+	if !strings.Contains(stderr.String(), "apm uninstall -g "+legacyTelemetryAPMPackage) || !strings.Contains(stderr.String(), "ai-agent-telemetry update") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(configHome, pkgName, "env")); err != nil {
 		t.Fatalf("telemetry env not written: %v", err)
 	}
 	for _, target := range allHookTargets {
-		if _, err := os.Stat(hookPath(home, target)); err != nil {
-			t.Fatalf("%s hook not installed after cleanup warning: %v", target, err)
+		if _, err := os.Stat(hookPath(home, target)); !os.IsNotExist(err) {
+			t.Fatalf("%s hook exists after migration failure: %v", target, err)
 		}
 	}
 }

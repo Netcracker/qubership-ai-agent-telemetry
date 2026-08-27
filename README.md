@@ -7,8 +7,8 @@ hosts whose name contains `netcracker`; optional path rules can authorize additi
 
 ## TL;DR
 
-Run the installer once. It installs the CLI and configures hooks for Claude Code, Cline, Codex, and Cursor. Preflight
-may prompt for missing collector settings or ask you to install or update required Git and Java tools.
+Run the installer once. It installs the CLI, saves the collector settings, and configures hooks for Claude Code, Cline,
+Codex, and Cursor. Preflight prompts for missing collector settings.
 
 ```sh
 # macOS / Linux
@@ -20,7 +20,7 @@ curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/l
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
 
-1. Follow any preflight prompts for collector settings or selected Git and Java prerequisites.
+1. Follow any preflight prompts for collector settings.
 2. Run `ai-agent-telemetry status` and `ai-agent-telemetry selftest`.
 3. If installation added the CLI directory to `PATH`, fully restart every running Cline host. Confirm that Cline Hooks
    are enabled, invoke a skill in Cline, and verify its `skill_executed` event in the telemetry backend.
@@ -29,8 +29,8 @@ powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 
 
 See [Installation](#installation) for configuration options, hook repair, and verification details.
 
-The default lifecycle installs the complete Qubership developer baseline: APM, telemetry, and global Git hooks. See
-the [lifecycle installer guide](docs/lifecycle-installer.md) for component and harness selection.
+The lifecycle manages only telemetry. See the [lifecycle installer guide](docs/lifecycle-installer.md) for hook
+selection, update migration, and uninstall behavior.
 
 ## Architecture
 
@@ -168,12 +168,11 @@ Any collector that meets these requirements works. A ready-to-deploy reference s
 
 Have the collector endpoint, an optional CA certificate, and an optional access token on hand.
 
-### 1. Install the baseline
+### 1. Install telemetry
 
 The bootstrap downloads and verifies the correct release, then runs `ai-agent-telemetry install`. The lifecycle
-installs the managed CLI in `~/.local/bin`, adds the directory to the user `PATH` when needed, and installs all
-components and harnesses by default. It prompts for missing collector settings and, when global Git hooks are
-selected, for missing Git or Java 21 prerequisites.
+installs the managed CLI in `~/.local/bin`, adds the directory to the user `PATH` when needed, saves the collector
+settings, and registers hooks for every supported harness.
 
 ```sh
 # macOS / Linux
@@ -185,37 +184,51 @@ curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/l
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
 
-Select components with `--components`, subtract components with `--skip`, and select harnesses with `--harnesses`:
+Select a harness subset with `--harnesses`. Omitting the option selects Claude Code, Cline, Codex, and Cursor:
 
 ```sh
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh \
-  | sh -s -- --components apm,telemetry --harnesses claude,codex
+  | sh -s -- --harnesses claude,codex
 ```
 
 For unattended telemetry installation, set `AI_AGENT_TELEMETRY_ENDPOINT` and the optional
-`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. A missing endpoint fails before the managed CLI or any
-component changes.
+`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. A missing endpoint fails before the lifecycle changes the
+managed CLI, telemetry configuration, or native hooks.
 
 ### Update or remove the installation
 
-Update the CLI and all selected components with `ai-agent-telemetry update`. Use `update --cli-only` when you want to
-update only the managed CLI. CLI-only mode cannot be combined with component, skip, harness, Git-hook, or
-noninteractive options.
+Update the managed CLI, telemetry settings, and native hooks with `ai-agent-telemetry update`. The update preserves
+configuration, machine identity, repository policy, certificates, delivery settings, and buffered telemetry.
 
-`ai-agent-telemetry uninstall` removes all components and the managed CLI. A partial selection preserves the CLI
-unless you pass `--remove-cli`; that flag requires telemetry in the final selection. Normal uninstall preserves
-telemetry configuration, credentials, buffered events, offsets, diagnostics, and machine identity. Add `--purge` to
-remove the telemetry-specific configuration and cache after hook cleanup.
+`ai-agent-telemetry uninstall` removes native hooks and the managed CLI. It preserves telemetry configuration,
+credentials, buffered events, offsets, diagnostics, and machine identity. Add `--purge` to remove the telemetry
+configuration and cache after hook cleanup.
 
-On Windows, run full uninstall or partial uninstall with `--remove-cli` through the temporary bootstrap:
+On Windows, run uninstall through the temporary bootstrap because the installed executable cannot remove itself:
 
 ```powershell
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --purge"
-powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --components telemetry --remove-cli"
 ```
 
 The installer reverses only the `PATH` change recorded by its ownership receipt. It never removes `~/.local/bin`, even
 when that directory is empty.
+
+### Remove tools installed by version 1.2.0 or earlier
+
+Use this optional cleanup only for tools installed by the old lifecycle. The pinned bootstrap runs the old component
+uninstall contract. Normal install, update, and uninstall do not run this cleanup.
+
+```sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.sh | sh -s -- uninstall --components apm,git-hooks
+```
+
+```powershell
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.ps1'))) uninstall --components apm,git-hooks"
+```
+
+The current CLI does not parse the old component options. Review the old lifecycle summary before removing tools that
+you may still use independently. See [Manual uninstall and legacy cleanup](docs/manual-uninstall.md) for the same
+commands and Cline hook conflict recovery.
 
 ### 2. Verify registration and delivery
 
@@ -274,9 +287,10 @@ template. An exact legacy template appears as `outdated`; replace it with the co
 the user follows the [manual conflict-resolution procedure](docs/manual-uninstall.md). The hook exits successfully with
 no stdout or stderr. This removes telemetry output from Cline's hook card, but Cline still displays its own
 `Hook: PostToolUse` status. Cline 4.1.4 has no separate setting to hide that status while keeping the hook enabled.
-Cline skill deployment maps to APM's `agent-skills` target. The same hook records completed MCP tool calls with exact
-server and tool names, success or failure, and duration when Cline supplies it. Cline command invocations remain
-unsupported because the available hook runs after Cline replaces the command token with its expanded instructions.
+When APM is already on `PATH`, the lifecycle installs the optional configure skill for Cline through APM's
+`agent-skills` target. The native hook records completed MCP tool calls with exact server and tool names, success or
+failure, and duration when Cline supplies it. Cline command invocations remain unsupported because the available hook
+runs after Cline replaces the command token with its expanded instructions.
 
 See [the Cline harness decision](docs/adr/0007-cline-harness-support.md) and
 [the hook lifecycle decision](docs/adr/0008-cline-hook-installation-and-removal.md) for the client scope and trade-offs.
@@ -296,16 +310,6 @@ closes missing setup gaps, and verifies delivery with `selftest`.
 ### Advanced manual setup
 
 Use this path when machine configuration must be applied separately, for example in automation.
-
-**Install the CLI without telemetry:**
-
-```sh
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh \
-  | sh -s -- --skip telemetry
-```
-
-This installs the managed CLI and the remaining selected components without changing telemetry configuration or
-native telemetry hooks. Use the same lowercase, double-dash options with `install.ps1` on Windows.
 
 **Configure the endpoint and token:**
 
@@ -345,10 +349,11 @@ hook definition and hash, fully restart Codex and approve the telemetry hook if 
 
 Before it writes CLI-managed hooks, the CLI checks the global APM manifest at `~/.apm/apm.yml` for this exact legacy
 dependency: `Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry`. If it finds the dependency, it
-asks APM to uninstall it globally. Cleanup is best effort: a failure produces a warning, but the CLI still
-canonicalizes the requested native hooks. The command succeeds when configuration and hook installation succeed.
+must remove it through APM before it installs native hooks. A missing APM executable, an unreadable or invalid global
+manifest, or a failed removal stops the migration. The error prints the recovery command and
+`ai-agent-telemetry update` retry.
 
-Automatic cleanup reads only the global APM manifest. It does not edit project manifests. Existing repositories that
-consume the `ai-agent-telemetry` APM hook package may keep using it while they migrate. The compatibility package
-remains available for those repository-local consumers, while the machine-wide setup above is the default for new
+Migration reads only the global APM manifest. It does not edit project manifests. Existing repositories that consume
+the `ai-agent-telemetry` APM hook package may keep using it while they migrate. The compatibility package remains
+available for those repository-local consumers, while the machine-wide setup above is the default for new
 installations.

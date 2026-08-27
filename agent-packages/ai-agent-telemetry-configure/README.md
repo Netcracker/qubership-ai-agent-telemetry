@@ -1,8 +1,8 @@
 # ai-agent-telemetry-configure
 
-This package delivers the optional setup, testing, troubleshooting, repair, and verification skill for the
-`ai-agent-telemetry` CLI. The unified lifecycle handles the managed CLI, components, configuration, and native global
-hooks. This package teaches an agent how to verify and diagnose that installation.
+This package delivers the optional configure skill for setup, testing, troubleshooting, repair, and verification of
+the `ai-agent-telemetry` CLI. The telemetry lifecycle manages the CLI, configuration, and native global hooks. This
+package teaches an agent how to verify and diagnose that installation.
 
 Install this package when you want the agent to check telemetry on request. It does not install telemetry hooks.
 
@@ -10,8 +10,8 @@ The skill supports Claude Code, Cline, Codex, and Cursor. OpenCode support is pl
 
 ## Install
 
-Install the APM CLI first ([uv](https://docs.astral.sh/uv/):
-`uv tool install apm-cli`), then add the package one of two ways.
+The lifecycle installs the optional configure skill only when APM is already on `PATH`.
+The telemetry installer does not install APM. If you already use APM, add the package one of two ways.
 
 When you use the APM command, `--target` is required. Use `claude`, `codex`, or `cursor` for the corresponding native
 APM target. Use `agent-skills` for Cline because Cline discovers `.agents/skills` and APM has no native `cline` target.
@@ -49,11 +49,14 @@ Native CLI-managed hooks collect the event subset that each harness exposes. All
 executions. Claude Code also reports command invocations. Claude Code, Codex, and Cursor report MCP tool executions.
 The diagnostic skill checks the installation and uses its own invocation as a real skill event.
 
-The default `install` lifecycle puts the binary on `PATH`, installs every component, saves machine configuration, and
-registers all supported hooks. The skill diagnoses and repairs any gaps reported by the CLI. `ingest` writes
-normalized events to a machine-global outbox and opportunistically flushes them over OTLP/HTTPS.
+The default `install` lifecycle puts the binary on `PATH`, saves machine configuration, and registers all supported
+hooks. When APM is already available, it also installs the optional configure skill. The skill diagnoses and repairs
+any gaps reported by the CLI. `ingest` writes normalized events to a machine-global outbox and opportunistically
+flushes them over OTLP/HTTPS.
 There is no daemon. The configure workflow never updates the installation automatically; use
-`ai-agent-telemetry update` or `ai-agent-telemetry update --cli-only` only for an explicit update request.
+`ai-agent-telemetry update` only for an explicit update request. If that update reports a legacy APM
+migration failure, the skill removes only the exact legacy telemetry dependency after APM is available,
+retries the update, and verifies native hooks.
 
 ## Configuration
 

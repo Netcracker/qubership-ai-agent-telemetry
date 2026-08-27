@@ -200,24 +200,41 @@ lifecycle command:
 ai-agent-telemetry update
 ```
 
-This updates the managed CLI and every selected component. To update only the managed CLI, use:
-
-```sh
-ai-agent-telemetry update --cli-only
-```
-
-`update` performs verified release downloads and mutates the installation, so run it only for an
-explicit update request. In Codex, the execution-policy rule deliberately leaves `update`
+This updates the managed CLI and selected native telemetry hooks while preserving saved telemetry state. `update`
+performs verified release downloads and mutates the installation, so run it only for an explicit update request. In
+Codex, the execution-policy rule deliberately leaves `update`
 sandboxed. Run it in a regular terminal or request permission to leave the sandbox. On Windows,
 the lifecycle hands control to the verified new image before replacing the managed executable.
+
+### Legacy APM migration during an explicit update
+
+Only handle this branch when the explicitly requested `ai-agent-telemetry update` stops with
+`legacy telemetry APM migration failed`. If it says `apm was not found on PATH`, stop. Explain that
+APM must be installed or restored on `PATH`; do not install or repair it automatically. First confirm
+the executable is available in the current shell:
+
+- POSIX or WSL: `command -v apm`
+- PowerShell: `Get-Command apm`
+
+After `apm` is available, remove only the exact legacy telemetry dependency, retry the one update,
+then verify the native hooks:
+
+```sh
+apm uninstall -g Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
+ai-agent-telemetry update
+ai-agent-telemetry status --verbose
+```
+
+Do not run `ai-agent-telemetry hooks install` manually. Do not remove unrelated global packages or
+edit a project-local manifest.
 
 ## Failure → fix
 
 | `status` / `selftest` shows | Cause | Fix |
 | --- | --- | --- |
 | binary not found | not installed yet | run the installer one-liner (also puts `~/.local/bin` on `PATH`) |
-| binary present but stale (`version` wrong) | the managed CLI needs replacement | run `ai-agent-telemetry update --cli-only` after an explicit update request (see "Updating") |
-| binary present but won't run | the installed CLI cannot replace itself | run the release bootstrap with `update --cli-only` (see [references/deployment.md](references/deployment.md)) |
+| binary present but stale (`version` wrong) | the managed CLI needs replacement | run `ai-agent-telemetry update` after an explicit update request (see "Updating") |
+| binary present but won't run | the installed CLI cannot replace itself | run the release bootstrap in [references/deployment.md](references/deployment.md) |
 | bare name not found on a real skill run | `PATH` not refreshed yet | restart the agent so the hook resolves the binary — a *full* restart (quit the app / close the terminal tab), not a new chat (see "Calling the binary") |
 | endpoint empty | not configured | `configure --endpoint` |
 | TLS verification failed | CA missing or wrong | `configure --ca` |

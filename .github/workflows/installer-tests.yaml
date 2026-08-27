@@ -100,17 +100,9 @@ jobs:
           mkdir -p "$TEST_BIN" "$TEST_HOME"
           cat > "$TEST_BIN/apm" <<'EOF'
           #!/bin/sh
-          if [ "${1:-} ${2:-}" = "marketplace list" ]; then
-            printf 'qubership-ai-packages\n'
-          fi
           exit 0
           EOF
-          cat > "$TEST_BIN/java" <<'EOF'
-          #!/bin/sh
-          printf '    java.specification.version = 21\n' >&2
-          exit 0
-          EOF
-          chmod +x "$TEST_BIN/apm" "$TEST_BIN/java"
+          chmod +x "$TEST_BIN/apm"
           printf '%s\n' "$TEST_BIN" >> "$GITHUB_PATH"
           HOME="$TEST_HOME" git config --global core.hooksPath "${RUNNER_TEMP}/unrelated-hooks"
 
@@ -134,10 +126,27 @@ jobs:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
           HOME: ${{ runner.temp }}/lifecycle-home
+          XDG_CACHE_HOME: ${{ runner.temp }}/lifecycle-cache
+          XDG_CONFIG_HOME: ${{ runner.temp }}/lifecycle-config
+          XDG_DATA_HOME: ${{ runner.temp }}/lifecycle-data
         run: |
           set -eu
-          sh scripts/install.sh update --cli-only
+          sh scripts/install.sh update
           test "$("$HOME/.local/bin/ai-agent-telemetry" version)" = v0.2.0
+
+      - name: Reject an obsolete lifecycle flag through the bootstrap
+        env:
+          AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
+          AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.2.0
+          HOME: ${{ runner.temp }}/lifecycle-home
+        run: |
+          set +e
+          output=$(sh scripts/install.sh update --cli-only 2>&1)
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$code" -eq 2
+          printf '%s' "$output" | grep -F 'update always refreshes telemetry' >/dev/null
 
       - name: Prompt through curl and a pseudoterminal
         env:
@@ -148,7 +157,7 @@ jobs:
           set -eu
           mkdir -p "$HOME"
           output=$(printf 'https://otel.example.test/v1/logs\n\n' | script -qfec \
-            "curl -fsSL file://$PWD/scripts/install.sh | AI_AGENT_TELEMETRY_INSTALL_BASE_URL=http://127.0.0.1:8765 AI_AGENT_TELEMETRY_INSTALL_VERSION=v0.2.0 sh -s -- --components telemetry" \
+            "curl -fsSL file://$PWD/scripts/install.sh | AI_AGENT_TELEMETRY_INSTALL_BASE_URL=http://127.0.0.1:8765 AI_AGENT_TELEMETRY_INSTALL_VERSION=v0.2.0 sh" \
             /dev/null)
           printf '%s\n' "$output"
           printf '%s' "$output" | grep -F 'Collector endpoint:' >/dev/null
@@ -168,6 +177,7 @@ jobs:
           test ! -e "$HOME/.local/bin/ai-agent-telemetry"
           test ! -e "$XDG_CONFIG_HOME/ai-agent-telemetry"
           test ! -e "$XDG_CACHE_HOME/ai-agent-telemetry"
+          test "$(HOME="$HOME" git config --global --get core.hooksPath)" = "${RUNNER_TEMP}/unrelated-hooks"
 
   windows-lifecycle:
     name: Windows local release lifecycle
@@ -234,17 +244,27 @@ jobs:
         env:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.1.0
+          AI_AGENT_TELEMETRY_ENDPOINT: https://otel.example.test/v1/logs
           PROCESSOR_ARCHITECTURE: AMD64
           USERPROFILE: ${{ runner.temp }}/bootstrap-home
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path $env:USERPROFILE | Out-Null
-          & powershell.exe -NoProfile -File ./scripts/install.ps1 update --cli-only
+          & powershell.exe -NoProfile -File ./scripts/install.ps1 install --non-interactive
           $bootstrapCode = $LASTEXITCODE
-          if ($bootstrapCode -ne 0) { throw "bootstrap update returned $bootstrapCode" }
+          if ($bootstrapCode -ne 0) { throw "bootstrap install returned $bootstrapCode" }
           $managed = Join-Path $env:USERPROFILE '.local/bin/ai-agent-telemetry.exe'
           if (-not (Test-Path -LiteralPath $managed)) { throw "managed CLI was not installed" }
-          & powershell.exe -NoProfile -File ./scripts/install.ps1 uninstall --components telemetry --purge --remove-cli
+
+          $rejected = & $managed update --cli-only 2>&1
+          $rejectedCode = $LASTEXITCODE
+          $rejected | Out-Host
+          if ($rejectedCode -ne 2) { throw "obsolete flag returned $rejectedCode" }
+          if (($rejected -join "`n") -notmatch 'update always refreshes telemetry') {
+            throw "obsolete flag rejection was not reported"
+          }
+
+          & powershell.exe -NoProfile -File ./scripts/install.ps1 uninstall --purge
           $bootstrapCode = $LASTEXITCODE
           if ($bootstrapCode -ne 0) { throw "bootstrap uninstall returned $bootstrapCode" }
           if (Test-Path -LiteralPath $managed) { throw "bootstrap did not remove the managed CLI" }
@@ -254,19 +274,20 @@ jobs:
         env:
           AI_AGENT_TELEMETRY_INSTALL_BASE_URL: http://127.0.0.1:8765
           AI_AGENT_TELEMETRY_INSTALL_VERSION: v0.1.0
+          AI_AGENT_TELEMETRY_ENDPOINT: https://otel.example.test/v1/logs
           PROCESSOR_ARCHITECTURE: AMD64
           USERPROFILE: ${{ runner.temp }}/update-home
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path $env:USERPROFILE | Out-Null
-          & powershell.exe -NoProfile -File ./scripts/install.ps1 update --cli-only
+          & powershell.exe -NoProfile -File ./scripts/install.ps1 install --non-interactive
           $bootstrapCode = $LASTEXITCODE
-          if ($bootstrapCode -ne 0) { throw "bootstrap update returned $bootstrapCode" }
+          if ($bootstrapCode -ne 0) { throw "bootstrap install returned $bootstrapCode" }
           $managed = Join-Path $env:USERPROFILE '.local/bin/ai-agent-telemetry.exe'
           if ((& $managed version) -ne 'v0.1.0') { throw "managed CLI did not start at v0.1.0" }
 
           $env:AI_AGENT_TELEMETRY_INSTALL_VERSION = 'v0.2.0'
-          $output = & $managed update --cli-only 2>&1
+          $output = & $managed update --non-interactive 2>&1
           $code = $LASTEXITCODE
           $output | Out-Host
           if ($code -ne 0) { throw "public update returned $code" }
@@ -276,7 +297,7 @@ jobs:
           if ((& $managed version) -ne 'v0.2.0') { throw "managed CLI was not updated to v0.2.0" }
 
           $env:AI_AGENT_TELEMETRY_INSTALL_VERSION = 'v0.1.0'
-          & powershell.exe -NoProfile -File ./scripts/install.ps1 update --cli-only
+          & powershell.exe -NoProfile -File ./scripts/install.ps1 update --non-interactive
           $bootstrapCode = $LASTEXITCODE
           if ($bootstrapCode -ne 0) { throw "bootstrap reset returned $bootstrapCode" }
           if ((& $managed version) -ne 'v0.1.0') { throw "managed CLI was not reset to v0.1.0" }
@@ -285,12 +306,19 @@ jobs:
           Copy-Item -LiteralPath $managed -Destination (Join-Path $toolDir 'apm.exe')
           $env:PATH = "$toolDir;$env:PATH"
           $env:AI_AGENT_TELEMETRY_INSTALL_VERSION = 'v0.2.0'
+          $apmDir = Join-Path $env:USERPROFILE '.apm'
+          New-Item -ItemType Directory -Force -Path $apmDir | Out-Null
+          @'
+          dependencies:
+            apm:
+              - Netcracker/qubership-ai-agent-telemetry/agent-packages/ai-agent-telemetry
+          '@ | Set-Content -LiteralPath (Join-Path $apmDir 'apm.yml') -Encoding utf8
 
-          $failure = & $managed update --components apm --non-interactive 2>&1
+          $failure = & $managed update --non-interactive 2>&1
           $failureCode = $LASTEXITCODE
           $failure | Out-Host
           if ($failureCode -ne 1) { throw "updated process failure became $failureCode" }
-          if (($failure -join "`n") -notmatch 'apm\s+FAILED') {
+          if (($failure -join "`n") -notmatch 'telemetry\s+FAILED') {
             throw "operational child failure did not reach the inherited console"
           }
           if ((& $managed version) -ne 'v0.2.0') { throw "failed lifecycle did not retain the v0.2.0 CLI" }

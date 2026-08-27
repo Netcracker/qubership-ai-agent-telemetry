@@ -29,9 +29,9 @@ upgrades, so these commands rarely need to be run by hand.
 
 | Command | Purpose |
 | --- | --- |
-| `install` | Install the managed CLI and selected components. The default component and harness selection is `all`. |
-| `update` | Update the managed CLI and selected components, or use `--cli-only` to update only the CLI. |
-| `uninstall` | Remove selected components and remove the CLI after a full uninstall or an explicit valid `--remove-cli`. |
+| `install` | Install the managed CLI, configure telemetry, register native hooks, and optionally install the configure skill. |
+| `update` | Update the managed CLI, strictly migrate the legacy global telemetry hook package, refresh native hooks, and optionally update the configure skill. |
+| `uninstall` | Remove native hooks, optionally remove the configure skill, and remove the managed CLI. Add `--purge` to remove telemetry state. |
 | `configure` | Write the per-machine endpoint, repository policy, optional CA, and optional token. Install all global hooks by default; use `--hooks=all`, `--hooks=none`, or `--hooks=<list>`. |
 | `hooks install` | Install or repair global hooks and required harness policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
 | `hooks uninstall` | Remove telemetry-owned hooks and canonical policy files without changing collector configuration. Use `--target=<list>` to select harnesses. |
@@ -56,35 +56,29 @@ success. Explicit help prints the requested information without running an opera
 
 ## Lifecycle commands
 
-`install`, `update`, and `uninstall` accept `--components <list>` and `--skip <list>`. Components are `apm`,
-`telemetry`, and `git-hooks`; `all` is the default. Install and update also accept `--harnesses <list>`,
-`--force-git-hooks`, and `--non-interactive`. Harnesses are `claude`, `cline`, `codex`, and `cursor`.
+`install` and `update` accept `--harnesses <list>` and `--non-interactive`. Harnesses are `claude`, `cline`, `codex`,
+and `cursor`; omitting the option selects all four. `uninstall` accepts only `--purge`.
 
 ```sh
 ai-agent-telemetry install
-ai-agent-telemetry install --components apm,telemetry --harnesses claude,codex
-ai-agent-telemetry install --skip git-hooks
+ai-agent-telemetry install --harnesses claude,codex
 ai-agent-telemetry update
-ai-agent-telemetry update --cli-only
+ai-agent-telemetry update --harnesses claude,codex
 ```
 
-The managed CLI is infrastructure, not a selectable component. Every install or ordinary update installs or confirms
-the CLI before running selected components. Update refreshes selected existing components and installs selected
-missing components. `--cli-only` skips all component and prerequisite preflight and cannot be combined with selection,
-harness, Git-hook, or noninteractive options.
+Install and update install or confirm the managed CLI before applying telemetry configuration and native hooks. Update
+preserves machine identity, repository and path policy, certificates, delivery settings, diagnostics, offsets, and
+buffered events.
 
 Telemetry preflight resolves the collector endpoint and optional token before any changes. Interactive mode prompts
 when no endpoint is configured. With `--non-interactive`, set `AI_AGENT_TELEMETRY_ENDPOINT` and optionally
 `AI_AGENT_TELEMETRY_TOKEN`, or configure them beforehand. A missing endpoint fails the complete lifecycle preflight.
 
-Full uninstall means the final component set contains all three components. It removes components first and then the
-managed CLI and its receipt-owned `PATH` entry. A partial uninstall preserves the CLI unless you pass `--remove-cli`;
-that flag is valid only when telemetry remains selected. A telemetry hook-cleanup failure always preserves the CLI.
+Uninstall removes telemetry-owned native hooks first and then removes the managed CLI and its receipt-owned `PATH`
+entry. A telemetry hook-cleanup failure preserves the CLI.
 
 ```sh
 ai-agent-telemetry uninstall
-ai-agent-telemetry uninstall --components telemetry
-ai-agent-telemetry uninstall --components telemetry --remove-cli
 ai-agent-telemetry uninstall --purge
 ```
 
@@ -99,6 +93,11 @@ even when the directory becomes empty.
 When buffered events remain after a failed delivery attempt, `status` points to
 `status --verbose`. The verbose output includes the effective buffer capacity, flush
 timeout, and last recorded delivery error.
+
+If APM is already on `PATH` and the CLI reports a release tag, install and update also install the optional
+`agent-packages/ai-agent-telemetry-configure` skill globally for the selected harnesses. Uninstall removes that package
+when it appears in the global manifest. A missing APM executable or release tag produces `SKIPPED`; a failed optional
+skill command produces `WARN` and does not fail the core telemetry lifecycle.
 
 ## Global hooks
 
@@ -136,14 +135,13 @@ the exact ownership comment blocks telemetry cleanup and preserves the managed C
 [manual Cline uninstall procedure](manual-uninstall.md). Every other Cline entry is preserved as user-owned without
 blocking cleanup.
 
-Before `configure` or `hooks install` installs a nonempty set of CLI-managed hooks, the CLI reads `~/.apm/apm.yml`.
-If the manifest contains the exact legacy telemetry hook package dependency, the CLI asks APM to remove that global
-dependency. It does not edit repository-local APM manifests or remove the retained compatibility package from a
-project.
+Before any native hook installation, the CLI reads `~/.apm/apm.yml`. If the manifest contains the exact legacy
+telemetry hook package dependency, the CLI must remove that global dependency through APM before it writes native
+hooks. It does not edit repository-local APM manifests or remove the retained compatibility package from a project.
 
-Cleanup is best effort. If the global manifest cannot be read or parsed, APM is unavailable, or the uninstall command
-fails, the CLI writes a warning to `stderr` and continues canonicalizing every requested native hook. A cleanup warning
-does not affect the exit code: the command succeeds when configuration and hook installation succeed.
+An unreadable or invalid global manifest, a missing APM executable, or a failed removal returns a nonzero result. The
+error names the blocking state and prints the exact `apm uninstall -g` recovery command followed by
+`ai-agent-telemetry update`. This strict migration prevents concurrent legacy and native hook registrations.
 
 Hook updates preserve unrelated top-level fields, events, matcher groups, handlers, and unknown
 extension fields. They canonicalize only recognized telemetry entries and remove duplicate owned
@@ -153,9 +151,8 @@ If a file contains malformed JSON or an incompatible native structure, the CLI l
 byte-for-byte unchanged and reports that target as failed. It continues with the other selected
 targets and returns a nonzero exit code after reporting every failure.
 
-`configure` writes machine configuration before it attempts cleanup and hook installation. A cleanup warning does not
-roll back the configuration. If a later hook installation fails, the configuration remains written and `configure`
-returns exit code `1`.
+`configure` writes machine configuration before it attempts legacy migration and hook installation. If either step
+fails, the configuration remains written and `configure` returns exit code `1`.
 
 `status` reports `installed`, `missing`, `outdated`, or `invalid` for each harness. `outdated` is specific to a Cline
 file whose bytes exactly match a supported legacy template. It verifies registration
@@ -183,21 +180,18 @@ infer identifiers.
 ## Updating on Windows
 
 Direct `update` downloads and verifies the new Windows image, transfers control to it, completes read-only preflight,
-and replaces the managed executable before component changes. The old process waits and returns the new process's exit
-code. A helper then removes the one renamed old image after the old process exits.
+and replaces the managed executable before changing telemetry configuration or native hooks. The old process waits and
+returns the new process's exit code. A helper then removes the one renamed old image after the old process exits.
 
 If helper cleanup exhausts its bounded retries, stderr names the exact stale image that you may remove manually after
 the update processes exit. Later updates do not scan for or delete stale-looking sibling files.
 
-The installed Windows executable cannot remove itself. Run full uninstall or partial uninstall with `--remove-cli`
-through the temporary bootstrap instead:
+The installed Windows executable cannot remove itself. Run uninstall through the temporary bootstrap instead:
 
 ```powershell
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall"
-powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --components telemetry --remove-cli"
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --purge"
 ```
-
-Partial uninstall without CLI removal can run directly on every platform.
 
 ## Shell completion
 
@@ -210,15 +204,14 @@ ai-agent-telemetry completion fish
 ai-agent-telemetry completion powershell
 ```
 
-Cobra also completes component, skip, harness, and hook-target values. Comma-separated completion retains the typed
-prefix, omits duplicates, and disables file completion.
+Cobra also completes harness and hook-target values. Comma-separated completion retains the typed prefix, omits
+duplicates, and disables file completion.
 
 ## Removed lifecycle interfaces
 
 The unified lifecycle is a breaking change. `update-check`, `self-update`, `--force-update`, `--force`,
 `--skip-config`, `bootstrap.sh`, `bootstrap.ps1`, and PowerShell named parameters are not supported aliases. Use
-`update`, `update --cli-only`, `--skip telemetry`, and the canonical `install.sh` or `install.ps1` bootstrap as
-appropriate.
+`update` and the canonical `install.sh` or `install.ps1` bootstrap instead.
 
 ## Buffering and delivery
 

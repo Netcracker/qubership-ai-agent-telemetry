@@ -150,28 +150,11 @@ func TestManagedCLIPreflightRejectsInstalledWindowsRemovalBeforeMutation(t *test
 		Home: home, GOOS: "windows", Paths: paths,
 		Executable: func() (string, error) { return target, nil },
 	})
-	for _, tt := range []struct {
-		name    string
-		opts    lifecycleOptions
-		command string
-	}{
-		{
-			name:    "full uninstall with purge",
-			opts:    lifecycleOptions{Action: actionUninstall, Components: allComponents(), Purge: true},
-			command: "powershell.exe -NoProfile -Command \"& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --purge\"",
-		},
-		{
-			name:    "partial uninstall with explicit CLI removal",
-			opts:    lifecycleOptions{Action: actionUninstall, Components: []componentName{componentTelemetry}, RemoveCLI: true},
-			command: "powershell.exe -NoProfile -Command \"& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --components telemetry --remove-cli\"",
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			err := service.PreflightRemove(tt.opts)
-			if err == nil || !strings.Contains(err.Error(), tt.command) {
-				t.Fatalf("PreflightRemove(%#v) = %v, want command %q", tt.opts, err, tt.command)
-			}
-		})
+	opts := lifecycleOptions{Action: actionUninstall, Purge: true}
+	command := "powershell.exe -NoProfile -Command \"& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1'))) uninstall --purge\""
+	err := service.PreflightRemove(opts)
+	if err == nil || !strings.Contains(err.Error(), command) {
+		t.Fatalf("PreflightRemove(%#v) = %v, want command %q", opts, err, command)
 	}
 	if paths.ensureCalls != 0 || paths.removeCalls != 0 {
 		t.Fatalf("preflight mutated PATH: ensure=%d remove=%d", paths.ensureCalls, paths.removeCalls)
@@ -191,7 +174,7 @@ func TestManagedCLIPreflightAllowsPOSIXAndTemporaryWindowsRunner(t *testing.T) {
 			Home: home, GOOS: tt.goos, Paths: &fakeManagedPathManager{},
 			Executable: func() (string, error) { return tt.exe, nil },
 		})
-		if err := service.PreflightRemove(lifecycleOptions{Action: actionUninstall, Components: allComponents()}); err != nil {
+		if err := service.PreflightRemove(lifecycleOptions{Action: actionUninstall}); err != nil {
 			t.Fatalf("PreflightRemove(%s, %s) = %v", tt.goos, tt.exe, err)
 		}
 	}
@@ -203,19 +186,15 @@ func TestManagedCLIRejectsInvalidHomeBeforeManagedMutation(t *testing.T) {
 			name string
 			opts lifecycleOptions
 		}{
-			{name: "CLI-only update", opts: lifecycleOptions{Action: actionUpdate, CLIOnly: true}},
-			{name: "telemetry-excluded install", opts: lifecycleOptions{
-				Action: actionInstall, Components: []componentName{componentAPM, componentGitHooks},
-			}},
-			{name: "full uninstall", opts: lifecycleOptions{Action: actionUninstall}},
+			{name: "install", opts: lifecycleOptions{Action: actionInstall}},
+			{name: "update", opts: lifecycleOptions{Action: actionUpdate}},
+			{name: "uninstall", opts: lifecycleOptions{Action: actionUninstall}},
 		} {
 			t.Run(home+"/"+tt.name, func(t *testing.T) {
 				paths := &fakeManagedPathManager{}
 				deps := lifecycleDeps{
 					ManagedCLI: newManagedCLIService(managedCLIConfig{Home: home, GOOS: "linux", Paths: paths}),
-					Components: map[componentName]componentOps{
-						componentAPM: {}, componentTelemetry: {}, componentGitHooks: {},
-					},
+					Telemetry:  componentOps{},
 				}
 				summary := runLifecycle(context.Background(), tt.opts, deps)
 				if summary.Err == nil || !strings.Contains(summary.Err.Error(), "absolute") {
@@ -226,25 +205,6 @@ func TestManagedCLIRejectsInvalidHomeBeforeManagedMutation(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestManagedCLIInvalidHomeDoesNotBlockUnrelatedPartialUninstall(t *testing.T) {
-	called := false
-	deps := lifecycleDeps{
-		ManagedCLI: newManagedCLIService(managedCLIConfig{Home: "", GOOS: "linux", Paths: &fakeManagedPathManager{}}),
-		Components: map[componentName]componentOps{componentAPM: {
-			Uninstall: func(context.Context, lifecycleOptions) operationResult {
-				called = true
-				return operationResult{Name: string(componentAPM), State: operationOK, Detail: "removed"}
-			},
-		}},
-	}
-	summary := runLifecycle(context.Background(), lifecycleOptions{
-		Action: actionUninstall, Components: []componentName{componentAPM},
-	}, deps)
-	if summary.Err != nil || !called {
-		t.Fatalf("partial uninstall = %#v, called=%t; want unrelated removal", summary, called)
 	}
 }
 

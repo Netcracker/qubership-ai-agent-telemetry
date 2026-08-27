@@ -88,3 +88,79 @@ func TestCodexPolicyUsesLifecycleUpdateCommand(t *testing.T) {
 		t.Fatal("Codex execution policy still references removed update-check command")
 	}
 }
+
+func TestHooksPackageConfigureSkillUpdateMigrationContract(t *testing.T) {
+	packageDir := filepath.Join("agent-packages", "ai-agent-telemetry-configure")
+	skillDir := filepath.Join(packageDir, ".apm", "skills", "ai-agent-telemetry-configure")
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	skill, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{
+		"legacy telemetry APM migration failed",
+		"apm was not found on PATH",
+		"Do not run `ai-agent-telemetry hooks install` manually.",
+		"Do not remove unrelated global packages",
+		"edit a project-local manifest.",
+	} {
+		if !strings.Contains(string(skill), want) {
+			t.Fatalf("%s does not document %q", skillPath, want)
+		}
+	}
+	_, recovery, found := strings.Cut(string(skill), "### Legacy APM migration during an explicit update")
+	if !found {
+		t.Fatalf("%s does not contain the legacy migration recovery section", skillPath)
+	}
+	recovery, _, _ = strings.Cut(recovery, "\n## Failure")
+	offset := 0
+	for _, want := range []string{
+		"command -v apm",
+		"Get-Command apm",
+		"apm uninstall -g " + legacyTelemetryAPMPackage,
+		"\nai-agent-telemetry update\n",
+		"ai-agent-telemetry status --verbose",
+	} {
+		index := strings.Index(recovery[offset:], want)
+		if index < 0 {
+			t.Fatalf("%s recovery section does not document %q in order", skillPath, want)
+		}
+		offset += index + len(want)
+	}
+	if strings.Contains(string(skill), "--cli-only") {
+		t.Fatalf("%s still documents --cli-only", skillPath)
+	}
+	if strings.Contains(string(skill), "every selected component") {
+		t.Fatalf("%s still describes the removed component lifecycle", skillPath)
+	}
+
+	readme, err := os.ReadFile(filepath.Join(packageDir, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(readme), "--cli-only") {
+		t.Fatalf("%s still documents --cli-only", filepath.Join(packageDir, "README.md"))
+	}
+
+	deploymentPath := filepath.Join(skillDir, "references", "deployment.md")
+	deployment, err := os.ReadFile(deploymentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, removed := range []string{
+		"all components", "installs APM", "qubership-global-essentials", "Git hooks", "prerequisite fails",
+	} {
+		if strings.Contains(string(deployment), removed) {
+			t.Errorf("%s still documents removed lifecycle behavior %q", deploymentPath, removed)
+		}
+	}
+
+	manifest, err := os.ReadFile(filepath.Join(packageDir, "apm.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(manifest), "version: 3.4.0") {
+		t.Fatalf("%s does not declare version 3.4.0", filepath.Join(packageDir, "apm.yml"))
+	}
+}

@@ -156,7 +156,7 @@ After the workflow succeeds, install the published version on one Unix-like mach
 INSTALLER_URL=https://github.com/Netcracker/qubership-ai-agent-telemetry
 INSTALLER_URL=$INSTALLER_URL/releases/latest/download/install.sh
 export AI_AGENT_TELEMETRY_INSTALL_VERSION=vX.Y.Z
-curl -fsSL "$INSTALLER_URL" | sh -s -- --components telemetry --non-interactive
+curl -fsSL "$INSTALLER_URL" | sh -s -- --non-interactive
 ai-agent-telemetry version
 ```
 
@@ -167,7 +167,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "$r='https://github.com/Netcracker';" ^
   "$r+='/qubership-ai-agent-telemetry/releases/latest/download';" ^
   "$env:AI_AGENT_TELEMETRY_INSTALL_VERSION='vX.Y.Z';" ^
-  "& ([scriptblock]::Create((Invoke-RestMethod ($r+'/install.ps1')))) --components telemetry --non-interactive"
+  "& ([scriptblock]::Create((Invoke-RestMethod ($r+'/install.ps1')))) --non-interactive"
 powershell.exe -NoProfile -Command ^
   "& ($env:USERPROFILE+'\.local\bin\ai-agent-telemetry.exe') version"
 ```
@@ -178,8 +178,8 @@ commands should print `vX.Y.Z`.
 ### Full lifecycle
 
 Run the overall installer on a disposable machine. Complete telemetry
-configuration when prompted, and confirm that the summary reports `OK` for
-every component.
+configuration when prompted, and confirm that the summary reports `OK` for the managed CLI and telemetry. The optional
+configure skill may report `SKIPPED` when APM is not on `PATH`.
 
 On macOS or Linux:
 
@@ -199,8 +199,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "& ([scriptblock]::Create((Invoke-RestMethod ($r+'/install.ps1')))) update"
 ```
 
-Confirm that update refreshes all selected components and that `update --cli-only` refreshes only the managed CLI. On
-Windows, also verify direct update handoff and full uninstall through the temporary `install.ps1` bootstrap.
+Confirm that update refreshes the managed CLI and selected native hooks while preserving telemetry state. On Windows,
+also verify direct update handoff and uninstall through the temporary `install.ps1` bootstrap.
 
 ### Cline hook
 
@@ -242,17 +242,17 @@ buffered events or delivery error. Remove the temporary skill after the check.
 
 Release validation must reject removed update-check, self-update, force-update, force, skip-config, `bootstrap.sh`,
 `bootstrap.ps1`, and PowerShell named-parameter behavior. Do not retain old tests to preserve those contracts. Replace
-deleted coverage with unified lifecycle routing, update handoff, selection, ownership, strict flush, and concrete
-completion tests.
+deleted coverage with unified lifecycle routing, update handoff, harness selection, ownership, strict flush, and
+concrete completion tests.
 
 When removing obsolete installer tests, keep or add these replacements:
 
 - Cobra command, help, validation, and exit-code tests for `install`, `update`, and `uninstall`;
-- component and harness normalization, partial and full uninstall, purge, and CLI-removal ownership tests;
+- harness normalization, uninstall, purge, and CLI-removal ownership tests;
 - verified update handoff, Windows swap and rollback, exact stale-image cleanup, and child exit-code tests;
 - strict explicit-flush failure and retention tests alongside fail-open ingest tests;
 - receipt-owned `PATH` removal and unconditional `~/.local/bin` preservation tests;
-- concrete completion candidate and directive tests for every value flag, plus generation smoke tests for four shells;
+- concrete harness and hook-target completion tests, plus generation smoke tests for four shells;
 - bootstrap transport, quoting, stdin, checksum, platform selection, forwarding, and temporary-cleanup tests.
 
 Deleting a test is valid only when the old behavior is intentionally removed or equivalent Go lifecycle coverage is

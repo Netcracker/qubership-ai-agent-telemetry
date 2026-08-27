@@ -16,8 +16,7 @@ The CLI registers one global harness-specific hook in each native user configura
 | Cursor | `~/.cursor/hooks.json` |
 
 The default lifecycle install puts the binary on `PATH` and registers all four harnesses, even when a harness is not
-installed yet. Use `--harnesses` to select a subset, or `--skip telemetry` to leave telemetry configuration and hooks
-unchanged. Each hook calls the CLI by its bare name,
+installed yet. Use `--harnesses` to select a subset. Each hook calls the CLI by its bare name,
 `ai-agent-telemetry ingest --agent=<name>`, which works across Git Bash, PowerShell, `cmd.exe`,
 and POSIX `sh`. The Codex policy file allows only the hook and two diagnostic commands to access
 the machine configuration and collector outside its sandbox.
@@ -29,8 +28,8 @@ fails an agent turn. For its internals, see [the ai-agent-telemetry CLI](cli.md)
 After installation, follow the README's [verification, restart, and trust steps](../README.md#installation).
 
 For unattended installation, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optional
-`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. The lifecycle resolves required telemetry input before any
-hook, managed CLI, or component change.
+`AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. The lifecycle resolves required telemetry input before
+changing the managed CLI, telemetry configuration, or native hooks.
 
 ## Capability matrix
 
@@ -171,9 +170,9 @@ the [manual conflict-resolution guide](manual-uninstall.md) explains how to keep
 Cline supports one file per hook type, so automatic composition with an unrelated `PostToolUse` hook is outside the
 current implementation.
 
-On macOS and Linux the file is executable with mode `0755`. On Windows it is a PowerShell file. Selecting the `cline`
-lifecycle harness deploys shared skills through APM's `agent-skills` target because APM has no native Cline target and
-Cline discovers `.agents/skills`.
+On macOS and Linux the file is executable with mode `0755`. On Windows it is a PowerShell file. When APM is already on
+`PATH`, selecting the `cline` lifecycle harness installs the optional configure skill through APM's `agent-skills`
+target because APM has no native Cline target and Cline discovers `.agents/skills`.
 
 [ADR 0007](adr/0007-cline-harness-support.md) records why Cline was added and why the integration uses this hook.
 [ADR 0008](adr/0008-cline-hook-installation-and-removal.md) defines its ownership and lifecycle rules.

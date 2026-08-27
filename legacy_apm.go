@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,63 +69,58 @@ func hasGlobalAPMDependency(data []byte, packageName string) (bool, error) {
 	return false, nil
 }
 
-func cleanupLegacyTelemetryAPM(home string, warnings io.Writer) {
-	cleanupLegacyTelemetryAPMWith(home, warnings, exec.LookPath, func(name string, args ...string) (string, error) {
+func migrateLegacyTelemetryAPM(home string) error {
+	return migrateLegacyTelemetryAPMWith(home, exec.LookPath, func(name string, args ...string) (string, error) {
 		output, err := exec.Command(name, args...).CombinedOutput()
 		return string(output), err
 	})
 }
 
-func cleanupLegacyTelemetryAPMWith(
+func migrateLegacyTelemetryAPMWith(
 	home string,
-	warnings io.Writer,
 	lookPath func(string) (string, error),
 	runCommand func(string, ...string) (string, error),
-) {
+) error {
 	if strings.TrimSpace(home) == "" {
-		return
+		return nil
 	}
 	manifestPath := filepath.Join(home, ".apm", "apm.yml")
 	data, err := os.ReadFile(manifestPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return
+		return nil
 	}
 	if err != nil {
-		warnLegacyAPMVerification(warnings, err)
-		return
+		return legacyTelemetryMigrationError(fmt.Errorf("read %s: %w", manifestPath, err))
 	}
 	installed, err := hasLegacyTelemetryAPMDependency(data)
 	if err != nil {
-		warnLegacyAPMVerification(warnings, fmt.Errorf("parse %s: %w", manifestPath, err))
-		return
+		return legacyTelemetryMigrationError(fmt.Errorf("parse %s: %w", manifestPath, err))
 	}
 	if !installed {
-		return
+		return nil
 	}
 	apm, err := lookPath("apm")
 	if err != nil {
-		_, _ = fmt.Fprintln(warnings,
-			"warning: legacy APM cleanup could not remove the telemetry dependency: apm was not found on PATH")
-		return
+		return legacyTelemetryMigrationError(errors.New("apm was not found on PATH"))
 	}
 	output, err := runCommand(apm, "uninstall", "-g", legacyTelemetryAPMPackage)
 	if err == nil {
-		return
+		return nil
 	}
 	diagnostic, truncated := limitAPMDiagnostic(output)
-	_, _ = fmt.Fprintf(warnings, "warning: legacy APM cleanup failed: %s uninstall -g %s: %v\n",
-		apm, legacyTelemetryAPMPackage, err)
+	failure := fmt.Errorf("%s uninstall -g %s: %w", apm, legacyTelemetryAPMPackage, err)
 	if diagnostic != "" {
-		_, _ = fmt.Fprintf(warnings, "apm output:\n%s\n", diagnostic)
+		failure = fmt.Errorf("%w\napm output:\n%s", failure, diagnostic)
 	}
 	if truncated {
-		_, _ = fmt.Fprintln(warnings, "[apm output truncated]")
+		failure = fmt.Errorf("%w\n[apm output truncated]", failure)
 	}
+	return legacyTelemetryMigrationError(failure)
 }
 
-func warnLegacyAPMVerification(warnings io.Writer, err error) {
-	_, _ = fmt.Fprintf(warnings,
-		"warning: legacy APM cleanup could not verify or remove the telemetry dependency: %v\n", err)
+func legacyTelemetryMigrationError(err error) error {
+	return fmt.Errorf("legacy telemetry APM migration failed: %w\nRun:\n  apm uninstall -g %s\n  ai-agent-telemetry update",
+		err, legacyTelemetryAPMPackage)
 }
 
 func limitAPMDiagnostic(output string) (string, bool) {

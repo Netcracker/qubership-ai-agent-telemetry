@@ -1,4 +1,20 @@
-# Resolve Cline hook conflicts
+# Manual uninstall and legacy cleanup
+
+## Remove tools installed by version 1.2.0 or earlier
+
+Use this voluntary cleanup only for tools installed by the old lifecycle. The pinned bootstrap runs the old uninstall
+contract without passing obsolete options to the current CLI:
+
+```sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.sh | sh -s -- uninstall --components apm,git-hooks
+```
+
+```powershell
+powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/download/v1.2.0/install.ps1'))) uninstall --components apm,git-hooks"
+```
+
+Normal install, update, and uninstall never run this cleanup. Review the old lifecycle summary before removing tools
+that you may still use independently.
 
 ## Replace a recognized legacy hook
 

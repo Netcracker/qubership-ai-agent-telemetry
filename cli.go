@@ -88,7 +88,7 @@ func newRootCommand(deps appDeps) *cobra.Command {
 		newLifecycleCommand(actionUpdate, deps),
 		newLifecycleCommand(actionUninstall, deps),
 		newLegacyMigrationCommand("update-check", "update"),
-		newLegacyMigrationCommand("self-update", "update --cli-only"),
+		newLegacyMigrationCommand("self-update", "update"),
 		newConfigureCommand(deps),
 		newHooksCommand(deps),
 		newStatusCommand(deps),
@@ -109,12 +109,22 @@ func legacyArgumentError(args []string) error {
 			name = name[:index]
 		}
 		switch name {
+		case "--components":
+			return fmt.Errorf("%s is no longer supported; use the v1.2.0 bootstrap with uninstall --components apm,git-hooks for legacy cleanup", name)
+		case "--skip":
+			return fmt.Errorf("%s is no longer supported; telemetry is required; use --harnesses to select native hooks", name)
+		case "--force-git-hooks":
+			return fmt.Errorf("%s is no longer supported; native harness hooks are refreshed automatically", name)
+		case "--cli-only":
+			return fmt.Errorf("%s is no longer supported; update always refreshes telemetry", name)
+		case "--remove-cli":
+			return fmt.Errorf("%s is no longer supported; uninstall always removes the managed CLI", name)
 		case "--force-update", "-ForceUpdate":
 			return fmt.Errorf("%s is no longer supported; use update", name)
 		case "--force", "-Force":
-			return fmt.Errorf("%s is no longer supported; use update --components telemetry", name)
+			return fmt.Errorf("%s is no longer supported; use update", name)
 		case "--skip-config", "-SkipConfig":
-			return fmt.Errorf("%s is no longer supported; use --skip telemetry", name)
+			return fmt.Errorf("%s is no longer supported", name)
 		}
 	}
 	return nil
@@ -150,7 +160,9 @@ func normalizeAppDeps(deps appDeps) appDeps {
 	if deps.Home == nil {
 		deps.Home = userHomeDir
 	}
-	if deps.Lifecycle.Components == nil && deps.Lifecycle.ManagedCLI.Install == nil && deps.Lifecycle.ManagedCLI.Remove == nil {
+	if deps.Lifecycle.ManagedCLI.Install == nil && deps.Lifecycle.ManagedCLI.Remove == nil &&
+		deps.Lifecycle.Telemetry.Install == nil && deps.Lifecycle.Telemetry.Update == nil &&
+		deps.Lifecycle.Telemetry.Uninstall == nil {
 		deps.Lifecycle = defaultLifecycleDeps(deps.Home(), deps.ErrOut)
 	}
 	if deps.Update.Prepare == nil {
