@@ -68,6 +68,7 @@ type lifecycleDeps struct {
 	ManagedInstallSource func() (string, error)
 	Telemetry            componentOps
 	ConfigureSkill       configureSkillService
+	Progress             io.Writer
 }
 
 func defaultLifecycleDeps(home string, warnings io.Writer) lifecycleDeps {
@@ -126,7 +127,7 @@ func executePreparedLifecycle(ctx context.Context, opts lifecycleOptions, deps l
 	results := make([]operationResult, 0, 3)
 	switch opts.Action {
 	case actionInstall, actionUpdate:
-		managedResult := runManagedInstall(deps.ManagedCLI, deps.ManagedInstallSource)
+		managedResult := runManagedInstall(deps.ManagedCLI, deps.ManagedInstallSource, deps.Progress)
 		results = append(results, managedResult)
 		if managedResult.State != operationOK {
 			results = append(results, operationResult{
@@ -134,18 +135,18 @@ func executePreparedLifecycle(ctx context.Context, opts lifecycleOptions, deps l
 				Detail: "managed CLI prerequisite was not installed; native hooks were preserved",
 			})
 		} else {
-			telemetryResult := runComponent(ctx, opts, componentTelemetry, deps.Telemetry)
+			telemetryResult := runComponent(ctx, opts, componentTelemetry, deps.Telemetry, deps.Progress)
 			results = append(results, telemetryResult)
 			if telemetryResult.State == operationOK {
-				if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill); ok {
+				if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill, deps.Progress); ok {
 					results = append(results, result)
 				}
 			}
 		}
 	case actionUninstall:
-		telemetryResult := runComponent(ctx, opts, componentTelemetry, deps.Telemetry)
+		telemetryResult := runComponent(ctx, opts, componentTelemetry, deps.Telemetry, deps.Progress)
 		results = append(results, telemetryResult)
-		if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill); ok {
+		if result, ok := runConfigureSkill(ctx, opts, deps.ConfigureSkill, deps.Progress); ok {
 			results = append(results, result)
 		}
 		if telemetryResult.State == operationFailed {
@@ -154,14 +155,16 @@ func executePreparedLifecycle(ctx context.Context, opts lifecycleOptions, deps l
 				Detail: "telemetry cleanup failed; managed CLI was preserved",
 			})
 		} else {
-			results = append(results, runManagedRemove(deps.ManagedCLI))
+			results = append(results, runManagedRemove(deps.ManagedCLI, deps.Progress))
 		}
 	}
 
 	return lifecycleSummary{Results: results, Err: failedResultError(results)}
 }
 
-func runConfigureSkill(ctx context.Context, opts lifecycleOptions, service configureSkillService) (operationResult, bool) {
+func runConfigureSkill(
+	ctx context.Context, opts lifecycleOptions, service configureSkillService, progress io.Writer,
+) (operationResult, bool) {
 	var operation func(context.Context, lifecycleOptions) operationResult
 	switch opts.Action {
 	case actionInstall:
@@ -174,13 +177,15 @@ func runConfigureSkill(ctx context.Context, opts lifecycleOptions, service confi
 	if operation == nil {
 		return operationResult{}, false
 	}
+	reportOperationStart(progress, "configure-skill")
 	return normalizeOperationResult(operation(ctx, opts), "configure-skill"), true
 }
 
-func runManagedInstall(service managedCLIService, source func() (string, error)) operationResult {
+func runManagedInstall(service managedCLIService, source func() (string, error), progress io.Writer) operationResult {
 	if service.Install == nil {
 		return operationResult{Name: "managed-cli", State: operationSkipped, Detail: "managed CLI operation is unavailable"}
 	}
+	reportOperationStart(progress, "managed-cli")
 	if source == nil {
 		source = os.Executable
 	}
@@ -194,14 +199,17 @@ func runManagedInstall(service managedCLIService, source func() (string, error))
 	return normalizeOperationResult(service.Install(path), "managed-cli")
 }
 
-func runManagedRemove(service managedCLIService) operationResult {
+func runManagedRemove(service managedCLIService, progress io.Writer) operationResult {
 	if service.Remove == nil {
 		return operationResult{Name: "managed-cli", State: operationSkipped, Detail: "managed CLI removal is unavailable"}
 	}
+	reportOperationStart(progress, "managed-cli")
 	return normalizeOperationResult(service.Remove(), "managed-cli")
 }
 
-func runComponent(ctx context.Context, opts lifecycleOptions, name string, operations componentOps) operationResult {
+func runComponent(
+	ctx context.Context, opts lifecycleOptions, name string, operations componentOps, progress io.Writer,
+) operationResult {
 	var operation func(context.Context, lifecycleOptions) operationResult
 	switch opts.Action {
 	case actionInstall:
@@ -214,7 +222,14 @@ func runComponent(ctx context.Context, opts lifecycleOptions, name string, opera
 	if operation == nil {
 		return operationResult{Name: name, State: operationSkipped, Detail: "component operation is unavailable"}
 	}
+	reportOperationStart(progress, name)
 	return normalizeOperationResult(operation(ctx, opts), name)
+}
+
+func reportOperationStart(w io.Writer, name string) {
+	if w != nil {
+		_, _ = fmt.Fprintf(w, "Starting %s...\n", name)
+	}
 }
 
 func normalizeOperationResult(result operationResult, fallback string) operationResult {

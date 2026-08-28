@@ -35,6 +35,7 @@ download_url() {
 download() {
   label=$1
   destination=$2
+  printf 'Downloading %s...\n' "$label" >&2
   if ! curl -fsSL "$(download_url "$label")" -o "$destination" >/dev/null; then
     die "could not download $label"
   fi
@@ -81,6 +82,7 @@ sums=$TEMP_DIR/SHA256SUMS
 download "$asset" "$binary"
 download SHA256SUMS "$sums"
 
+printf 'Verifying %s checksum...\n' "$asset" >&2
 expected=$(awk -v asset="$asset" '$2 == asset || $2 == "*" asset {print $1; exit}' "$sums")
 [ -n "$expected" ] || die "no checksum entry for $asset"
 actual=$(sha256_of "$binary")
@@ -89,6 +91,7 @@ if [ "$actual" != "$expected" ]; then
 fi
 chmod 700 "$binary"
 
+printf 'Starting ai-agent-telemetry %s...\n' "$1" >&2
 set +e
 if (: </dev/tty) 2>/dev/null; then
   "$binary" "$@" </dev/tty

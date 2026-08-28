@@ -10,15 +10,20 @@ hosts whose name contains `netcracker`; optional path rules can authorize additi
 Run the installer once. It installs the CLI, saves the collector settings, and configures hooks for Claude Code, Cline,
 Codex, and Cursor. Preflight prompts for missing collector settings.
 
+macOS, Linux, and WSL:
+
 ```sh
-# macOS / Linux
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
 ```
 
+Native Windows PowerShell:
+
 ```powershell
-# Windows PowerShell
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
+
+If the collector uses a private CA, add it before `selftest` with
+`ai-agent-telemetry configure --ca=<path-to-ca.pem>`. WSL uses a POSIX path. Native PowerShell uses a Windows path.
 
 1. Follow any preflight prompts for collector settings.
 2. Run `ai-agent-telemetry status` and `ai-agent-telemetry selftest`.
@@ -174,13 +179,15 @@ The bootstrap downloads and verifies the correct release, then runs `ai-agent-te
 installs the managed CLI in `~/.local/bin`, adds the directory to the user `PATH` when needed, saves the collector
 settings, and registers hooks for every supported harness.
 
+macOS, Linux, and WSL:
+
 ```sh
-# macOS / Linux
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
 ```
 
+Native Windows PowerShell:
+
 ```powershell
-# Windows PowerShell
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
 
