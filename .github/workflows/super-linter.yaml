@@ -82,6 +82,7 @@ jobs:
         uses: super-linter/super-linter/slim@4ce20838b8ab83717e78138c5b3a1407148e0918 # v8.7.0
         env:
           VALIDATE_ALL_CODEBASE: ${{ inputs.full_scan || false }}
+          FILTER_REGEX_EXCLUDE: '(^|/)(docs/superpowers/|\.agents/|\.codex/|\.claude/(apm-hooks\.json|settings\.json|rules/|skills/)|\.cursor/(hooks\.json|rules/))'
           # Go modules are linted with the dedicated action in go-build.yaml.
           VALIDATE_GO_MODULES: false
           # To report GitHub Actions status checks
