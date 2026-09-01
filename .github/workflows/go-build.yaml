@@ -95,7 +95,14 @@ jobs:
         run: go build -v ./...
 
       - name: "Test"
-        run: go test ./...
+        run: go test ./... -coverprofile=coverage.out
+
+      - name: "Upload coverage"
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: go-coverage
+          path: coverage.out
+          if-no-files-found: error
 
   hook-platform-tests:
     name: "Go suite (${{ matrix.os }})"

@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestInstallerDocumentationWorkflowContract(t *testing.T) {
@@ -173,6 +175,43 @@ func TestSuperLinterExcludesSuperpowersArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "FILTER_REGEX_EXCLUDE: '(^|/)docs/superpowers/'") {
 		t.Fatal("super-linter must exclude generated Superpowers artifacts")
+	}
+}
+
+func TestGoBuildRetainsCoverageArtifact(t *testing.T) {
+	data, err := os.ReadFile(".github/workflows/go-build.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Run  string         `yaml:"run"`
+				Uses string         `yaml:"uses"`
+				With map[string]any `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+
+	coverageGenerated := false
+	coverageRetained := false
+	for _, step := range workflow.Jobs["build"].Steps {
+		if strings.Contains(step.Run, "go test ./...") && strings.Contains(step.Run, "-coverprofile=coverage.out") {
+			coverageGenerated = true
+		}
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") &&
+			step.With["path"] == "coverage.out" && step.With["if-no-files-found"] == "error" {
+			coverageRetained = true
+		}
+	}
+	if !coverageGenerated {
+		t.Error("Go build must generate coverage.out")
+	}
+	if !coverageRetained {
+		t.Error("Go build must retain coverage.out as an artifact")
 	}
 }
 
