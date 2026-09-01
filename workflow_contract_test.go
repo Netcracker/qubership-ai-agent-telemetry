@@ -168,13 +168,23 @@ func TestWindowsLifecycleBootstrapCallsUseCheckedChildProcesses(t *testing.T) {
 	}
 }
 
-func TestSuperLinterExcludesSuperpowersArtifacts(t *testing.T) {
-	data, err := os.ReadFile(".github/workflows/super-linter.yaml")
+func TestSuperLinterExcludesGeneratedArtifacts(t *testing.T) {
+	envData, err := os.ReadFile(".github/super-linter.env")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "FILTER_REGEX_EXCLUDE: '(^|/)docs/superpowers/'") {
-		t.Fatal("super-linter must exclude generated Superpowers artifacts")
+	for _, path := range []string{"docs/superpowers/", ".agents/", ".claude/", ".codex/", ".cursor/"} {
+		if !strings.Contains(string(envData), path) {
+			t.Errorf("super-linter exclusion must cover %s", path)
+		}
+	}
+
+	workflowData, err := os.ReadFile(".github/workflows/super-linter.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(workflowData), "FILTER_REGEX_EXCLUDE:") {
+		t.Fatal("workflow-level FILTER_REGEX_EXCLUDE overrides .github/super-linter.env")
 	}
 }
 
