@@ -57,9 +57,9 @@ jobs:
             echo "Triggered by schedule event"
             {
             echo "BRANCH=${DEFAULT_BRANCH}"
-            echo "TARGET=''"
-            echo "DEBUG='false'"
-            echo "DRY_RUN='false'"
+            echo "TARGET="
+            echo "DEBUG=false"
+            echo "DRY_RUN=false"
             } >> $GITHUB_ENV
           fi
 

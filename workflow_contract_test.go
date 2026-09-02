@@ -184,6 +184,45 @@ func TestSuperLinterPreservesCommonConfigurationAndExcludesGeneratedArtifacts(t 
 	}
 }
 
+func TestScheduledApmUpdateExportsPlainEnvironmentValues(t *testing.T) {
+	data, err := os.ReadFile(".github/workflows/apm-packages-update.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Run string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+
+	environmentFile := t.TempDir() + "/github-env"
+	script := strings.ReplaceAll(workflow.Jobs["test-apm-update"].Steps[0].Run, "${{ github.event_name }}", "schedule")
+	command := exec.Command("bash", "-c", script)
+	command.Env = append(os.Environ(),
+		"GITHUB_EVENT_NAME=schedule",
+		"DEFAULT_BRANCH=main",
+		"GITHUB_ENV="+environmentFile,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("scheduled environment setup failed: %v\n%s", err, output)
+	}
+
+	environment, err := os.ReadFile(environmentFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"BRANCH=main", "TARGET=", "DEBUG=false", "DRY_RUN=false"} {
+		if !strings.Contains(string(environment), want+"\n") {
+			t.Errorf("scheduled environment does not contain %q:\n%s", want, environment)
+		}
+	}
+}
+
 func TestGoBuildRetainsCoverageArtifact(t *testing.T) {
 	data, err := os.ReadFile(".github/workflows/go-build.yaml")
 	if err != nil {
@@ -238,6 +277,7 @@ func TestPathFiltersCoverWorkflowInputs(t *testing.T) {
 				"agent-packages/ai-agent-telemetry/.apm/hooks/**",
 				"agent-packages/ai-agent-telemetry-configure/.apm/skills/ai-agent-telemetry-configure/references/codex-sandbox.md",
 				".github/workflows/go-build.yaml",
+				".github/workflows/apm-packages-update.yml",
 				".github/workflows/bootstrap-tests.yaml",
 				".github/workflows/installer-tests.yaml",
 				".github/workflows/super-linter.yaml",
