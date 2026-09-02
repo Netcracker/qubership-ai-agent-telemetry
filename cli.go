@@ -43,12 +43,12 @@ func defaultAppDeps() appDeps {
 
 func execute(args []string, deps appDeps) int {
 	deps = normalizeAppDeps(deps)
+	if handled, code := routeInternalUpdateMode(context.Background(), args, deps); handled {
+		return code
+	}
 	if err := legacyArgumentError(args); err != nil {
 		_, _ = fmt.Fprintln(deps.ErrOut, err)
 		return 2
-	}
-	if handled, code := routeInternalUpdateMode(context.Background(), args, deps); handled {
-		return code
 	}
 	root := newRootCommand(deps)
 	root.SetArgs(args)

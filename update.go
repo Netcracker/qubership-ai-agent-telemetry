@@ -159,10 +159,39 @@ func parseUpdateRunnerOptions(args []string) (updateRunnerOptions, error) {
 	if values["--managed-path"] == "" || values["--release"] == "" {
 		return updateRunnerOptions{}, errors.New("managed path and release are required")
 	}
+	lifecycleArgs, err := normalizeUpdateRunnerLifecycleArgs(args[separator+1:])
+	if err != nil {
+		return updateRunnerOptions{}, err
+	}
 	return updateRunnerOptions{
 		ManagedPath: values["--managed-path"], ParentPID: parentPID, Release: values["--release"],
-		LifecycleArgs: append([]string(nil), args[separator+1:]...),
+		LifecycleArgs: lifecycleArgs,
 	}, nil
+}
+
+func normalizeUpdateRunnerLifecycleArgs(args []string) ([]string, error) {
+	normalized := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		if args[index] != "--components" {
+			normalized = append(normalized, args[index])
+			continue
+		}
+		if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+			return nil, errors.New("missing value for legacy --components option")
+		}
+		includesTelemetry := false
+		for _, component := range strings.Split(args[index+1], ",") {
+			if strings.EqualFold(strings.TrimSpace(component), componentTelemetry) {
+				includesTelemetry = true
+				break
+			}
+		}
+		if !includesTelemetry {
+			return nil, errors.New("legacy --components selection must include telemetry")
+		}
+		index++
+	}
+	return normalized, nil
 }
 
 func parseCleanupImageOptions(args []string) (cleanupImageOptions, error) {

@@ -390,6 +390,41 @@ func TestHiddenUpdateRunnerUsesCanonicalManagedSource(t *testing.T) {
 	}
 }
 
+func TestHiddenUpdateRunnerAcceptsV120LifecycleArguments(t *testing.T) {
+	home := t.TempDir()
+	managed := managedCLIPath(home, runtime.GOOS)
+	var runner updateRunnerOptions
+	var errOut bytes.Buffer
+	code := execute([]string{
+		"__update-runner", "--managed-path", managed, "--parent-pid", "42", "--release", "v1.3.1", "--",
+		"--components", "apm,telemetry,git-hooks", "--harnesses", "claude,codex,cursor", "--non-interactive",
+	}, appDeps{
+		ErrOut: &errOut,
+		Home:   func() string { return home },
+		UpdateRunner: func(_ context.Context, options updateRunnerOptions) int {
+			runner = options
+			return 0
+		},
+	})
+	want := []string{"--harnesses", "claude,codex,cursor", "--non-interactive"}
+	if code != 0 || !reflect.DeepEqual(runner.LifecycleArgs, want) {
+		t.Fatalf("code = %d, lifecycle args = %q, want %q; stderr = %q", code, runner.LifecycleArgs, want, errOut.String())
+	}
+}
+
+func TestHiddenUpdateRunnerRejectsV120SelectionWithoutTelemetry(t *testing.T) {
+	home := t.TempDir()
+	managed := managedCLIPath(home, runtime.GOOS)
+	var errOut bytes.Buffer
+	code := execute([]string{
+		"__update-runner", "--managed-path", managed, "--parent-pid", "42", "--release", "v1.3.1", "--",
+		"--components", "apm,git-hooks", "--harnesses", "codex",
+	}, appDeps{ErrOut: &errOut, Home: func() string { return home }})
+	if code != 2 || !strings.Contains(errOut.String(), "legacy --components selection must include telemetry") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
+	}
+}
+
 func lifecycleCaptureDeps(captured *lifecycleOptions, failure error) lifecycleDeps {
 	result := func(name string) operationResult {
 		if failure != nil && name == "telemetry" {
