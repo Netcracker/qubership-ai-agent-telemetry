@@ -2,19 +2,11 @@
 # APM dependencies
 apm_modules/
 
-# Local Codex and agent state (all APM `apm compile` output)
-.agents/
-.claude/
-.codex/
-.cursor/
+# Local agent state for targets not configured in apm.yml
 .kiro/
 .windsurf/
 .github/instructions/
 /GEMINI.md
-
-# Local APM workbench install (machine-specific paths; never committed)
-/apm.yml
-apm.lock.yaml
 
 # CLI build output
 dist/

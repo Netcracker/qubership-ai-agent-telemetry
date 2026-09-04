@@ -1,0 +1,14 @@
+name: qubership-ai-agent-telemetry
+version: 1.0.0
+description: Repository-level APM dependencies for Qubership agent support.
+dependencies:
+  apm:
+    - Netcracker/qubership-ai-packages/agent-packages/qubership-repo-essentials
+  mcp: []
+includes: auto
+scripts: {}
+
+targets:
+  - claude
+  - codex
+  - cursor

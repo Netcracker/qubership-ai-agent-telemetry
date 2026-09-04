@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestInstallerDocumentationWorkflowContract(t *testing.T) {
@@ -166,13 +168,95 @@ func TestWindowsLifecycleBootstrapCallsUseCheckedChildProcesses(t *testing.T) {
 	}
 }
 
-func TestSuperLinterExcludesSuperpowersArtifacts(t *testing.T) {
-	data, err := os.ReadFile(".github/workflows/super-linter.yaml")
+func TestSuperLinterPreservesCommonConfigurationAndExcludesGeneratedArtifacts(t *testing.T) {
+	if _, err := os.Stat(".github/super-linter.env"); !os.IsNotExist(err) {
+		t.Fatal("local super-linter.env overrides the common Netcracker configuration")
+	}
+
+	workflowData, err := os.ReadFile(".github/workflows/super-linter.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "FILTER_REGEX_EXCLUDE: '(^|/)docs/superpowers/'") {
-		t.Fatal("super-linter must exclude generated Superpowers artifacts")
+	for _, path := range []string{"docs/superpowers/", ".agents/", ".claude/", ".codex/", ".cursor/"} {
+		if !strings.Contains(string(workflowData), path) {
+			t.Errorf("super-linter exclusion must cover %s", path)
+		}
+	}
+}
+
+func TestScheduledApmUpdateExportsPlainEnvironmentValues(t *testing.T) {
+	data, err := os.ReadFile(".github/workflows/apm-packages-update.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Run string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+
+	environmentFile := t.TempDir() + "/github-env"
+	script := strings.ReplaceAll(workflow.Jobs["test-apm-update"].Steps[0].Run, "${{ github.event_name }}", "schedule")
+	command := exec.Command("bash", "-c", script)
+	command.Env = append(os.Environ(),
+		"GITHUB_EVENT_NAME=schedule",
+		"DEFAULT_BRANCH=main",
+		"GITHUB_ENV="+environmentFile,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("scheduled environment setup failed: %v\n%s", err, output)
+	}
+
+	environment, err := os.ReadFile(environmentFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"BRANCH=main", "TARGET=", "DEBUG=false", "DRY_RUN=false"} {
+		if !strings.Contains(string(environment), want+"\n") {
+			t.Errorf("scheduled environment does not contain %q:\n%s", want, environment)
+		}
+	}
+}
+
+func TestGoBuildRetainsCoverageArtifact(t *testing.T) {
+	data, err := os.ReadFile(".github/workflows/go-build.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Run  string         `yaml:"run"`
+				Uses string         `yaml:"uses"`
+				With map[string]any `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+
+	coverageGenerated := false
+	coverageRetained := false
+	for _, step := range workflow.Jobs["build"].Steps {
+		if strings.Contains(step.Run, "go test ./...") && strings.Contains(step.Run, "-coverprofile=coverage.out") {
+			coverageGenerated = true
+		}
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") &&
+			step.With["path"] == "coverage.out" && step.With["if-no-files-found"] == "error" {
+			coverageRetained = true
+		}
+	}
+	if !coverageGenerated {
+		t.Error("Go build must generate coverage.out")
+	}
+	if !coverageRetained {
+		t.Error("Go build must retain coverage.out as an artifact")
 	}
 }
 
@@ -193,6 +277,7 @@ func TestPathFiltersCoverWorkflowInputs(t *testing.T) {
 				"agent-packages/ai-agent-telemetry/.apm/hooks/**",
 				"agent-packages/ai-agent-telemetry-configure/.apm/skills/ai-agent-telemetry-configure/references/codex-sandbox.md",
 				".github/workflows/go-build.yaml",
+				".github/workflows/apm-packages-update.yml",
 				".github/workflows/bootstrap-tests.yaml",
 				".github/workflows/installer-tests.yaml",
 				".github/workflows/super-linter.yaml",

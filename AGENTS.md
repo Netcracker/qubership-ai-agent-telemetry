@@ -7,8 +7,10 @@
   never update them to describe later changes.
 - For a design choice that materially changes scope or behavior, ask the user. Present the recommended option first and
   expect it to be challenged.
-- Never run `git clean -xdf`: it deletes the ignored, machine-specific root `apm.yml` and unrelated untracked work.
-  Preview with `git clean -xdn`, then remove only the intended generated paths.
+- Never run `apm compile`: it rewrites the repository-root agent instruction files. Use `apm install` to refresh
+  committed harness assets.
+- Never run `git clean -xdf`: it deletes ignored and unrelated untracked work. Preview with `git clean -xdn`, then
+  remove only the intended generated paths.
 
 ## Delivery workflow
 
