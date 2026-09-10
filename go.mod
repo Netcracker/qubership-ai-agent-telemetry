@@ -2,7 +2,7 @@ module ai-agent-telemetry
 
 go 1.26
 
-toolchain go1.27.0
+toolchain go1.27.1
 
 require (
 	github.com/gofrs/flock v0.13.0
