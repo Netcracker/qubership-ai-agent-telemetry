@@ -267,16 +267,6 @@ func TestPathFiltersCoverWorkflowInputs(t *testing.T) {
 		paths    []string
 	}{
 		{
-			workflow: ".github/workflows/renovate-config-lint.yaml",
-			filter:   "renovate",
-			paths: []string{
-				"renovate.json",
-				".github/scripts/test-renovate-automerge.mjs",
-				".github/scripts/test-renovate-go-minimum.mjs",
-				".github/workflows/renovate-config-lint.yaml",
-			},
-		},
-		{
 			workflow: ".github/workflows/go-build.yaml",
 			filter:   "go",
 			paths: []string{
@@ -290,7 +280,6 @@ func TestPathFiltersCoverWorkflowInputs(t *testing.T) {
 				".github/workflows/apm-packages-update.yml",
 				".github/workflows/bootstrap-tests.yaml",
 				".github/workflows/installer-tests.yaml",
-				".github/workflows/renovate-config-lint.yaml",
 				".github/workflows/super-linter.yaml",
 				".github/workflows/telemetry-backend-tests.yaml",
 			},
@@ -374,7 +363,6 @@ func TestCIGates(t *testing.T) {
 		".github/workflows/installer-tests.yaml",
 		".github/workflows/bootstrap-tests.yaml",
 		".github/workflows/telemetry-backend-tests.yaml",
-		".github/workflows/renovate-config-lint.yaml",
 	}
 	cases := []struct {
 		name          string
@@ -407,9 +395,8 @@ func TestCIGates(t *testing.T) {
 			var definition struct {
 				On   map[string]yaml.Node `yaml:"on"`
 				Jobs map[string]struct {
-					Name string            `yaml:"name"`
-					If   string            `yaml:"if"`
-					Env  map[string]string `yaml:"env"`
+					If  string            `yaml:"if"`
+					Env map[string]string `yaml:"env"`
 				} `yaml:"jobs"`
 			}
 			if err := yaml.Unmarshal(data, &definition); err != nil {
@@ -430,9 +417,6 @@ func TestCIGates(t *testing.T) {
 			}
 			if !strings.Contains(definition.Jobs["ci-gate"].If, "always()") {
 				t.Error("the gate must run even when dependencies fail or are skipped")
-			}
-			if strings.Contains(workflow, "renovate-config-lint") && definition.Jobs["ci-gate"].Name != "Renovate Gate" {
-				t.Error("Renovate Gate must keep its stable check name")
 			}
 			script, singularResult, err := workflowGateScript(workflow)
 			if err != nil {

@@ -52,7 +52,6 @@ jobs:
               - '.github/workflows/apm-packages-update.yml'
               - '.github/workflows/bootstrap-tests.yaml'
               - '.github/workflows/installer-tests.yaml'
-              - '.github/workflows/renovate-config-lint.yaml'
               - '.github/workflows/super-linter.yaml'
               - '.github/workflows/telemetry-backend-tests.yaml'
 
