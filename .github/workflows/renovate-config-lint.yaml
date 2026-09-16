@@ -9,21 +9,44 @@ on:
       - .github/scripts/test-renovate-automerge.mjs
       - .github/scripts/test-renovate-go-minimum.mjs
       - .github/workflows/renovate-config-lint.yaml
-  pull_request:
-    paths:
-      - renovate.json
-      - .github/scripts/test-renovate-automerge.mjs
-      - .github/scripts/test-renovate-go-minimum.mjs
-      - .github/workflows/renovate-config-lint.yaml
+  pull_request: {}
   schedule:
     - cron: "18 9 * * 1"
   workflow_dispatch: {}
 
 permissions: {}
 
+concurrency:
+  group: renovate-config-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    name: Renovate changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      renovate: ${{ steps.filter.outputs.renovate }}
+    steps:
+      - name: Detect Renovate changes
+        if: ${{ github.event_name == 'pull_request' }}
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            renovate:
+              - 'renovate.json'
+              - '.github/scripts/test-renovate-automerge.mjs'
+              - '.github/scripts/test-renovate-go-minimum.mjs'
+              - '.github/workflows/renovate-config-lint.yaml'
+
   validate-renovate-config:
     name: Validate renovate.json
+    needs: changes
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.renovate == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       reason: ${{ steps.validate.outputs.reason }}
@@ -45,10 +68,35 @@ jobs:
           GITHUB_COM_TOKEN: ${{ github.token }}
 
       - name: Test minimum Go version policy
+        env:
+          GITHUB_COM_TOKEN: ${{ github.token }}
         run: node .github/scripts/test-renovate-go-minimum.mjs
 
       - name: Test Renovate automerge policy
+        env:
+          GITHUB_COM_TOKEN: ${{ github.token }}
         run: node .github/scripts/test-renovate-automerge.mjs
+
+  ci-gate:
+    name: Renovate Gate
+    needs: [changes, validate-renovate-config]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      RUN_TESTS: ${{ needs.changes.outputs.renovate }}
+      JOB_RESULT: ${{ needs.validate-renovate-config.result }}
+    steps:
+      - name: Require validation when applicable
+        shell: bash
+        run: |
+          if [ "$CHANGES_RESULT" != 'success' ] ||
+            { [ "$RUN_TESTS" != 'false' ] && [ "$JOB_RESULT" != 'success' ]; }; then
+            echo "Renovate validation did not succeed when required" >&2
+            exit 1
+          fi
 
   lookup-renovate-dependencies:
     # Set the Actions variable RENOVATE_HEALTH_CHECK to false when this

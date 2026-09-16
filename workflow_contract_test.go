@@ -267,6 +267,16 @@ func TestPathFiltersCoverWorkflowInputs(t *testing.T) {
 		paths    []string
 	}{
 		{
+			workflow: ".github/workflows/renovate-config-lint.yaml",
+			filter:   "renovate",
+			paths: []string{
+				"renovate.json",
+				".github/scripts/test-renovate-automerge.mjs",
+				".github/scripts/test-renovate-go-minimum.mjs",
+				".github/workflows/renovate-config-lint.yaml",
+			},
+		},
+		{
 			workflow: ".github/workflows/go-build.yaml",
 			filter:   "go",
 			paths: []string{
@@ -280,6 +290,7 @@ func TestPathFiltersCoverWorkflowInputs(t *testing.T) {
 				".github/workflows/apm-packages-update.yml",
 				".github/workflows/bootstrap-tests.yaml",
 				".github/workflows/installer-tests.yaml",
+				".github/workflows/renovate-config-lint.yaml",
 				".github/workflows/super-linter.yaml",
 				".github/workflows/telemetry-backend-tests.yaml",
 			},
@@ -363,6 +374,7 @@ func TestCIGates(t *testing.T) {
 		".github/workflows/installer-tests.yaml",
 		".github/workflows/bootstrap-tests.yaml",
 		".github/workflows/telemetry-backend-tests.yaml",
+		".github/workflows/renovate-config-lint.yaml",
 	}
 	cases := []struct {
 		name          string
@@ -374,13 +386,54 @@ func TestCIGates(t *testing.T) {
 		{name: "relevant jobs succeeded", changesResult: "success", runTests: "true", jobResults: "success success", wantSuccess: true},
 		{name: "irrelevant jobs skipped", changesResult: "success", runTests: "false", jobResults: "skipped skipped", wantSuccess: true},
 		{name: "change detection failed", changesResult: "failure", runTests: "true", jobResults: "success success"},
+		{name: "irrelevant detection failed", changesResult: "failure", runTests: "false", jobResults: "skipped skipped"},
+		{name: "change detection cancelled", changesResult: "cancelled", runTests: "false", jobResults: "skipped skipped"},
+		{name: "change detection skipped", changesResult: "skipped", runTests: "false", jobResults: "skipped skipped"},
 		{name: "relevant job skipped", changesResult: "success", runTests: "true", jobResults: "success skipped"},
 		{name: "relevant job cancelled", changesResult: "success", runTests: "true", jobResults: "success cancelled"},
-		{name: "irrelevant job ran", changesResult: "success", runTests: "false", jobResults: "skipped success"},
+		{name: "irrelevant job ran", changesResult: "success", runTests: "false", jobResults: "skipped success", wantSuccess: true},
+		{name: "missing output requires validation", changesResult: "success", jobResults: "skipped skipped"},
+		{name: "missing output with successful validation", changesResult: "success", jobResults: "success success", wantSuccess: true},
+		{name: "unknown output requires validation", changesResult: "success", runTests: "unknown", jobResults: "skipped skipped"},
+		{name: "unknown output with successful validation", changesResult: "success", runTests: "unknown", jobResults: "success success", wantSuccess: true},
 	}
 
 	for _, workflow := range workflows {
 		t.Run(workflow, func(t *testing.T) {
+			data, err := os.ReadFile(workflow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var definition struct {
+				On   map[string]yaml.Node `yaml:"on"`
+				Jobs map[string]struct {
+					Name string            `yaml:"name"`
+					If   string            `yaml:"if"`
+					Env  map[string]string `yaml:"env"`
+				} `yaml:"jobs"`
+			}
+			if err := yaml.Unmarshal(data, &definition); err != nil {
+				t.Fatal(err)
+			}
+			binding := definition.Jobs["ci-gate"].Env["RUN_TESTS"]
+			if !regexp.MustCompile(`^\$\{\{ needs\.changes\.outputs\.[a-z]+ \}\}$`).MatchString(binding) {
+				t.Errorf("RUN_TESTS must preserve the detector output, got %q", binding)
+			}
+			trigger, ok := definition.On["pull_request"]
+			if !ok {
+				t.Error("the gate workflow must run on pull requests")
+			}
+			for index := 0; index < len(trigger.Content); index += 2 {
+				if trigger.Content[index].Value != "types" {
+					t.Error("the gate workflow must not filter pull requests by branch or path")
+				}
+			}
+			if !strings.Contains(definition.Jobs["ci-gate"].If, "always()") {
+				t.Error("the gate must run even when dependencies fail or are skipped")
+			}
+			if strings.Contains(workflow, "renovate-config-lint") && definition.Jobs["ci-gate"].Name != "Renovate Gate" {
+				t.Error("Renovate Gate must keep its stable check name")
+			}
 			script, singularResult, err := workflowGateScript(workflow)
 			if err != nil {
 				t.Fatal(err)

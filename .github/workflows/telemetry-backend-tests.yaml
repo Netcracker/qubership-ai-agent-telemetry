@@ -89,7 +89,7 @@ jobs:
     # files changed in a pull request.
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
-      RUN_TESTS: ${{ github.event_name != 'pull_request' || needs.changes.outputs.backend == 'true' }}
+      RUN_TESTS: ${{ needs.changes.outputs.backend }}
       JOB_RESULT: ${{ needs.smoke.result }}
     steps:
       - name: Fail when a required job did not succeed
@@ -101,15 +101,9 @@ jobs:
             exit 1
           fi
 
-          expected_result=skipped
-          if [ "$RUN_TESTS" = 'true' ]; then
-            expected_result=success
-          elif [ "$RUN_TESTS" != 'false' ]; then
-            echo "Backend change detection returned $RUN_TESTS" >&2
-            exit 1
-          fi
-
-          if [ "$JOB_RESULT" != "$expected_result" ]; then
-            echo "Expected $expected_result, got $JOB_RESULT" >&2
-            exit 1
+          if [ "$RUN_TESTS" != 'false' ]; then
+            if [ "$JOB_RESULT" != 'success' ]; then
+              echo "Expected success, got $JOB_RESULT" >&2
+              exit 1
+            fi
           fi

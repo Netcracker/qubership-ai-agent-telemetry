@@ -516,7 +516,7 @@ jobs:
     permissions: {}
     env:
       CHANGES_RESULT: ${{ needs.changes.result }}
-      RUN_TESTS: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.lifecycle == 'true' }}
+      RUN_TESTS: ${{ needs.changes.outputs.lifecycle }}
       JOB_RESULTS: ${{ needs.posix-lifecycle.result }} ${{ needs.windows-lifecycle.result }} ${{ needs.wsl-lifecycle.result }}
     steps:
       - name: Fail when a required job did not succeed
@@ -529,17 +529,11 @@ jobs:
           fi
 
           read -r -a results <<<"$JOB_RESULTS"
-          expected_result=skipped
-          if [ "$RUN_TESTS" = 'true' ]; then
-            expected_result=success
-          elif [ "$RUN_TESTS" != 'false' ]; then
-            echo "Lifecycle change detection returned $RUN_TESTS" >&2
-            exit 1
+          if [ "$RUN_TESTS" != 'false' ]; then
+            for result in "${results[@]}"; do
+              if [ "$result" != 'success' ]; then
+                echo "Expected success, got $result" >&2
+                exit 1
+              fi
+            done
           fi
-
-          for result in "${results[@]}"; do
-            if [ "$result" != "$expected_result" ]; then
-              echo "Expected $expected_result, got $result" >&2
-              exit 1
-            fi
-          done

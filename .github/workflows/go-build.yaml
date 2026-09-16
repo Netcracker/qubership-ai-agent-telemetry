@@ -52,6 +52,7 @@ jobs:
               - '.github/workflows/apm-packages-update.yml'
               - '.github/workflows/bootstrap-tests.yaml'
               - '.github/workflows/installer-tests.yaml'
+              - '.github/workflows/renovate-config-lint.yaml'
               - '.github/workflows/super-linter.yaml'
               - '.github/workflows/telemetry-backend-tests.yaml'
 
@@ -160,17 +161,11 @@ jobs:
           fi
 
           read -r -a results <<<"$JOB_RESULTS"
-          expected_result=skipped
-          if [ "$RUN_TESTS" = 'true' ]; then
-            expected_result=success
-          elif [ "$RUN_TESTS" != 'false' ]; then
-            echo "Go change detection returned $RUN_TESTS" >&2
-            exit 1
+          if [ "$RUN_TESTS" != 'false' ]; then
+            for result in "${results[@]}"; do
+              if [ "$result" != 'success' ]; then
+                echo "Expected success, got $result" >&2
+                exit 1
+              fi
+            done
           fi
-
-          for result in "${results[@]}"; do
-            if [ "$result" != "$expected_result" ]; then
-              echo "Expected $expected_result, got $result" >&2
-              exit 1
-            fi
-          done
