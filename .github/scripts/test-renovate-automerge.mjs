@@ -9,27 +9,34 @@ await initializeLogger();
 const { applyPackageRules } = await import(
   `file://${renovateRoot}/util/package-rules/index.js`
 );
+const { resolveConfigPresets } = await import(
+  `file://${renovateRoot}/config/presets/index.js`
+);
+const { getConfig } = await import(`file://${renovateRoot}/config/defaults.js`);
+const { mergeChildConfig } = await import(`file://${renovateRoot}/config/utils.js`);
+const { add: addHostRule } = await import(`file://${renovateRoot}/util/host-rules.js`);
+if (process.env.GITHUB_COM_TOKEN) {
+  addHostRule({
+    hostType: 'github',
+    matchHost: 'api.github.com',
+    token: process.env.GITHUB_COM_TOKEN,
+  });
+}
 
 const configPath = process.argv[2] ?? 'renovate.json';
 const repositoryConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+const { config: resolvedConfig } = await resolveConfigPresets(repositoryConfig);
+const config = mergeChildConfig(getConfig(), resolvedConfig);
 assert.equal(
-  repositoryConfig.platformAutomerge,
+  config.platformAutomerge,
   true,
   'eligible updates should use GitHub native automerge',
 );
-const inheritedAutomergeRule = {
-  description: 'Simulate an inherited automerge default',
-  automerge: true,
-};
-const packageRules = [
-  inheritedAutomergeRule,
-  ...(repositoryConfig.packageRules ?? []),
-];
-
 async function applyRules(overrides) {
   return applyPackageRules(
     {
-      packageRules,
+      ...config,
+      ...(overrides.isVulnerabilityAlert ? config.vulnerabilityAlerts : {}),
       manager: 'gomod',
       datasource: 'go',
       depName: 'example.org/dependency',
@@ -44,25 +51,38 @@ async function applyRules(overrides) {
   );
 }
 
-for (const updateType of ['minor', 'patch', 'pin', 'digest', 'pinDigest']) {
-  const dependency = await applyRules({ updateType });
-  assert.equal(dependency.automerge, true, `${updateType} should automerge`);
-  assert.equal(dependency.automergeType, 'pr');
+const dependencies = [
+  { manager: 'gomod', datasource: 'go' },
+  { manager: 'github-actions', datasource: 'github-tags' },
+  { manager: 'renovate-config', datasource: 'github-tags' },
+  { manager: 'dockerfile', datasource: 'docker' },
+  { manager: 'docker-compose', datasource: 'docker' },
+  { manager: 'custom.regex', datasource: 'github-releases' },
+  { manager: 'maven', datasource: 'maven' },
+  { manager: 'gomod', datasource: 'golang-version', depType: 'toolchain' },
+];
+const automaticUpdateTypes = ['minor', 'patch', 'pin', 'digest', 'pinDigest'];
+for (const fixture of dependencies) {
+  for (const updateType of [...automaticUpdateTypes, 'major', 'lockFileMaintenance']) {
+    for (const currentVersion of ['0.9.0', '1.2.3']) {
+      for (const isVulnerabilityAlert of [false, true]) {
+        const dependency = await applyRules({
+          ...fixture,
+          updateType,
+          currentVersion,
+          currentValue: currentVersion,
+          isVulnerabilityAlert,
+        });
+        assert.equal(
+          dependency.automerge,
+          automaticUpdateTypes.includes(updateType),
+          `${fixture.manager} ${fixture.datasource} ${currentVersion} ${updateType}, vulnerability: ${isVulnerabilityAlert}`,
+        );
+        assert.equal(dependency.automergeType, 'pr');
+      }
+    }
+  }
 }
-
-for (const manager of ['github-actions', 'renovate-config']) {
-  const dependency = await applyRules({ manager });
-  assert.equal(dependency.automerge, false, `${manager} should require review`);
-}
-
-const preOneDependency = await applyRules({
-  currentValue: 'v0.9.0',
-  currentVersion: '0.9.0',
-});
-assert.equal(preOneDependency.automerge, false);
-
-const majorDependency = await applyRules({ updateType: 'major' });
-assert.equal(majorDependency.automerge, false);
 
 const minimumGoDependency = await applyRules({
   datasource: 'golang-version',
@@ -73,9 +93,7 @@ const minimumGoDependency = await applyRules({
   depType: 'golang',
   updateType: 'minor',
 });
-assert.equal(minimumGoDependency.automerge, false);
-
-const vulnerabilityAlert = await applyRules({ isVulnerabilityAlert: true });
-assert.equal(vulnerabilityAlert.automerge, false);
+assert.equal(minimumGoDependency.automerge, true);
+assert.equal(minimumGoDependency.minimumReleaseAge, '5 years');
 
 console.log('Renovate automerge policy fixtures passed');

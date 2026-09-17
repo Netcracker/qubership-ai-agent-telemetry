@@ -45,9 +45,13 @@ jobs:
           GITHUB_COM_TOKEN: ${{ github.token }}
 
       - name: Test minimum Go version policy
+        env:
+          GITHUB_COM_TOKEN: ${{ github.token }}
         run: node .github/scripts/test-renovate-go-minimum.mjs
 
       - name: Test Renovate automerge policy
+        env:
+          GITHUB_COM_TOKEN: ${{ github.token }}
         run: node .github/scripts/test-renovate-automerge.mjs
 
   lookup-renovate-dependencies:

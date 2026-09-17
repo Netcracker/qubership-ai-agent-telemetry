@@ -15,13 +15,27 @@ const { filterVersions } = await import(
 const { api: goDirectiveVersioning } = await import(
   `file://${renovateRoot}/modules/versioning/go-mod-directive/index.js`
 );
+const { resolveConfigPresets } = await import(
+  `file://${renovateRoot}/config/presets/index.js`
+);
+const { getConfig } = await import(`file://${renovateRoot}/config/defaults.js`);
+const { mergeChildConfig } = await import(`file://${renovateRoot}/config/utils.js`);
+const { add: addHostRule } = await import(`file://${renovateRoot}/util/host-rules.js`);
+if (process.env.GITHUB_COM_TOKEN) {
+  addHostRule({
+    hostType: 'github',
+    matchHost: 'api.github.com',
+    token: process.env.GITHUB_COM_TOKEN,
+  });
+}
 
 const configPath = process.argv[2] ?? 'renovate.json';
 const repositoryConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-const packageRules = repositoryConfig.packageRules ?? [];
+const { config: resolvedConfig } = await resolveConfigPresets(repositoryConfig);
+const config = mergeChildConfig(getConfig(), resolvedConfig);
 
 const dependency = {
-  packageRules,
+  ...config,
   manager: 'gomod',
   datasource: 'golang-version',
   depName: 'go',
@@ -39,6 +53,7 @@ assert.equal(minorUpdate.allowedVersions, '/^\\d+\\.\\d+\\.0$/');
 assert.equal(minorUpdate.rangeStrategy, 'bump');
 assert.equal(minorUpdate.minimumReleaseAge, '5 years');
 assert.notEqual(minorUpdate.enabled, false);
+assert.equal(minorUpdate.automerge, true);
 
 const releases = [
   { version: '1.20.0' },
@@ -90,5 +105,6 @@ const toolchainUpdate = await applyPackageRules(
 );
 assert.notEqual(toolchainUpdate.enabled, false);
 assert.equal(toolchainUpdate.allowedVersions, undefined);
+assert.equal(toolchainUpdate.automerge, true);
 
 console.log('Minimum Go version policy fixtures passed');
