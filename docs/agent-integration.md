@@ -31,6 +31,11 @@ For unattended installation, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optio
 `AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. The lifecycle resolves required telemetry input before
 changing the managed CLI, telemetry configuration, or native hooks.
 
+Claude Code and Cursor use the same conversion for optional MCP durations: JSON numbers are decoded as `float64`,
+then truncated toward zero to whole milliseconds. Integers above 2^53 milliseconds can lose precision;
+`9223372036854775807` rounds to 2^63 and is omitted. Integer precision loss affects only durations of hundreds of
+thousands of years or more.
+
 ## Capability matrix
 
 | Harness | Hook and matcher | Event | Captured event fields |
@@ -79,6 +84,8 @@ straight from the tool input and needs no transcript fallback.
 `UserPromptExpansion` provides the command name, source, and expansion type. The CLI accepts only `slash_command` and
 `mcp_prompt`; it does not decode the prompt or command arguments. `PostToolUse` and `PostToolUseFailure` accept only
 MCP names shaped as `mcp__<server>__<tool>`. They provide exact `succeeded` and `failed` outcomes, respectively.
+A fractional `duration_ms` is truncated to whole milliseconds. A missing, negative, non-numeric, or out-of-range
+duration is omitted without dropping the event.
 
 An older `PreToolUse` registration without `hook_event_name` remains readable only for the `Skill` tool. The adapter
 does not infer any other event when the discriminator is absent.
@@ -217,7 +224,9 @@ These user-level hooks cover local Cursor sessions. Cursor cloud agents do not l
 `~/.cursor/hooks.json`, so the machine-wide installation does not cover cloud-agent runs.
 
 `afterMCPExecution` provides a tool name and optional duration. Cursor does not provide a stable MCP server name or
-outcome, so the CLI omits the server and records `unknown`. It never inspects `result_json`.
+outcome, so the CLI omits the server and records `unknown`. Non-negative fractional `duration` values are truncated
+to whole milliseconds. Missing, invalid, negative, or out-of-range durations are omitted without dropping the MCP event.
+It never inspects `result_json`.
 
 ```json
 {

@@ -302,10 +302,10 @@ type claudeCommandPayload struct {
 // claudeMCPPayload excludes tool_input, tool_response, and error. MCP payloads
 // and results are unbounded private content and must never enter telemetry.
 type claudeMCPPayload struct {
-	SessionID string `json:"session_id"`
-	Cwd       string `json:"cwd"`
-	ToolName  string `json:"tool_name"`
-	Duration  *int64 `json:"duration_ms"`
+	SessionID string          `json:"session_id"`
+	Cwd       string          `json:"cwd"`
+	ToolName  string          `json:"tool_name"`
+	Duration  json.RawMessage `json:"duration_ms"`
 }
 
 // claudeAdapter routes Claude Code lifecycle hooks to their normalized
@@ -380,19 +380,28 @@ func claudeMCPEvent(
 	if !ok {
 		return nil, nil
 	}
-	if p.Duration != nil && *p.Duration < 0 {
-		p.Duration = nil
-	}
 	ev, err := newMCPEvent("claude", p.SessionID, resolveRemote(remote, p.Cwd), p.Cwd, MCPPayload{
 		ServerName: server,
 		ToolName:   tool,
 		Outcome:    outcome,
-		DurationMS: p.Duration,
+		DurationMS: wholeMilliseconds(p.Duration),
 	}, now)
 	if err != nil {
 		return nil, nil
 	}
 	return []TelemetryEvent{ev}, nil
+}
+
+// wholeMilliseconds converts an optional JSON millisecond count to whole
+// milliseconds, truncating any fraction. It returns nil for a missing, null,
+// non-numeric, negative, or out-of-range value.
+func wholeMilliseconds(raw json.RawMessage) *int64 {
+	var value *float64
+	if json.Unmarshal(raw, &value) != nil || value == nil || *value < 0 || *value >= 1<<63 {
+		return nil
+	}
+	ms := int64(*value)
+	return &ms
 }
 
 func normalizeMCPToolName(name string) (server, tool string, ok bool) {
@@ -441,10 +450,10 @@ type cursorHookEnvelope struct {
 // cursorMCPPayload excludes result_json because MCP results are unbounded
 // private content and must never enter telemetry.
 type cursorMCPPayload struct {
-	SessionID      string   `json:"session_id"`
-	WorkspaceRoots []string `json:"workspace_roots"`
-	ToolName       string   `json:"tool_name"`
-	Duration       *int64   `json:"duration"`
+	SessionID      string          `json:"session_id"`
+	WorkspaceRoots []string        `json:"workspace_roots"`
+	ToolName       string          `json:"tool_name"`
+	Duration       json.RawMessage `json:"duration"`
 }
 
 func cursorAdapter(
@@ -478,9 +487,6 @@ func cursorAdapter(
 	if json.Unmarshal(stdin, &p) != nil || !validIdentifier(p.ToolName, mcpIdentifier) {
 		return nil, nil
 	}
-	if p.Duration != nil && *p.Duration < 0 {
-		p.Duration = nil
-	}
 	var repoDir string
 	if len(p.WorkspaceRoots) > 0 {
 		repoDir = p.WorkspaceRoots[0]
@@ -490,7 +496,7 @@ func cursorAdapter(
 	}, remote), repoDir, MCPPayload{
 		ToolName:   p.ToolName,
 		Outcome:    mcpUnknown,
-		DurationMS: p.Duration,
+		DurationMS: wholeMilliseconds(p.Duration),
 	}, now)
 	if err != nil {
 		return nil, nil
