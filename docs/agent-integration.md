@@ -31,6 +31,11 @@ For unattended installation, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optio
 `AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. The lifecycle resolves required telemetry input before
 changing the managed CLI, telemetry configuration, or native hooks.
 
+Claude Code and Cursor use the same conversion for optional MCP durations: JSON numbers are decoded as `float64`,
+then truncated toward zero to whole milliseconds. Integers above 2^53 milliseconds can lose precision;
+`9223372036854775807` rounds to 2^63 and is omitted. Integer precision loss affects only durations of hundreds of
+thousands of years or more.
+
 ## Capability matrix
 
 | Harness | Hook and matcher | Event | Captured event fields |

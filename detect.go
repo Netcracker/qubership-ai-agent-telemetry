@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"net/url"
 	"regexp"
 	"strings"
@@ -497,23 +496,13 @@ func cursorAdapter(
 	}, remote), repoDir, MCPPayload{
 		ToolName:   p.ToolName,
 		Outcome:    mcpUnknown,
-		DurationMS: cursorDuration(p.Duration),
+		DurationMS: wholeMilliseconds(p.Duration),
 	}, now)
 	if err != nil {
 		return nil, nil
 	}
 	ev.PolicyPaths = uniquePolicyPaths(p.WorkspaceRoots)
 	return []TelemetryEvent{ev}, nil
-}
-
-func cursorDuration(raw json.RawMessage) *int64 {
-	// Rounding toward zero with 64 bits preserves every int64 truncation.
-	number, _, err := big.ParseFloat(string(raw), 10, 64, big.ToZero)
-	if err != nil || number.Signbit() || number.IsInf() || number.MantExp(nil) > 63 {
-		return nil
-	}
-	value, _ := number.Int64()
-	return &value
 }
 
 func cursorHasWorkspaceRoot(roots []string) bool {
