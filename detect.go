@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/url"
 	"regexp"
 	"strings"
@@ -441,10 +442,10 @@ type cursorHookEnvelope struct {
 // cursorMCPPayload excludes result_json because MCP results are unbounded
 // private content and must never enter telemetry.
 type cursorMCPPayload struct {
-	SessionID      string   `json:"session_id"`
-	WorkspaceRoots []string `json:"workspace_roots"`
-	ToolName       string   `json:"tool_name"`
-	Duration       *int64   `json:"duration"`
+	SessionID      string          `json:"session_id"`
+	WorkspaceRoots []string        `json:"workspace_roots"`
+	ToolName       string          `json:"tool_name"`
+	Duration       json.RawMessage `json:"duration"`
 }
 
 func cursorAdapter(
@@ -478,9 +479,6 @@ func cursorAdapter(
 	if json.Unmarshal(stdin, &p) != nil || !validIdentifier(p.ToolName, mcpIdentifier) {
 		return nil, nil
 	}
-	if p.Duration != nil && *p.Duration < 0 {
-		p.Duration = nil
-	}
 	var repoDir string
 	if len(p.WorkspaceRoots) > 0 {
 		repoDir = p.WorkspaceRoots[0]
@@ -490,13 +488,23 @@ func cursorAdapter(
 	}, remote), repoDir, MCPPayload{
 		ToolName:   p.ToolName,
 		Outcome:    mcpUnknown,
-		DurationMS: p.Duration,
+		DurationMS: cursorDuration(p.Duration),
 	}, now)
 	if err != nil {
 		return nil, nil
 	}
 	ev.PolicyPaths = uniquePolicyPaths(p.WorkspaceRoots)
 	return []TelemetryEvent{ev}, nil
+}
+
+func cursorDuration(raw json.RawMessage) *int64 {
+	// Rounding toward zero with 64 bits preserves every int64 truncation.
+	number, _, err := big.ParseFloat(string(raw), 10, 64, big.ToZero)
+	if err != nil || number.Signbit() || number.IsInf() || number.MantExp(nil) > 63 {
+		return nil
+	}
+	value, _ := number.Int64()
+	return &value
 }
 
 func cursorHasWorkspaceRoot(roots []string) bool {

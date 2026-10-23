@@ -292,17 +292,32 @@ func TestDetectCursorMCP(t *testing.T) {
 	tests := []struct {
 		name     string
 		toolName string
-		duration int64
+		duration string
 		want     *int64
 	}{
-		{name: "duration", toolName: "get_issue", duration: 42, want: durationPtr(42)},
-		{name: "negative duration omitted", toolName: "get_issue", duration: -1},
-		{name: "invalid tool rejected", toolName: "get issue", duration: 42},
+		{name: "duration", toolName: "get_issue", duration: "42", want: durationPtr(42)},
+		{name: "fractional duration", toolName: "get_issue", duration: "10.718", want: durationPtr(10)},
+		{name: "large fractional duration", toolName: "get_issue", duration: "9007199254740993.0", want: durationPtr(9007199254740993)},
+		{name: "fraction below upper limit", toolName: "get_issue", duration: "9223372036854775807.9", want: durationPtr(9223372036854775807)},
+		{name: "negative underflow duration omitted", toolName: "get_issue", duration: "-1e-1000000000"},
+		{name: "negative zero duration omitted", toolName: "get_issue", duration: "-0.0"},
+		{name: "negative duration below float64 range omitted", toolName: "get_issue", duration: "-1e-400"},
+		{name: "submillisecond duration", toolName: "get_issue", duration: "0.392", want: durationPtr(0)},
+		{name: "negative fractional duration omitted", toolName: "get_issue", duration: "-0.392"},
+		{name: "null duration omitted", toolName: "get_issue", duration: "null"},
+		{name: "invalid duration omitted", toolName: "get_issue", duration: `"private-duration"`},
+		{name: "numeric string duration omitted", toolName: "get_issue", duration: `"42"`},
+		{name: "boolean duration omitted", toolName: "get_issue", duration: "true"},
+		{name: "unrepresentable duration omitted", toolName: "get_issue", duration: "1e400"},
+		{name: "out of range duration omitted", toolName: "get_issue", duration: "9223372036854775808"},
+		{name: "maximum integer duration", toolName: "get_issue", duration: "9223372036854775807", want: durationPtr(9223372036854775807)},
+		{name: "negative duration omitted", toolName: "get_issue", duration: "-1"},
+		{name: "invalid tool rejected", toolName: "get issue", duration: "42"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stdin := []byte(fmt.Sprintf(
-				`{"hook_event_name":"afterMCPExecution","session_id":"s1","workspace_roots":["/repo"],"tool_name":%q,"duration":%d,"result_json":{"email":"person@example.com"}}`,
+				`{"hook_event_name":"afterMCPExecution","session_id":"s1","workspace_roots":["/repo"],"tool_name":%q,"duration":%s,"result_json":{"email":"person@example.com"}}`,
 				tt.toolName, tt.duration,
 			))
 			events, err := detect("cursor", stdin, func(cwd string) string {

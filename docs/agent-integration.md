@@ -217,7 +217,9 @@ These user-level hooks cover local Cursor sessions. Cursor cloud agents do not l
 `~/.cursor/hooks.json`, so the machine-wide installation does not cover cloud-agent runs.
 
 `afterMCPExecution` provides a tool name and optional duration. Cursor does not provide a stable MCP server name or
-outcome, so the CLI omits the server and records `unknown`. It never inspects `result_json`.
+outcome, so the CLI omits the server and records `unknown`. Non-negative fractional `duration` values are truncated
+to whole milliseconds. Missing, invalid, negative, or out-of-range durations are omitted without dropping the MCP event.
+It never inspects `result_json`.
 
 ```json
 {
