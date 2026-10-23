@@ -79,6 +79,8 @@ straight from the tool input and needs no transcript fallback.
 `UserPromptExpansion` provides the command name, source, and expansion type. The CLI accepts only `slash_command` and
 `mcp_prompt`; it does not decode the prompt or command arguments. `PostToolUse` and `PostToolUseFailure` accept only
 MCP names shaped as `mcp__<server>__<tool>`. They provide exact `succeeded` and `failed` outcomes, respectively.
+A fractional `duration_ms` is truncated to whole milliseconds. A missing, negative, non-numeric, or out-of-range
+duration is omitted without dropping the event.
 
 An older `PreToolUse` registration without `hook_event_name` remains readable only for the `Skill` tool. The adapter
 does not infer any other event when the discriminator is absent.
