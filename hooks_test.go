@@ -149,6 +149,8 @@ func TestInstallHooksWritesCodexExecutionPolicy(t *testing.T) {
 }
 
 func TestGatherHookStatusReportsInstalledMissingAndInvalid(t *testing.T) {
+	t.Setenv("OPENCODE_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	home := t.TempDir()
 	results := installHooks(home, allHookTargets)
 	if err := hookInstallError(results); err != nil {
@@ -180,6 +182,8 @@ func TestGatherHookStatusReportsInstalledMissingAndInvalid(t *testing.T) {
 }
 
 func TestGatherHookStatusDoesNotCreateFiles(t *testing.T) {
+	t.Setenv("OPENCODE_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	home := t.TempDir()
 	got := gatherHookStatus(home)
 	for i, status := range got {
@@ -230,6 +234,8 @@ func TestInstallHooksContinuesAfterClineConflict(t *testing.T) {
 }
 
 func TestGatherHookStatusUnavailableHomeIgnoresRelativeHooks(t *testing.T) {
+	t.Setenv("OPENCODE_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	workingDir := t.TempDir()
 	results := installHooks(workingDir, allHookTargets)
 	if err := hookInstallError(results); err != nil {
