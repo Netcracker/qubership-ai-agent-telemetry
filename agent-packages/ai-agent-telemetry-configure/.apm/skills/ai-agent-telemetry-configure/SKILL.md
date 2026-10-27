@@ -33,9 +33,10 @@ Event coverage is harness-specific:
 | Harness | Skill execution | Command invocation | MCP tool execution |
 | --- | --- | --- | --- |
 | Claude Code | Supported | Supported | Supported |
-| Cline | Supported | Not supported | Not supported |
+| Cline | Supported | Not supported | Supported |
 | Codex | Supported | Not supported | Supported |
 | Cursor | Supported | Not supported | Supported |
+| OpenCode 2.x | Native skills and delivered structured attachments | Not supported | Registry-classified calls |
 
 Ordinary built-in tools are not collected. Only Claude Code emits
 `command_invoked`. Do not report a missing event type as a failure when the
@@ -414,3 +415,14 @@ Do not report success until level 1 passes and the native hook is installed.
 For a requested Codex or Cursor real-event test, do not report that part as
 complete until one follow-up outcome passes. For Claude Code or Cline, do not
 claim individual-event proof without a successful store query.
+
+### OpenCode 2.x verification
+
+Use `hooks install --target=opencode`, reload the OpenCode location, and inspect `status --verbose`. The plugin root
+follows `OPENCODE_CONFIG_DIR`, XDG, then `~/.config/opencode`. Status checks file ownership; verify a specific real
+`agent=opencode` event in the backend before claiming runtime delivery. OpenChamber uses the same server plugin and
+needs no client modification. Native skills and confirmed structured attachments count; synthetic text does not.
+
+Nested MCP calls count separately and omit individual duration. Registry-based MCP classification can misclassify a
+replaced tool retaining the same identity. Events missed during observer disconnection are not recovered. OpenCode
+1.x and downgrades are outside scope. Preserve modified managed plugins and repair ownership conflicts before purge.

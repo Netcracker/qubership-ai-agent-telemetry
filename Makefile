@@ -36,6 +36,7 @@ checksums: build
 
 .PHONY: test
 test:
+	node --test opencode_plugin_test.mjs
 	go test ./... -race
 
 .PHONY: clean

@@ -109,3 +109,16 @@ Automatic deletion requires a byte-for-byte match with a generated telemetry hoo
 ownership comment classifies the file as a managed-hook conflict, but it does not authorize deletion. Uninstall keeps
 the managed CLI and telemetry data until you resolve the conflict so that an active telemetry invocation does not lose
 its executable.
+
+## OpenCode plugin ownership conflicts
+
+Inspect `ai-agent-telemetry status --verbose` and the `.ai-agent-telemetry-opencode.json` receipt beside the managed CLI
+(`~/.local/bin` on each supported platform). Check every recorded location as well as the current config root; changing
+`OPENCODE_CONFIG_DIR` does not transfer ownership or erase earlier installations.
+
+If a recorded plugin was modified, preserve a copy of that file and review its custom changes. Remove the telemetry
+plugin from OpenCode's scanned `plugins/` directory only after separating any custom functionality you need. Do not
+replace a symbolic link with an ordinary file or delete its target. Rerun `hooks uninstall --target=opencode` after the
+recorded plugin paths are absent or contain only the exact managed template, then rerun lifecycle uninstall if needed.
+A corrupt receipt must be repaired from known managed paths before cleanup; do not guess paths or purge telemetry
+state to bypass an ownership conflict. Reload OpenCode after removing its plugin.

@@ -40,6 +40,7 @@ jobs:
           filters: |
             lifecycle:
               - '*.go'
+              - 'opencode_plugin.mjs'
               - 'go.mod'
               - 'go.sum'
               - 'scripts/install.sh'
