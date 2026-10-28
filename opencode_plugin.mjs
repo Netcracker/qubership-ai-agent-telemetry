@@ -157,7 +157,9 @@ export function createPlugin(send = sendEnvelope) {
                   skill(data.sessionID, data.id);
                 if (
                   event.type === "session.deleted" ||
-                  event.type === "session.revert.committed"
+                  event.type === "session.revert.committed" ||
+                  (event.type === "session.moved" &&
+                    data.location.directory !== directory)
                 )
                   inbox.delete(data.sessionID);
                 if (event.type === "session.inbox.enqueued") {

@@ -824,3 +824,142 @@ test("recovers surviving attachments after a committed revert without clearing o
     await f.stop();
   }
 });
+
+test("moving 1000 sessions releases source caches and delivers attachments at the destination", async (t) => {
+  const caches = new Set();
+  const originalSet = Map.prototype.set;
+  t.after(() => {
+    Map.prototype.set = originalSet;
+  });
+  Map.prototype.set = function (key, value) {
+    if (typeof key === "string" && key.startsWith("cache_session_move_"))
+      caches.add(this);
+    return Reflect.apply(originalSet, this, [key, value]);
+  };
+  const source = await fixture();
+  const destination = await fixture({ directory: "/destination" });
+  let contextReads = 0;
+  destination.ctx.session.context = async ({ sessionID }) => {
+    contextReads++;
+    return [
+      {
+        id: `inbox_${sessionID}`,
+        type: "user",
+        skills: [{ id: "git-release" }],
+      },
+    ];
+  };
+  const from = { directory: "/fixture" },
+    to = { directory: "/destination" };
+  try {
+    for (let i = 0; i < 1000; i++) {
+      const sessionID = `cache_session_move_${i}`;
+      source.event({
+        type: "session.inbox.enqueued",
+        location: from,
+        data: {
+          sessionID,
+          inboxID: `inbox_${sessionID}`,
+          item: { type: "user", payload: { skills: [{ id: "git-release" }] } },
+        },
+      });
+      source.event({
+        type: "session.moved",
+        location: from,
+        data: { sessionID, location: to },
+      });
+      destination.event({
+        type: "session.moved",
+        location: to,
+        data: { sessionID, location: to },
+      });
+      destination.event({
+        type: "session.inbox.delivered",
+        location: to,
+        data: { sessionID, inboxID: `inbox_${sessionID}` },
+      });
+      destination.event({
+        type: "session.deleted",
+        location: to,
+        data: { sessionID },
+      });
+    }
+    await source.flush();
+    await destination.flush();
+    assert.equal(caches.size, 1);
+    assert.deepEqual(
+      {
+        retained: [...caches].reduce((n, map) => n + map.size, 0),
+        sourceEvents: source.sent.length,
+        contextReads,
+        destinationEvents: destination.sent.length,
+      },
+      {
+        retained: 0,
+        sourceEvents: 0,
+        contextReads: 1000,
+        destinationEvents: 1000,
+      },
+    );
+    assert.equal(new Set(destination.sent.map((e) => e.session_id)).size, 1000);
+    assert.ok(
+      destination.sent.every(
+        (e) => e.skill_id === "git-release" && e.directory === "/destination",
+      ),
+    );
+  } finally {
+    Map.prototype.set = originalSet;
+    await source.stop();
+    await destination.stop();
+  }
+});
+
+test("moving one session preserves unrelated and same-directory cached prompts", async () => {
+  const f = await fixture();
+  const lookedUp = [];
+  f.ctx.session.context = async ({ sessionID }) => {
+    lookedUp.push(sessionID);
+    return [{ id: "msg_live", type: "user", skills: [{ id: "git-release" }] }];
+  };
+  const location = { directory: "/fixture" };
+  try {
+    for (const sessionID of ["ses_moved", "ses_same", "ses_other"])
+      f.event({
+        type: "session.inbox.enqueued",
+        location,
+        data: {
+          sessionID,
+          inboxID: "msg_live",
+          item: { type: "user", payload: { skills: [{ id: "git-release" }] } },
+        },
+      });
+    f.event({
+      type: "session.moved",
+      location,
+      data: { sessionID: "ses_moved", location: { directory: "/destination" } },
+    });
+    f.event({
+      type: "session.moved",
+      location,
+      data: { sessionID: "ses_same", location },
+    });
+    f.event({
+      type: "session.moved",
+      location: { directory: "/elsewhere" },
+      data: { sessionID: "ses_other", location: { directory: "/destination" } },
+    });
+    for (const sessionID of ["ses_same", "ses_other"])
+      f.event({
+        type: "session.inbox.delivered",
+        location,
+        data: { sessionID, inboxID: "msg_live" },
+      });
+    await f.flush();
+    assert.deepEqual(
+      { lookedUp, sessions: f.sent.map((e) => e.session_id) },
+      { lookedUp: [], sessions: ["ses_same", "ses_other"] },
+    );
+  } finally {
+    await f.stop();
+  }
+});

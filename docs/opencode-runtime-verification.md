@@ -65,7 +65,7 @@ The reload attachment reached VictoriaLogs as `01a181dc-7b22-7e4b-b2d0-53bb69e8e
 The plugin now caches only attachment IDs from observed enqueue events. Observed ordinary prompts avoid context
 reads; an unobserved enqueue still uses context for reload recovery. Pending MCP calls use per-tool queues and cursors
 so completion matching does not search or shift the remaining batch. Deterministic operation counts establish these
-work bounds; they do not measure production latency. The JavaScript suite contains 27 passing tests.
+work bounds; they do not measure production latency. The JavaScript suite contains 29 passing tests.
 
 A subsequent cache-lifecycle fix groups queued entries by session. Deleting a session drops its complete bucket;
 delivery and cancellation also remove empty buckets. The regression exercises 1,000 enqueue/delete pairs and
@@ -80,6 +80,13 @@ inbox entries, while surviving attachments still resolve through context and oth
 A real OpenCode run using `v0.0.0-opencode173-revert-20261028` matched 17 expected records and
 17 unique IDs in final VictoriaLogs. The committed revert removed its queued input and emitted no skill event;
 another session's queued attachment emitted one. The outbox was empty after flush.
+
+Successful moves to another directory release the source session bucket. A two-instance regression moves 1,000
+queued attachments, delivers and deletes their sessions only at the destination, and retains zero source buckets.
+It also checks isolation from unrelated sessions and moves that keep the same directory. A real steered move using
+`v0.0.0-opencode173-move-20261028` preserved its queued attachment at the destination, followed by session deletion.
+The moved attachment, an unrelated source attachment, and a destination MCP call matched three expected records
+and three unique `event.id` values in final VictoriaLogs. The outbox was empty; bodies, paths, and durations were absent.
 
 ## Automated checks
 
