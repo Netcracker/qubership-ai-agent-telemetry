@@ -34,6 +34,13 @@ export function createPlugin(send = sendEnvelope) {
           event.messageID ?? event.assistantMessageID,
           event.id,
         ]);
+      const takeInbox = (sessionID, inboxID) => {
+        const entries = inbox.get(sessionID);
+        const ids = entries?.get(inboxID);
+        entries?.delete(inboxID);
+        if (entries?.size === 0) inbox.delete(sessionID);
+        return ids;
+      };
       const mcpEvent = (sessionID, mcp, status) =>
         emit({
           type: "mcp",
@@ -148,21 +155,24 @@ export function createPlugin(send = sendEnvelope) {
                 }
                 if (event.type === "session.skill.activated")
                   skill(data.sessionID, data.id);
-                const inboxKey = JSON.stringify([data.sessionID, data.inboxID]);
-                if (event.type === "session.inbox.enqueued")
-                  inbox.set(
-                    inboxKey,
+                if (event.type === "session.deleted")
+                  inbox.delete(data.sessionID);
+                if (event.type === "session.inbox.enqueued") {
+                  const entries = inbox.get(data.sessionID) ?? new Map();
+                  entries.set(
+                    data.inboxID,
                     data.item?.type === "user"
                       ? (data.item.payload.skills ?? []).map(
                           (entry) => entry.id,
                         )
                       : [],
                   );
+                  inbox.set(data.sessionID, entries);
+                }
                 if (event.type === "session.inbox.cancelled")
-                  inbox.delete(inboxKey);
+                  takeInbox(data.sessionID, data.inboxID);
                 if (event.type === "session.inbox.delivered") {
-                  const ids = inbox.get(inboxKey);
-                  inbox.delete(inboxKey);
+                  const ids = takeInbox(data.sessionID, data.inboxID);
                   if (ids !== undefined) {
                     for (const id of ids) skill(data.sessionID, id);
                     continue;

@@ -601,3 +601,118 @@ test("drops missing or mismatched recovery messages and resumes after a lookup f
     await f.stop();
   }
 });
+
+for (const { terminal, emitted } of [
+  { terminal: "session.deleted", emitted: 0 },
+  { terminal: "session.inbox.cancelled", emitted: 0 },
+  { terminal: "session.inbox.delivered", emitted: 1000 },
+]) {
+  test(`${terminal} releases cached prompts for 1000 sessions`, async (t) => {
+    const caches = new Set();
+    const originalSet = Map.prototype.set;
+    t.after(() => {
+      Map.prototype.set = originalSet;
+    });
+    Map.prototype.set = function (key, value) {
+      if (
+        typeof key === "string" &&
+        (key.startsWith("cache_session_") || key.startsWith('["cache_session_'))
+      )
+        caches.add(this);
+      return Reflect.apply(originalSet, this, [key, value]);
+    };
+    const f = await fixture();
+    f.ctx.session.context = async () => {
+      throw Error("Observed enqueue must stay cached until its terminal event");
+    };
+    const location = { directory: "/fixture" };
+    try {
+      for (let i = 0; i < 1000; i++) {
+        const data = {
+          sessionID: `cache_session_${i}`,
+          inboxID: `cache_inbox_${i}`,
+        };
+        f.event({
+          type: "session.inbox.enqueued",
+          location,
+          data: {
+            ...data,
+            item: {
+              type: "user",
+              payload: { skills: [{ id: "git-release" }] },
+            },
+          },
+        });
+        f.event({
+          type: terminal,
+          location,
+          data:
+            terminal === "session.deleted"
+              ? { sessionID: data.sessionID }
+              : data,
+        });
+      }
+      await f.flush();
+      assert.equal(caches.size, 1);
+      assert.deepEqual(
+        {
+          retained: [...caches].reduce((n, map) => n + map.size, 0),
+          emitted: f.sent.length,
+        },
+        { retained: 0, emitted },
+      );
+    } finally {
+      Map.prototype.set = originalSet;
+      await f.stop();
+    }
+  });
+}
+
+test("deleting one session releases all its prompts while preserving another session", async () => {
+  const f = await fixture();
+  let contextReads = 0;
+  f.ctx.session.context = async () => {
+    contextReads++;
+    return [];
+  };
+  const location = { directory: "/fixture" };
+  try {
+    for (const sessionID of ["ses_deleted", "ses_survivor"])
+      for (const inboxID of ["msg_one", "msg_two"])
+        f.event({
+          type: "session.inbox.enqueued",
+          location,
+          data: {
+            sessionID,
+            inboxID,
+            item: {
+              type: "user",
+              payload: { skills: [{ id: "git-release" }] },
+            },
+          },
+        });
+    f.event({
+      type: "session.deleted",
+      location: { directory: "/other" },
+      data: { sessionID: "ses_survivor" },
+    });
+    f.event({
+      type: "session.deleted",
+      location,
+      data: { sessionID: "ses_deleted" },
+    });
+    for (const inboxID of ["msg_one", "msg_two"])
+      f.event({
+        type: "session.inbox.delivered",
+        location,
+        data: { sessionID: "ses_survivor", inboxID },
+      });
+    await f.flush();
+    assert.deepEqual(
+      { contextReads, sessions: f.sent.map((e) => e.session_id) },
+      { contextReads: 0, sessions: ["ses_survivor", "ses_survivor"] },
+    );
+  } finally {
+    await f.stop();
+  }
+});

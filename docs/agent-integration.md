@@ -283,7 +283,8 @@ their own session ID and actual location. Global events are filtered by location
 Events missed while the observer is disconnected or unloaded are lost. Reconnection resumes observation without
 historical backfill. Existing outbox delivery retries still apply to accepted events. A received attachment-delivery
 event uses cached Skill.IDs when enqueue was observed; ordinary prompts then require no conversation-history read.
-If enqueue preceded plugin loading, delivery resolves its exact message through the public context API.
+If enqueue preceded plugin loading, delivery resolves its exact message through the public context API. Cached entries
+are released on delivery, cancellation, session deletion, disconnection, or plugin unload.
 
 OpenChamber remains an unchanged client. Install the plugin on the OpenCode server host, including when that server
 is remote. The initial runtime pair is OpenCode 2.1.4 with OpenChamber web 2.5.1. Structured manual attachment through
