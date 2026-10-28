@@ -420,3 +420,184 @@ test("resumes new events after disconnect without reconstructing missed attempts
     await f.stop();
   }
 });
+
+test("delivers 2000 ordinary prompts without reading conversation history", async () => {
+  const f = await fixture();
+  let contextReads = 0;
+  f.ctx.session.context = async () => {
+    contextReads++;
+    return [];
+  };
+  try {
+    for (let i = 0; i < 2000; i++) {
+      const data = { sessionID: "ses_test", inboxID: `msg_${i}` };
+      f.event({
+        type: "session.inbox.enqueued",
+        location: { directory: "/fixture" },
+        data: { ...data, item: { type: "user", payload: { text: "Fixture" } } },
+      });
+      f.event({
+        type: "session.inbox.delivered",
+        location: { directory: "/fixture" },
+        data,
+      });
+    }
+    await f.flush();
+    assert.deepEqual(
+      { contextReads, sent: f.sent },
+      { contextReads: 0, sent: [] },
+    );
+  } finally {
+    await f.stop();
+  }
+});
+
+test("emits only skill IDs cached at enqueue after confirmed delivery", async () => {
+  const f = await fixture();
+  f.ctx.session.context = async () => {
+    throw Error("History must not be read for observed enqueue");
+  };
+  const location = { directory: "/fixture" };
+  try {
+    f.event({
+      type: "session.inbox.enqueued",
+      location,
+      data: {
+        sessionID: "ses_test",
+        inboxID: "msg_attach",
+        item: {
+          type: "user",
+          payload: {
+            skills: [
+              { id: "git-release", name: "PRIVATE", text: "PRIVATE_BODY" },
+            ],
+          },
+        },
+      },
+    });
+    await f.flush();
+    assert.deepEqual(f.sent, []);
+    f.event({
+      type: "session.inbox.delivered",
+      location,
+      data: { sessionID: "ses_test", inboxID: "msg_attach" },
+    });
+    await f.flush();
+    assert.deepEqual(f.sent, [
+      {
+        type: "skill",
+        session_id: "ses_test",
+        directory: "/fixture",
+        skill_id: "git-release",
+      },
+    ]);
+  } finally {
+    await f.stop();
+  }
+});
+
+for (const size of [1000, 2000]) {
+  test(`matches ${size} pending tools completing in reverse order with linear work`, async () => {
+    const tools = Array.from({ length: size }, (_, i) => ({
+      id: `docs_tool_${i}`,
+      name: `tool_${i}`,
+      options: { namespace: "docs" },
+    }));
+    const f = await fixture({ tools });
+    let toolReads = 0;
+    try {
+      await f.hooks["execute.before"]({ ...call, tool: "execute" });
+      for (const tool of tools)
+        await f.hooks["execute.before"]({ ...call, tool: tool.id });
+      for (const tool of tools.toReversed())
+        await f.hooks["execute.after"]({
+          ...call,
+          get tool() {
+            toolReads++;
+            return tool.id;
+          },
+        });
+      await f.hooks["execute.after"]({ ...call, tool: "execute" });
+      assert.deepEqual(
+        f.sent.map((e) => e.tool),
+        tools.toReversed().map((t) => t.name),
+      );
+      assert.ok(
+        toolReads <= size * 6,
+        `${toolReads} tool reads for ${size} completions`,
+      );
+    } finally {
+      await f.stop();
+    }
+  });
+}
+
+test("matches repeated pending tools without repeatedly shifting array entries", async (t) => {
+  const f = await fixture();
+  const size = 2000;
+  let shifted = 0;
+  try {
+    await f.hooks["execute.before"]({ ...call, tool: "execute" });
+    for (let i = 0; i < size; i++)
+      await f.hooks["execute.before"]({ ...call, tool: "docs_search" });
+    const splice = Array.prototype.splice;
+    t.after(() => {
+      Array.prototype.splice = splice;
+    });
+    Array.prototype.splice = function (start, count, ...items) {
+      shifted += Math.max(0, this.length - start - count);
+      return Reflect.apply(splice, this, [start, count, ...items]);
+    };
+    for (let i = 0; i < size; i++)
+      await f.hooks["execute.after"]({ ...call, tool: "docs_search" });
+    Array.prototype.splice = splice;
+    await f.hooks["execute.after"]({ ...call, tool: "execute" });
+    assert.equal(f.sent.length, size);
+    assert.ok(
+      shifted <= size,
+      `${shifted} shifted entries for ${size} completions`,
+    );
+  } finally {
+    await f.stop();
+  }
+});
+
+test("drops missing or mismatched recovery messages and resumes after a lookup failure", async () => {
+  const f = await fixture();
+  const delivered = {
+    type: "session.inbox.delivered",
+    location: { directory: "/fixture" },
+    data: { sessionID: "ses_test", inboxID: "msg_attach" },
+  };
+  try {
+    for (const message of [
+      undefined,
+      { id: "other", type: "user", skills: [{ id: "x" }] },
+      { id: "msg_attach", type: "assistant", skills: [{ id: "x" }] },
+    ]) {
+      f.ctx.session.context = async () => (message ? [message] : []);
+      f.event(delivered);
+      await f.flush();
+    }
+    f.ctx.session.context = async () => {
+      throw Error("fixture lookup failure");
+    };
+    f.event(delivered);
+    f.event({
+      type: "session.skill.activated",
+      location: { directory: "/fixture" },
+      data: { sessionID: "ses_test", id: "git-release" },
+    });
+    await f.flush();
+    assert.deepEqual(f.sent, [
+      {
+        type: "skill",
+        session_id: "ses_test",
+        directory: "/fixture",
+        skill_id: "git-release",
+      },
+    ]);
+  } finally {
+    await f.stop();
+  }
+});

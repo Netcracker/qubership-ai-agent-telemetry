@@ -21,6 +21,7 @@ export function createPlugin(send = sendEnvelope) {
       const controller = new globalThis.AbortController();
       const registrations = [];
       const pending = new Map();
+      const inbox = new Map();
       const activeCode = new Set();
       const settled = new Set();
       const settle = (callKey) => {
@@ -40,6 +41,14 @@ export function createPlugin(send = sendEnvelope) {
           ...mcp,
           outcome: status === "completed" ? "succeeded" : "failed",
         });
+      const failPending = (callKey, sessionID) => {
+        const calls = pending.get(callKey);
+        pending.delete(callKey);
+        for (const queue of calls?.values() ?? [])
+          for (let i = queue.next; i < queue.items.length; i++)
+            mcpEvent(sessionID, queue.items[i], "error");
+        return calls?.size > 0;
+      };
       const emit = (fields) => {
         if (controller.signal.aborted) return;
         try {
@@ -78,12 +87,10 @@ export function createPlugin(send = sendEnvelope) {
             }
             const mcp = await identity(event.tool);
             if (mcp) {
-              const calls = pending.get(callKey) ?? [];
-              calls.push({
-                name: event.tool,
-                mcp,
-                nested: activeCode.has(callKey),
-              });
+              const calls = pending.get(callKey) ?? new Map();
+              const queue = calls.get(event.tool) ?? { items: [], next: 0 };
+              queue.items.push(mcp);
+              calls.set(event.tool, queue);
               pending.set(callKey, calls);
             }
           } catch {
@@ -96,24 +103,25 @@ export function createPlugin(send = sendEnvelope) {
           try {
             const callKey = key(event);
             if (settled.has(callKey)) return;
-            const calls = pending.get(callKey) ?? [];
             if (event.tool === "execute") {
-              for (const call of calls)
-                mcpEvent(event.sessionID, call.mcp, "error");
-              pending.delete(callKey);
+              failPending(callKey, event.sessionID);
               activeCode.delete(callKey);
               settle(callKey);
               return;
             }
-            const index = calls.findIndex((call) => call.name === event.tool);
-            const tracked = index < 0 ? undefined : calls.splice(index, 1)[0];
-            if (calls.length === 0) pending.delete(callKey);
+            const calls = pending.get(callKey);
+            const queue = calls?.get(event.tool);
+            const tracked = queue?.items[queue.next++];
+            if (queue && queue.next === queue.items.length) {
+              calls.delete(event.tool);
+              if (calls.size === 0) pending.delete(callKey);
+            }
             if (event.tool === "skill") {
               if (event.status === "completed")
                 skill(event.sessionID, event.input?.id);
               return;
             }
-            const mcp = tracked?.mcp ?? (await identity(event.tool));
+            const mcp = tracked ?? (await identity(event.tool));
             if (mcp && ["completed", "error"].includes(event.status)) {
               mcpEvent(event.sessionID, mcp, event.status);
             }
@@ -134,16 +142,31 @@ export function createPlugin(send = sendEnvelope) {
                 const data = event.data;
                 if (event.type === "session.tool.failed") {
                   const callKey = key(data);
-                  const calls = pending.get(callKey) ?? [];
-                  for (const call of calls)
-                    mcpEvent(data.sessionID, call.mcp, "error");
-                  pending.delete(callKey);
+                  const hadPending = failPending(callKey, data.sessionID);
                   activeCode.delete(callKey);
-                  if (calls.length > 0) settle(callKey);
+                  if (hadPending) settle(callKey);
                 }
                 if (event.type === "session.skill.activated")
                   skill(data.sessionID, data.id);
+                const inboxKey = JSON.stringify([data.sessionID, data.inboxID]);
+                if (event.type === "session.inbox.enqueued")
+                  inbox.set(
+                    inboxKey,
+                    data.item?.type === "user"
+                      ? (data.item.payload.skills ?? []).map(
+                          (entry) => entry.id,
+                        )
+                      : [],
+                  );
+                if (event.type === "session.inbox.cancelled")
+                  inbox.delete(inboxKey);
                 if (event.type === "session.inbox.delivered") {
+                  const ids = inbox.get(inboxKey);
+                  inbox.delete(inboxKey);
+                  if (ids !== undefined) {
+                    for (const id of ids) skill(data.sessionID, id);
+                    continue;
+                  }
                   const messages = await ctx.session.context({
                     sessionID: data.sessionID,
                   });
@@ -162,6 +185,7 @@ export function createPlugin(send = sendEnvelope) {
             /* Telemetry failures must not interrupt agent operations. */
           }
           pending.clear();
+          inbox.clear();
           activeCode.clear();
           if (!controller.signal.aborted)
             await new Promise((resolve) => {
@@ -183,6 +207,7 @@ export function createPlugin(send = sendEnvelope) {
       return async () => {
         controller.abort();
         pending.clear();
+        inbox.clear();
         activeCode.clear();
         settled.clear();
         for (const registration of registrations) await registration.dispose();

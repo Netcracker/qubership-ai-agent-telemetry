@@ -54,11 +54,27 @@ connection failure preserved the queued event byte for byte; retry delivered its
 was repeated after indexing caught up. The test used existing collector credentials in place; it did not change the installed
 telemetry CLI, personal telemetry configuration, OpenChamber files, or backend configuration.
 
+## Performance review follow-up
+
+The review fixes were exercised with OpenCode 2.1.4 using build
+`v0.0.0-opencode173-review2-20261028`. All 15 expected source records reached the deployed VictoriaLogs, with 15
+unique event IDs and an empty outbox after flush. The comparison included native and attached skills, an attachment
+enqueued before plugin reload, child sessions in a second location, and direct/nested MCP success and failure.
+The reload attachment reached VictoriaLogs as `01a181dc-7b22-7e4b-b2d0-53bb69e8e97d`.
+
+The plugin now caches only attachment IDs from observed enqueue events. Observed ordinary prompts avoid context
+reads; an unobserved enqueue still uses context for reload recovery. Pending MCP calls use per-tool queues and cursors
+so completion matching does not search or shift the remaining batch. Deterministic operation counts establish these
+work bounds; they do not measure production latency. The JavaScript suite contains 21 passing tests.
+
 ## Automated checks
 
 `make test` runs the plugin's Node.js tests and the complete Go race suite. The plugin tests cover distinct nested
 completions, denied calls without after hooks, terminal outer failures, late callbacks, live registry changes,
-namespace collisions, context-based attachment resolution, cleanup, and reconnect without historical reconstruction.
+namespace collisions, cached attachment IDs with context-based reload recovery, cleanup, and reconnect without
+historical reconstruction.
+Operation-count regressions cover 1,000 and 2,000 pending tools completing in reverse order, repeated calls without
+array shifting, and 2,000 ordinary deliveries without conversation-history reads.
 A real child-process fixture verifies that ingestion can remain stalled while the hook returns and exports only the
 bridge envelope. Go tests cover adapter validation/privacy, policy inputs, managed root changes, foreign/symbolic
 entries, corrupted receipts, and cleanup conflicts.
