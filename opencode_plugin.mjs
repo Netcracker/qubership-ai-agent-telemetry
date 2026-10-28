@@ -155,7 +155,10 @@ export function createPlugin(send = sendEnvelope) {
                 }
                 if (event.type === "session.skill.activated")
                   skill(data.sessionID, data.id);
-                if (event.type === "session.deleted")
+                if (
+                  event.type === "session.deleted" ||
+                  event.type === "session.revert.committed"
+                )
                   inbox.delete(data.sessionID);
                 if (event.type === "session.inbox.enqueued") {
                   const entries = inbox.get(data.sessionID) ?? new Map();

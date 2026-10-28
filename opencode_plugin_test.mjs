@@ -716,3 +716,111 @@ test("deleting one session releases all its prompts while preserving another ses
     await f.stop();
   }
 });
+
+test("committed reverts release discarded inbox entries across 1000 cycles", async (t) => {
+  const caches = new Set();
+  const originalSet = Map.prototype.set;
+  t.after(() => {
+    Map.prototype.set = originalSet;
+  });
+  Map.prototype.set = function (key, value) {
+    if (key === "cache_session_revert") caches.add(this);
+    return Reflect.apply(originalSet, this, [key, value]);
+  };
+  const f = await fixture();
+  const location = { directory: "/fixture" };
+  const sessionID = "cache_session_revert";
+  try {
+    for (let i = 0; i < 1000; i++) {
+      const inboxID = `boundary_${i}`;
+      f.event({
+        type: "session.inbox.enqueued",
+        location,
+        data: {
+          sessionID,
+          inboxID,
+          item: { type: "user", payload: { text: "Fixture" } },
+        },
+      });
+      f.event({
+        type: "session.inbox.delivered",
+        location,
+        data: { sessionID, inboxID },
+      });
+      f.event({
+        type: "session.inbox.enqueued",
+        location,
+        data: {
+          sessionID,
+          inboxID: `discarded_${i}`,
+          item: { type: "user", payload: { text: "Fixture" } },
+        },
+      });
+      f.event({
+        type: "session.revert.committed",
+        location,
+        data: { sessionID, to: inboxID },
+      });
+    }
+    await f.flush();
+    assert.equal(caches.size, 1);
+    assert.deepEqual(
+      {
+        retained: [...caches]
+          .flatMap((map) => [...map.values()])
+          .reduce((n, entries) => n + entries.size, 0),
+        emitted: f.sent.length,
+      },
+      { retained: 0, emitted: 0 },
+    );
+  } finally {
+    Map.prototype.set = originalSet;
+    await f.stop();
+  }
+});
+
+test("recovers surviving attachments after a committed revert without clearing other sessions", async () => {
+  const f = await fixture();
+  const lookedUp = [];
+  f.ctx.session.context = async ({ sessionID }) => {
+    lookedUp.push(sessionID);
+    return [{ id: "msg_live", type: "user", skills: [{ id: "git-release" }] }];
+  };
+  const location = { directory: "/fixture" };
+  try {
+    for (const sessionID of ["ses_reverted", "ses_other"])
+      f.event({
+        type: "session.inbox.enqueued",
+        location,
+        data: {
+          sessionID,
+          inboxID: "msg_live",
+          item: { type: "user", payload: { skills: [{ id: "git-release" }] } },
+        },
+      });
+    f.event({
+      type: "session.revert.committed",
+      location,
+      data: { sessionID: "ses_reverted", to: "boundary" },
+    });
+    for (const sessionID of ["ses_reverted", "ses_other"])
+      f.event({
+        type: "session.inbox.delivered",
+        location,
+        data: { sessionID, inboxID: "msg_live" },
+      });
+    await f.flush();
+    assert.deepEqual(
+      { lookedUp, emitted: f.sent.map((e) => [e.session_id, e.skill_id]) },
+      {
+        lookedUp: ["ses_reverted"],
+        emitted: [
+          ["ses_reverted", "git-release"],
+          ["ses_other", "git-release"],
+        ],
+      },
+    );
+  } finally {
+    await f.stop();
+  }
+});
