@@ -57,7 +57,7 @@ success. Explicit help prints the requested information without running an opera
 ## Lifecycle commands
 
 `install` and `update` accept `--harnesses <list>` and `--non-interactive`. Harnesses are `claude`, `cline`, `codex`,
-and `cursor`; omitting the option selects all four. `uninstall` accepts only `--purge`.
+`cursor`, and `opencode`; omitting the option selects all five. `uninstall` accepts only `--purge`.
 
 ```sh
 ai-agent-telemetry install
@@ -111,6 +111,7 @@ The CLI manages one user-level native file per harness on every supported operat
 | Cline on Windows | `~/Documents/Cline/Hooks/PostToolUse.ps1` | PowerShell hook for successful skills and completed MCP tools |
 | Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` | `Stop`, `PostToolUse`/`mcp__.*`, and the execution policy |
 | Cursor | `~/.cursor/hooks.json` | `afterAgentResponse`, `afterMCPExecution`, and numeric top-level `version` |
+| OpenCode 2.x | `<OpenCode config>/plugins/ai-agent-telemetry/index.mjs` | Native skill/attachment signals and registry-classified MCP completions |
 
 For MCP calls, the Cline hook records the server and tool names, exact `succeeded` or `failed` outcome, and duration
 when available. It exits successfully with no stdout or stderr. This removes telemetry output from the Cline tool-call
@@ -119,7 +120,7 @@ that card while keeping the hook enabled. Installation never rewrites a legacy o
 exact supported legacy template as `outdated` and gives the explicit `hooks uninstall` then `hooks install` commands.
 An `invalid` hook is preserved and does not qualify for this replacement procedure.
 
-Normal installation registers all four harnesses; no separate hook command is required. For a custom
+Normal installation registers all five harnesses; no separate hook command is required. For a custom
 target list, `configure` accepts `--hooks=all`, `--hooks=none`, or a comma-separated subset. The
 repair command uses `--target` instead:
 
@@ -129,8 +130,9 @@ ai-agent-telemetry hooks install --target=claude,codex
 ai-agent-telemetry hooks uninstall --target=claude,codex
 ```
 
-Both hook commands accept `--target=claude`, `--target=cline`, `--target=codex`, `--target=cursor`, or a comma-separated
-subset; omitting the option selects all four harnesses. Uninstall removes only telemetry-owned entries and canonical
+Both hook commands accept `--target=claude`, `--target=cline`, `--target=codex`, `--target=cursor`,
+`--target=opencode`, or a comma-separated
+subset; omitting the option selects all five harnesses. Uninstall removes only telemetry-owned entries and canonical
 policy files. For Cline, it removes only an exact current or supported legacy template. A mismatched regular file with
 the exact ownership comment blocks telemetry cleanup and preserves the managed CLI; resolve it with the
 [manual Cline uninstall procedure](manual-uninstall.md). Every other Cline entry is preserved as user-owned without
@@ -419,3 +421,23 @@ path outside `AppData` is never virtualized, so every harness shares one config 
 reason `~/.local/bin\ai-agent-telemetry.exe` already works for all harnesses. Config holds
 anything that must survive — losing it stops telemetry — so the token and endpoint never live
 in the cache, which the OS may purge under disk pressure.
+
+## OpenCode plugin ownership
+
+`--harnesses opencode`, `--hooks=opencode`, and `hooks --target=opencode` select the OpenCode 2.x integration.
+The config root is `OPENCODE_CONFIG_DIR`, then `$XDG_CONFIG_HOME/opencode`, then `~/.config/opencode`.
+Reload the OpenCode location after installation. An `installed` status verifies file content, not runtime activation
+or backend delivery. Fully restart the OpenCode server if installation added the CLI directory to `PATH`; a location
+reload cannot refresh the server process environment.
+
+A versioned `.ai-agent-telemetry-opencode.json` sidecar next to the managed CLI records absolute installed plugin
+paths and each written file's SHA-256 independently of OpenCode and XDG overrides. Status checks recorded locations;
+uninstall checks both the current root and recorded roots. An exact current template or a regular file matching its
+recorded digest is managed. An unchanged previous template reports `outdated`; update replaces it and records the new
+digest. A previous copy at any recorded root makes status `outdated`; its detail names the affected plugin and config
+root alongside the recorded locations. Select that root with `OPENCODE_CONFIG_DIR` before updating it.
+Uninstall removes either managed version. A receipt without digests can adopt only the exact current template.
+A modified recorded plugin or corrupt receipt blocks managed CLI removal and purge. Unrelated foreign files remain
+untouched. Errors identify the affected paths and link [manual uninstall](manual-uninstall.md) for repair.
+The receipt lock remains beside the managed CLI after purge: its stable inode coordinates concurrent lifecycle
+commands, so uninstall does not unlink it while another process might be waiting. It contains no telemetry or token.

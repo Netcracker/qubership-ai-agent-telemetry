@@ -6,15 +6,15 @@ package teaches an agent how to verify and diagnose that installation.
 
 Install this package when you want the agent to check telemetry on request. It does not install telemetry hooks.
 
-The skill supports Claude Code, Cline, Codex, and Cursor. OpenCode support is planned.
+The skill supports Claude Code, Cline, Codex, Cursor, and OpenCode 2.x. OpenChamber uses the OpenCode server integration.
 
 ## Install
 
 The lifecycle installs the optional configure skill only when APM is already on `PATH`.
 The telemetry installer does not install APM. If you already use APM, add the package one of two ways.
 
-When you use the APM command, `--target` is required. Use `claude`, `codex`, or `cursor` for the corresponding native
-APM target. Use `agent-skills` for Cline because Cline discovers `.agents/skills` and APM has no native `cline` target.
+When you use the APM command, `--target` is required. Use `claude`, `codex`, `cursor`, or `opencode` for the corresponding
+native APM target. Use `agent-skills` for Cline because Cline discovers `.agents/skills` and APM has no native `cline` target.
 This example targets Claude Code:
 
 ```sh
@@ -45,8 +45,8 @@ event without reading the telemetry token.
 
 ## How it works
 
-Native CLI-managed hooks collect the event subset that each harness exposes. All four harnesses report skill
-executions. Claude Code also reports command invocations. Claude Code, Codex, and Cursor report MCP tool executions.
+Native CLI-managed hooks collect the event subset that each harness exposes. All five harnesses report skill
+executions and MCP tool executions. Claude Code also reports command invocations.
 The diagnostic skill checks the installation and uses its own invocation as a real skill event.
 
 The default `install` lifecycle puts the binary on `PATH`, saves machine configuration, and registers all supported

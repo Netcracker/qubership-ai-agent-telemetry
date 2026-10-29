@@ -14,8 +14,9 @@ The CLI registers one global harness-specific hook in each native user configura
 | Cline on Windows | `~/Documents/Cline/Hooks/PostToolUse.ps1` |
 | Codex | `~/.codex/hooks.json`, `~/.codex/rules/ai-agent-telemetry.rules` |
 | Cursor | `~/.cursor/hooks.json` |
+| OpenCode 2.x | `<OpenCode config>/plugins/ai-agent-telemetry/index.mjs` |
 
-The default lifecycle install puts the binary on `PATH` and registers all four harnesses, even when a harness is not
+The default lifecycle install puts the binary on `PATH` and registers all five harnesses, even when a harness is not
 installed yet. Use `--harnesses` to select a subset. Each hook calls the CLI by its bare name,
 `ai-agent-telemetry ingest --agent=<name>`, which works across Git Bash, PowerShell, `cmd.exe`,
 and POSIX `sh`. The Codex policy file allows only the hook and two diagnostic commands to access
@@ -50,6 +51,8 @@ thousands of years or more.
 | Cline | `PostToolUse` or `tool_result`, MCP tool | `mcp_tool_executed` | Server/tool, exact outcome, optional duration |
 | Cursor | `afterAgentResponse` | `skill_executed` | Zero or more transcript-derived skill names |
 | Cursor | `afterMCPExecution` | `mcp_tool_executed` | Tool name, `unknown` outcome, optional duration; no server name |
+| OpenCode 2.x | Successful native skill or delivered structured attachment | `skill_executed` | Stable Skill.ID in `skill.name` |
+| OpenCode 2.x | MCP tool completion, classified through the registry | `mcp_tool_executed` | Registered server/tool, outcome; duration omitted |
 
 Only Claude Code exposes the metadata required for `command_invoked`. Ordinary built-in tools are not collected.
 
@@ -261,3 +264,45 @@ command aligned with the CLI-managed hooks while existing consumers migrate.
 [Codex spec]: superpowers/specs/2026-06-16-codex-session-parsing.md
 [Cursor workaround]: superpowers/decisions/2026-06-17-cursor-hooks-version-workaround.md
 [issue 66]: https://github.com/Netcracker/qubership-ai-agent-telemetry/issues/66
+
+## OpenCode 2.x
+
+Install with `ai-agent-telemetry hooks install --target=opencode`, then reload the OpenCode location. The plugin lives
+under `OPENCODE_CONFIG_DIR`, or `$XDG_CONFIG_HOME/opencode`, or `~/.config/opencode`, in
+`plugins/ai-agent-telemetry/index.mjs`. The optional configure skill uses APM's native `opencode` target.
+If installation changed `PATH`, fully restart the OpenCode server; location reload does not refresh its process
+environment. OpenCode 1.x and downgrade behavior are outside the supported scope.
+
+Successful native `skill` calls, standalone `session.skill.activated` events, and delivered structured prompt
+attachments produce `skill_executed`. `skill.name` contains the stable Skill.ID, not the display name. IDs outside the
+shared validator's alphabet or length are omitted without rewriting. Failed loads, selection without delivery,
+cancelled attachments, synthetic instructions, and ordinary skill-file reads do not count.
+
+MCP classification matches the effective tool ID to the registry's original tool name and a unique MCP server
+namespace. Missing or ambiguous mappings are omitted. A plugin that replaces execution while retaining the registered
+identity can cause false MCP classification; this accepted limitation means an event does not prove remote execution.
+Tool inputs, results, error text, and skill bodies are not exported.
+
+Each nested MCP invocation produces its own terminal event, including repeated calls sharing an outer Code Mode ID.
+Individual durations are omitted; the first implementation also omits direct-call duration. Child sessions retain
+their own session ID and actual location. Global events are filtered by location before collection.
+
+Denied MCP attempts are included as `mcp_tool_executed` events with `outcome=failed`, even when execution never starts.
+Repeated Skill.IDs within one delivered inbox entry count once; separate deliveries remain separate executions.
+
+Events missed while the observer is disconnected or unloaded are lost. Reconnection resumes observation without
+historical backfill. Existing outbox delivery retries still apply to accepted events. A received attachment-delivery
+event uses cached Skill.IDs when enqueue was observed; ordinary prompts then require no conversation-history read.
+If enqueue preceded plugin loading, delivery resolves its exact message through the public context API. Cached entries
+are released on delivery, cancellation, session deletion, committed revert, a move to another directory, disconnection,
+or plugin unload. A committed revert invalidates only its session bucket; surviving queued attachments use the existing
+context lookup on delivery. Moving a session releases its source bucket; destination delivery resolves attachments
+through context when enqueue was observed only at the source. Other session buckets remain intact.
+
+OpenChamber remains an unchanged client. Install the plugin on the OpenCode server host, including when that server
+is remote. The initial runtime pair is OpenCode 2.1.4 with OpenChamber web 2.5.1. Structured manual attachment through
+the `$` picker is supported when the client actually sends it. The tested picker flow for a display name containing
+spaces sent ordinary text; it did not count as an activation. Desktop, mobile, and VS Code clients have not been
+verified by this web test.
+
+See the [runtime verification record](opencode-runtime-verification.md) for the tested cases and delivery evidence.

@@ -32,6 +32,10 @@ If the collector uses a private CA, add it before `selftest` with
 4. If installation changed the Codex hook definition and hash, fully restart Codex. If prompted, inspect and approve
    `ai-agent-telemetry ingest --agent=codex`.
 
+For OpenCode 2.x, reload the server location after installation and verify a real skill or MCP event. OpenChamber
+uses the same server plugin; install telemetry on the OpenCode host. If installation added the CLI directory to
+`PATH`, fully restart the OpenCode server so the plugin can find the executable.
+
 See [Installation](#installation) for configuration options, hook repair, and verification details.
 
 The lifecycle manages only telemetry. See the [lifecycle installer guide](docs/lifecycle-installer.md) for hook
@@ -54,7 +58,7 @@ native event where available and a session transcript otherwise. See
 never blocks the agent.
 
 The installer puts the CLI on `PATH`, saves the machine settings, and registers hooks for all
-four harnesses. Each hook calls the same bare command (`ai-agent-telemetry`) on every supported
+five harnesses. Each hook calls the same bare command (`ai-agent-telemetry`) on every supported
 OS. For the CLI internals and file layout, see [the ai-agent-telemetry CLI](docs/cli.md).
 
 ## Data
@@ -62,7 +66,7 @@ OS. For the CLI internals and file layout, see [the ai-agent-telemetry CLI](docs
 Each OpenTelemetry log record has an event name as its body and these common log attributes:
 
 - `event.id` — a time-sortable event identifier that stays unchanged across delivery retries.
-- `agent`: the harness (`claude`, `cline`, `codex`, or `cursor`).
+- `agent`: the harness (`claude`, `cline`, `codex`, `cursor`, or `opencode`).
 - `session.id` — the agent's session identifier.
 - `repo.remote` — the normalized git remote identity. The only repository label.
 

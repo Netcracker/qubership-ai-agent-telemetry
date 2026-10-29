@@ -25,7 +25,7 @@ The bootstrap downloads the platform binary and `SHA256SUMS`, verifies the binar
 3. writes the telemetry configuration; and
 4. registers native hooks for the selected harnesses.
 
-Install selects Claude Code, Cline, Codex, and Cursor by default. Use `--harnesses` for a subset:
+Install selects Claude Code, Cline, Codex, Cursor, and OpenCode 2.x by default. Use `--harnesses` for a subset:
 
 ```sh
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh \
@@ -145,3 +145,14 @@ Usage errors return `2`. Operational failures return `1`. Successful lifecycles,
 
 The installer records only its own `PATH` mutation. Removal reverses that exact change and preserves unrelated shell
 profile or Windows user-PATH content. It never removes `~/.local/bin`, even when the directory becomes empty.
+
+## OpenCode locations
+
+Select `--harnesses opencode` to install only its telemetry plugin. OpenChamber needs no separate installation target;
+it uses the instrumented OpenCode server. Reload the server location after install. If installation added the CLI
+directory to `PATH`, fully restart the server to refresh its process environment.
+
+The installer records each managed OpenCode plugin path in `.ai-agent-telemetry-opencode.json` beside the managed CLI.
+Changing `OPENCODE_CONFIG_DIR` or XDG roots does not hide old locations from status or uninstall. Cleanup preserves
+modified and symbolic entries; a recorded ownership conflict or invalid receipt blocks CLI removal and purge until
+resolved. OpenCode 1.x and downgrades are excluded. See [OpenCode integration](agent-integration.md#opencode-2x).

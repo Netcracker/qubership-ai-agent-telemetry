@@ -84,7 +84,7 @@ func TestLifecycleEnumFlagsDescribeAcceptedValues(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d; stderr = %q", code, errOut.String())
 	}
-	for _, want := range []string{"all, claude, cline, codex, cursor"} {
+	for _, want := range []string{"all, claude, cline, codex, cursor, opencode"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("help = %q, want %q", out.String(), want)
 		}
@@ -102,7 +102,7 @@ func TestUnknownLifecycleEnumListsAcceptedValues(t *testing.T) {
 		want string
 	}{
 		{[]string{"install", "--harnesses", "bogus"},
-			"valid harnesses: all, claude, cline, codex, cursor"},
+			"valid harnesses: all, claude, cline, codex, cursor, opencode"},
 	} {
 		var errOut bytes.Buffer
 		code := execute(tt.args, appDeps{ErrOut: &errOut, Home: t.TempDir})

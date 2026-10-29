@@ -121,8 +121,8 @@ func TestConfigureSkillUpdateUsesNewPinnedReleaseSource(t *testing.T) {
 }
 
 func TestJoinConfigureSkillTargetsMapsClineAndDeduplicatesStably(t *testing.T) {
-	targets := []hookTarget{hookCline, hookCursor, hookCline, hookClaude}
-	if got, want := joinConfigureSkillTargets(targets), "agent-skills,cursor,claude"; got != want {
+	targets := []hookTarget{hookCline, hookCursor, hookCline, hookOpenCode, hookClaude}
+	if got, want := joinConfigureSkillTargets(targets), "agent-skills,cursor,opencode,claude"; got != want {
 		t.Fatalf("joinConfigureSkillTargets(%v) = %q, want %q", targets, got, want)
 	}
 }
