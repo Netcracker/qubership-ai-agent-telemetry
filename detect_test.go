@@ -133,6 +133,57 @@ func TestDetectClaudeMCP(t *testing.T) {
 	}
 }
 
+// TestDetectClaudeMCPDuration covers the duration_ms forms Claude Code may
+// send. A fractional value is truncated to whole milliseconds, and a value that
+// is not a non-negative number below 2^63 is omitted while the event is kept.
+func TestDetectClaudeMCPDuration(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 34, 56, 0, time.UTC)
+	tests := []struct {
+		name     string
+		duration string
+		want     *int64
+	}{
+		{name: "integer", duration: `,"duration_ms":42`, want: durationPtr(42)},
+		{name: "fraction truncated", duration: `,"duration_ms":10.718`, want: durationPtr(10)},
+		{name: "submillisecond truncated to zero", duration: `,"duration_ms":0.392`, want: durationPtr(0)},
+		{name: "zero", duration: `,"duration_ms":0`, want: durationPtr(0)},
+		{name: "largest float64 below 2^63", duration: `,"duration_ms":9223372036854774784`, want: durationPtr(9223372036854774784)},
+		{name: "2^63 omitted", duration: `,"duration_ms":9223372036854775808`},
+		{name: "beyond float64 range omitted", duration: `,"duration_ms":1e400`},
+		{name: "negative fraction omitted", duration: `,"duration_ms":-0.392`},
+		{name: "missing omitted", duration: ``},
+		{name: "null omitted", duration: `,"duration_ms":null`},
+		{name: "numeric string omitted", duration: `,"duration_ms":"42"`},
+		{name: "boolean omitted", duration: `,"duration_ms":true`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdin := `{"hook_event_name":"PostToolUse","session_id":"s1","cwd":"/repo","tool_name":"mcp__github__get_issue"` + tt.duration + `}`
+			events, err := detect("claude", []byte(stdin), func(string) string { return "" }, now)
+			if err != nil {
+				t.Fatalf("detect(%s): %v", stdin, err)
+			}
+			if len(events) != 1 {
+				t.Fatalf("detect(%s) returned %d events, want 1", stdin, len(events))
+			}
+			payload, ok := events[0].Payload.(MCPPayload)
+			if !ok {
+				t.Fatalf("payload = %T, want MCPPayload", events[0].Payload)
+			}
+			if !reflect.DeepEqual(payload.DurationMS, tt.want) {
+				t.Errorf("detect(%s) DurationMS = %s, want %s", stdin, formatDuration(payload.DurationMS), formatDuration(tt.want))
+			}
+		})
+	}
+}
+
+func formatDuration(duration *int64) string {
+	if duration == nil {
+		return "nil"
+	}
+	return fmt.Sprint(*duration)
+}
+
 func TestDetectClaudePrivacy(t *testing.T) {
 	fixtures := []string{
 		`{"hook_event_name":"UserPromptExpansion","session_id":"s1","cwd":"/repo","command_name":"review-pr","command_source":"plugin","expansion_type":"slash_command","command_args":"secret-command-args","prompt":"private-prompt"}`,
