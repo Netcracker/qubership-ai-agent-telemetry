@@ -529,7 +529,7 @@ func validateSerializableEvent(ev TelemetryEvent) error {
 }
 
 func validHarnessAgent(agent string) bool {
-	return agent == "claude" || agent == "cline" || agent == "codex" || agent == "cursor"
+	return agent == "claude" || agent == "cline" || agent == "codex" || agent == "cursor" || agent == "opencode"
 }
 
 func validUUIDv4(value string) bool {

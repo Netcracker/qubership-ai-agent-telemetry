@@ -45,6 +45,8 @@ func detect(agent string, stdin []byte, remote remoteResolver, now time.Time) ([
 		return codexAdapter(stdin, now)
 	case "cline":
 		return clineAdapter(stdin, remote, now)
+	case "opencode":
+		return opencodeAdapter(stdin, remote, now)
 	case "cursor":
 		return cursorAdapter(stdin, remote, now)
 	default:

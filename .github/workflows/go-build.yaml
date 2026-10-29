@@ -43,6 +43,8 @@ jobs:
           filters: |
             go:
               - '*.go'
+              - '*.mjs'
+              - 'Makefile'
               - 'go.mod'
               - 'go.sum'
               - 'testdata/**'
@@ -93,6 +95,9 @@ jobs:
 
       - name: "Build"
         run: go build -v ./...
+
+      - name: "Test OpenCode plugin"
+        run: node --test opencode_plugin_test.mjs
 
       - name: "Test"
         run: go test ./... -coverprofile=coverage.out

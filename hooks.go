@@ -68,6 +68,8 @@ func hookPath(home string, target hookTarget) string {
 		return filepath.Join(home, ".claude", "settings.json")
 	case hookCodex:
 		return filepath.Join(home, ".codex", "hooks.json")
+	case hookOpenCode:
+		return opencodePluginPath(home)
 	case hookCline:
 		return clineHookPath(home, runtime.GOOS)
 	case hookCursor:
@@ -90,6 +92,11 @@ func installHooks(home string, targets []hookTarget) []hookInstallResult {
 		path := hookPath(home, target)
 		if path == "" {
 			results = append(results, hookInstallResult{Target: target, Err: errUserHomeUnavailable})
+			continue
+		}
+		if target == hookOpenCode {
+			changed, err := installOpenCodePlugin(home)
+			results = append(results, hookInstallResult{Target: target, Path: path, Changed: changed, Err: err})
 			continue
 		}
 		if target == hookCline {
@@ -158,6 +165,10 @@ func gatherHookStatus(home string) []hookStatus {
 	for _, target := range allHookTargets {
 		path := hookPath(home, target)
 		status := hookStatus{Target: target, Path: path, State: hookMissing}
+		if target == hookOpenCode {
+			statuses = append(statuses, openCodeStatus(home))
+			continue
+		}
 		if target == hookCline {
 			status.State, status.Detail = inspectClineHook(path, runtime.GOOS)
 			statuses = append(statuses, status)
@@ -385,13 +396,14 @@ func codexHookChanged(results []hookInstallResult) bool {
 type hookTarget string
 
 const (
-	hookClaude hookTarget = "claude"
-	hookCline  hookTarget = "cline"
-	hookCodex  hookTarget = "codex"
-	hookCursor hookTarget = "cursor"
+	hookClaude   hookTarget = "claude"
+	hookCline    hookTarget = "cline"
+	hookCodex    hookTarget = "codex"
+	hookCursor   hookTarget = "cursor"
+	hookOpenCode hookTarget = "opencode"
 )
 
-var allHookTargets = []hookTarget{hookClaude, hookCline, hookCodex, hookCursor}
+var allHookTargets = []hookTarget{hookClaude, hookCline, hookCodex, hookCursor, hookOpenCode}
 
 func knownHookTarget(target hookTarget) bool {
 	for _, known := range allHookTargets {
