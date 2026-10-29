@@ -434,7 +434,9 @@ A versioned `.ai-agent-telemetry-opencode.json` sidecar next to the managed CLI 
 paths and each written file's SHA-256 independently of OpenCode and XDG overrides. Status checks recorded locations;
 uninstall checks both the current root and recorded roots. An exact current template or a regular file matching its
 recorded digest is managed. An unchanged previous template reports `outdated`; update replaces it and records the new
-digest. Uninstall removes either managed version. A receipt without digests can adopt only the exact current template.
+digest. A previous copy at any recorded root makes status `outdated`; its detail names the affected plugin and config
+root alongside the recorded locations. Select that root with `OPENCODE_CONFIG_DIR` before updating it.
+Uninstall removes either managed version. A receipt without digests can adopt only the exact current template.
 A modified recorded plugin or corrupt receipt blocks managed CLI removal and purge. Unrelated foreign files remain
 untouched. Errors identify the affected paths and link [manual uninstall](manual-uninstall.md) for repair.
 The receipt lock remains beside the managed CLI after purge: its stable inode coordinates concurrent lifecycle

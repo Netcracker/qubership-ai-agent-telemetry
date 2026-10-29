@@ -101,7 +101,7 @@ func inspectOpenCodePlugin(path, digest string) (hookState, string) {
 		return hookInvalid, fmt.Sprintf("modified, foreign, or symbolic OpenCode plugin was preserved: %s; resolve the conflict before installing or removing; see %s#opencode-plugin-ownership-conflicts", path, clineManualUninstall)
 	}
 	if !bytes.Equal(entry.data, opencodePluginContent) {
-		return hookOutdated, "previous managed OpenCode plugin; run `ai-agent-telemetry update`: " + path
+		return hookOutdated, fmt.Sprintf("previous managed OpenCode plugin at %s; set OPENCODE_CONFIG_DIR to %s and run `ai-agent-telemetry update`", path, filepath.Dir(filepath.Dir(filepath.Dir(path))))
 	}
 	return hookInstalled, ""
 }
@@ -179,6 +179,7 @@ func openCodeStatus(home string) hookStatus {
 		return status
 	}
 	paths := append([]string{selected}, receipt.Paths...)
+	var outdatedDetail string
 	for _, path := range paths {
 		state, detail := inspectOpenCodePlugin(path, receipt.SHA256[path])
 		if state == hookInvalid {
@@ -190,9 +191,19 @@ func openCodeStatus(home string) hookStatus {
 			status.State = state
 			status.Detail = detail
 		}
+		if state == hookOutdated && outdatedDetail == "" {
+			outdatedDetail = detail
+		}
+	}
+	if outdatedDetail != "" {
+		status.State = hookOutdated
+		status.Detail = outdatedDetail
 	}
 	if len(receipt.Paths) > 1 || (len(receipt.Paths) == 1 && receipt.Paths[0] != selected) {
-		status.Detail = "recorded managed locations: " + strings.Join(receipt.Paths, ", ")
+		if status.Detail != "" {
+			status.Detail += "; "
+		}
+		status.Detail += "recorded managed locations: " + strings.Join(receipt.Paths, ", ")
 	}
 	return status
 }

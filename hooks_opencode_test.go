@@ -272,3 +272,29 @@ func TestOpenCodeRelativeRootErrorNamesItsEnvironmentVariable(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenCodeStatusKeepsOutdatedRepairDetailsAcrossRoots(t *testing.T) {
+	home := t.TempDir()
+	a, b := t.TempDir(), t.TempDir()
+	current := opencodePluginContent
+	t.Cleanup(func() { opencodePluginContent = current })
+	t.Setenv("OPENCODE_CONFIG_DIR", a)
+	opencodePluginContent = []byte("// Managed by ai-agent-telemetry.\nexport default {};\n")
+	if _, err := installOpenCodePlugin(home); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := opencodePluginPath(home)
+	opencodePluginContent = current
+	t.Setenv("OPENCODE_CONFIG_DIR", b)
+	if _, err := installOpenCodePlugin(home); err != nil {
+		t.Fatal(err)
+	}
+	newPath := opencodePluginPath(home)
+	for _, root := range []string{a, b} {
+		t.Setenv("OPENCODE_CONFIG_DIR", root)
+		got := openCodeStatus(home)
+		if got.State != hookOutdated || !strings.Contains(got.Detail, oldPath) || !strings.Contains(got.Detail, newPath) || !strings.Contains(got.Detail, "ai-agent-telemetry update") || !strings.Contains(got.Detail, "OPENCODE_CONFIG_DIR to "+a) {
+			t.Errorf("status at %s = %#v; want outdated path, update hint, and both recorded locations", root, got)
+		}
+	}
+}
