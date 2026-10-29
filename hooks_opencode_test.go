@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -234,7 +235,7 @@ func TestOpenCodeReceiptRejectsInvalidHashesWithRepairDetails(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = removeOpenCodePlugins(home)
-			if err == nil || !strings.Contains(err.Error(), opencodeReceiptPath(home)) || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "#opencode-plugin-ownership-conflicts") {
+			if err == nil || !strings.Contains(err.Error(), opencodeReceiptPath(home)) || !strings.Contains(err.Error(), strconv.Quote(path)) || !strings.Contains(err.Error(), "#opencode-plugin-ownership-conflicts") {
 				t.Fatalf("cleanup error = %v; want both paths and repair link", err)
 			}
 			if _, err := os.Stat(path); err != nil {
