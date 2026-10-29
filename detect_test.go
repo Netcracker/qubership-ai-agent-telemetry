@@ -343,17 +343,31 @@ func TestDetectCursorMCP(t *testing.T) {
 	tests := []struct {
 		name     string
 		toolName string
-		duration int64
+		duration string
 		want     *int64
 	}{
-		{name: "duration", toolName: "get_issue", duration: 42, want: durationPtr(42)},
-		{name: "negative duration omitted", toolName: "get_issue", duration: -1},
-		{name: "invalid tool rejected", toolName: "get issue", duration: 42},
+		{name: "duration", toolName: "get_issue", duration: "42", want: durationPtr(42)},
+		{name: "fractional duration", toolName: "get_issue", duration: "10.718", want: durationPtr(10)},
+		{name: "negative zero is zero", toolName: "get_issue", duration: "-0.0", want: durationPtr(0)},
+		{name: "submillisecond duration", toolName: "get_issue", duration: "0.392", want: durationPtr(0)},
+		{name: "negative fractional duration omitted", toolName: "get_issue", duration: "-0.392"},
+		{name: "null duration omitted", toolName: "get_issue", duration: "null"},
+		{name: "invalid duration omitted", toolName: "get_issue", duration: `"private-duration"`},
+		{name: "numeric string duration omitted", toolName: "get_issue", duration: `"42"`},
+		{name: "boolean duration omitted", toolName: "get_issue", duration: "true"},
+		{name: "float64 overflow omitted", toolName: "get_issue", duration: "1e309"},
+		{name: "extreme exponent omitted", toolName: "get_issue", duration: "1e1000000000"},
+		{name: "largest float64 below limit", toolName: "get_issue", duration: "9223372036854774784", want: durationPtr(9223372036854774784)},
+		{name: "unrepresentable duration omitted", toolName: "get_issue", duration: "1e400"},
+		{name: "out of range duration omitted", toolName: "get_issue", duration: "9223372036854775808"},
+		{name: "maximum integer rounds out of range", toolName: "get_issue", duration: "9223372036854775807"},
+		{name: "negative duration omitted", toolName: "get_issue", duration: "-1"},
+		{name: "invalid tool rejected", toolName: "get issue", duration: "42"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stdin := []byte(fmt.Sprintf(
-				`{"hook_event_name":"afterMCPExecution","session_id":"s1","workspace_roots":["/repo"],"tool_name":%q,"duration":%d,"result_json":{"email":"person@example.com"}}`,
+				`{"hook_event_name":"afterMCPExecution","session_id":"s1","workspace_roots":["/repo"],"tool_name":%q,"duration":%s,"result_json":{"email":"person@example.com"}}`,
 				tt.toolName, tt.duration,
 			))
 			events, err := detect("cursor", stdin, func(cwd string) string {
@@ -380,7 +394,7 @@ func TestDetectCursorMCP(t *testing.T) {
 			}
 			if payload.ServerName != "" || payload.ToolName != "get_issue" ||
 				payload.Outcome != mcpUnknown || !reflect.DeepEqual(payload.DurationMS, tt.want) {
-				t.Fatalf("payload = %#v", payload)
+				t.Fatalf("payload = %#v, duration = %s, want %s", payload, formatDuration(payload.DurationMS), formatDuration(tt.want))
 			}
 			encoded, err := json.Marshal(events[0])
 			if err != nil {
@@ -1204,5 +1218,42 @@ func TestSkillNamesInText(t *testing.T) {
 	}
 	if n := skillNamesInText("cat README.md"); n != nil {
 		t.Fatalf("got %v, want nil", n)
+	}
+}
+
+func TestDetectMCPDurationAcrossAdapters(t *testing.T) {
+	hooks := []struct {
+		agent, event, tool, field string
+		outcome                   MCPOutcome
+	}{
+		{"claude", "PostToolUse", "mcp__github__get_issue", "duration_ms", mcpSucceeded},
+		{"claude", "PostToolUseFailure", "mcp__github__get_issue", "duration_ms", mcpFailed},
+		{"cursor", "afterMCPExecution", "get_issue", "duration", mcpUnknown},
+	}
+	for _, hook := range hooks {
+		for _, duration := range []struct {
+			raw  string
+			want *int64
+		}{
+			{"10.718", durationPtr(10)}, {"true", nil},
+		} {
+			t.Run(hook.agent+"/"+hook.event+"/"+duration.raw, func(t *testing.T) {
+				input := []byte(fmt.Sprintf(`{"hook_event_name":%q,"session_id":"s1","tool_name":%q,%q:%s}`, hook.event, hook.tool, hook.field, duration.raw))
+				events, err := detect(hook.agent, input, nil, time.Now().UTC())
+				if err != nil || len(events) != 1 {
+					t.Fatalf("detect(%s) = %#v, %v; want one event", input, events, err)
+				}
+				payload, ok := events[0].Payload.(MCPPayload)
+				if !ok {
+					t.Fatalf("payload = %T, want MCPPayload", events[0].Payload)
+				}
+				if payload.Outcome != hook.outcome {
+					t.Errorf("outcome = %q, want %q", payload.Outcome, hook.outcome)
+				}
+				if !reflect.DeepEqual(payload.DurationMS, duration.want) {
+					t.Errorf("duration = %s, want %s", formatDuration(payload.DurationMS), formatDuration(duration.want))
+				}
+			})
+		}
 	}
 }

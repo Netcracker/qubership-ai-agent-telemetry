@@ -32,6 +32,11 @@ For unattended installation, provide `AI_AGENT_TELEMETRY_ENDPOINT` and the optio
 `AI_AGENT_TELEMETRY_TOKEN`, then pass `--non-interactive`. The lifecycle resolves required telemetry input before
 changing the managed CLI, telemetry configuration, or native hooks.
 
+Claude Code and Cursor use the same conversion for optional MCP durations: JSON numbers are decoded as `float64`,
+then truncated toward zero to whole milliseconds. Integers above 2^53 milliseconds can lose precision;
+`9223372036854775807` rounds to 2^63 and is omitted. Integer precision loss affects only durations of hundreds of
+thousands of years or more.
+
 ## Capability matrix
 
 | Harness | Hook and matcher | Event | Captured event fields |
@@ -222,7 +227,9 @@ These user-level hooks cover local Cursor sessions. Cursor cloud agents do not l
 `~/.cursor/hooks.json`, so the machine-wide installation does not cover cloud-agent runs.
 
 `afterMCPExecution` provides a tool name and optional duration. Cursor does not provide a stable MCP server name or
-outcome, so the CLI omits the server and records `unknown`. It never inspects `result_json`.
+outcome, so the CLI omits the server and records `unknown`. Non-negative fractional `duration` values are truncated
+to whole milliseconds. Missing, invalid, negative, or out-of-range durations are omitted without dropping the MCP event.
+It never inspects `result_json`.
 
 ```json
 {
