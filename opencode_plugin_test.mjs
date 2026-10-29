@@ -963,3 +963,60 @@ test("moving one session preserves unrelated and same-directory cached prompts",
     await f.stop();
   }
 });
+
+test("counts each attached skill ID once per delivered inbox entry with or without cached enqueue", async () => {
+  for (const observed of [true, false]) {
+    const f = await fixture();
+    const skills = [
+      { id: "git-release", text: "PRIVATE_BODY" },
+      { id: "git-release" },
+    ];
+    f.ctx.session.context = async () => [
+      { id: "msg_duplicate", type: "user", skills },
+    ];
+    try {
+      if (observed)
+        f.event({
+          type: "session.inbox.enqueued",
+          location: { directory: "/fixture" },
+          data: {
+            sessionID: "ses_duplicate",
+            inboxID: "msg_duplicate",
+            item: { type: "user", payload: { skills } },
+          },
+        });
+      f.event({
+        type: "session.inbox.delivered",
+        location: { directory: "/fixture" },
+        data: { sessionID: "ses_duplicate", inboxID: "msg_duplicate" },
+      });
+      await f.flush();
+      assert.deepEqual(
+        f.sent.map((e) => e.skill_id),
+        ["git-release"],
+        `observed enqueue: ${observed}`,
+      );
+    } finally {
+      await f.stop();
+    }
+  }
+});
+
+test("built-in calls do not query the MCP server registry", async () => {
+  const f = await fixture();
+  let serverReads = 0;
+  f.ctx.mcp.list = async () => {
+    serverReads++;
+    throw Error("Built-in calls must not query MCP servers");
+  };
+  try {
+    await f.hooks["execute.before"]({ ...call, tool: "read" });
+    await f.hooks["execute.after"]({ ...call, tool: "read" });
+    assert.deepEqual(
+      { serverReads, events: f.sent },
+      { serverReads: 0, events: [] },
+    );
+  } finally {
+    await f.stop();
+  }
+});

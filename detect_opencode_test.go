@@ -44,7 +44,7 @@ func TestOpenCodeBridgePreservesMCPOutcomesWithoutNestedDuration(t *testing.T) {
 }
 
 func TestOpenCodeBridgeDropsInvalidEnvelopes(t *testing.T) {
-	for _, raw := range []string{`{}`, `null`, `{"type":"read","session_id":"s","skill_id":"x"}`, `{"type":"skill","session_id":"s","skill_id":"Display Name"}`, `{"type":"skill","session_id":"s","skill_id":"\u0442\u0435\u0441\u0442"}`, `{"type":"mcp","session_id":"s","server":"docs","tool":"search","outcome":"maybe"}`, `{"type":"skill","session_id":"s","skill_id":"x","status":"error"}`} {
+	for _, raw := range []string{`{}`, `null`, `{"type":"read","session_id":"s","skill_id":"x"}`, `{"type":"skill","session_id":"s","skill_id":"Display Name"}`, `{"type":"skill","session_id":"s","skill_id":"\u0442\u0435\u0441\u0442"}`, `{"type":"mcp","session_id":"s","server":"docs","tool":"search","outcome":"maybe"}`} {
 		t.Run(raw, func(t *testing.T) {
 			events, err := detect("opencode", []byte(raw), nil, time.Now())
 			if err != nil || len(events) != 0 {

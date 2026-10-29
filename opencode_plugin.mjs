@@ -69,12 +69,10 @@ export function createPlugin(send = sendEnvelope) {
           emit({ type: "skill", session_id: sessionID, skill_id: id });
       };
       const identity = async (id) => {
-        const [tools, servers] = await Promise.all([
-          ctx.tool.list(),
-          ctx.mcp.list(),
-        ]);
+        const tools = await ctx.tool.list();
         const tool = tools.find((tool) => tool.id === id);
         if (!tool?.options?.namespace) return;
+        const servers = await ctx.mcp.list();
         const candidates = servers.data.filter(
           (server) =>
             server.name.replace(/[^a-zA-Z0-9_-]/g, "_") ===
@@ -179,7 +177,7 @@ export function createPlugin(send = sendEnvelope) {
                 if (event.type === "session.inbox.delivered") {
                   const ids = takeInbox(data.sessionID, data.inboxID);
                   if (ids !== undefined) {
-                    for (const id of ids) skill(data.sessionID, id);
+                    for (const id of new Set(ids)) skill(data.sessionID, id);
                     continue;
                   }
                   const messages = await ctx.session.context({
@@ -189,8 +187,10 @@ export function createPlugin(send = sendEnvelope) {
                     (message) =>
                       message.id === data.inboxID && message.type === "user",
                   );
-                  for (const attachment of message?.skills ?? [])
-                    skill(data.sessionID, attachment.id);
+                  for (const id of new Set(
+                    (message?.skills ?? []).map((entry) => entry.id),
+                  ))
+                    skill(data.sessionID, id);
                 }
               } catch {
                 /* Telemetry failures must not interrupt agent operations. */

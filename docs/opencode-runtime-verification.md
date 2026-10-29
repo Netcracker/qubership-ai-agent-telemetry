@@ -65,7 +65,7 @@ The reload attachment reached VictoriaLogs as `01a181dc-7b22-7e4b-b2d0-53bb69e8e
 The plugin now caches only attachment IDs from observed enqueue events. Observed ordinary prompts avoid context
 reads; an unobserved enqueue still uses context for reload recovery. Pending MCP calls use per-tool queues and cursors
 so completion matching does not search or shift the remaining batch. Deterministic operation counts establish these
-work bounds; they do not measure production latency. The JavaScript suite contains 29 passing tests.
+work bounds; they do not measure production latency. The JavaScript suite contains 31 passing tests.
 
 A subsequent cache-lifecycle fix groups queued entries by session. Deleting a session drops its complete bucket;
 delivery and cancellation also remove empty buckets. The regression exercises 1,000 enqueue/delete pairs and
@@ -87,6 +87,18 @@ It also checks isolation from unrelated sessions and moves that keep the same di
 `v0.0.0-opencode173-move-20261028` preserved its queued attachment at the destination, followed by session deletion.
 The moved attachment, an unrelated source attachment, and a destination MCP call matched three expected records
 and three unique `event.id` values in final VictoriaLogs. The outbox was empty; bodies, paths, and durations were absent.
+
+The receipt-hash upgrade regression uses two built binaries with different embedded plugin bytes. The canonical
+bootstrap installed all default harnesses, upgraded the previous managed OpenCode template in place, verified the
+new per-path digest, changed the config root, and purged both recorded plugin locations. Edited previous copies and
+foreign or symbolic files remain protected; corrupt digests identify the receipt and rejected path for repair.
+
+A real OpenCode 2.1.4 run using `v0.0.0-opencode173-review2-20261029` submitted the same Skill.ID twice in one inbox
+entry. OpenCode retained two attachment entries but only one body. Both observed-enqueue and post-reload context
+recovery produced one skill event per delivery. Those two events, a native skill event, and a registry-classified MCP
+success matched four records and four unique `event.id` values in final VictoriaLogs. The outbox was empty and stored
+records excluded private bodies, local paths, and durations. OpenChamber 2.5.1 ran unchanged; this probe used the
+OpenCode API, while the earlier picker proof remains separate.
 
 ## Automated checks
 

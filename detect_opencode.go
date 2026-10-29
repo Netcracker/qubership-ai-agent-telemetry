@@ -14,7 +14,6 @@ type opencodePayload struct {
 	Server    string     `json:"server"`
 	Tool      string     `json:"tool"`
 	Outcome   MCPOutcome `json:"outcome"`
-	Status    string     `json:"status"`
 }
 
 func opencodeAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]TelemetryEvent, error) {
@@ -26,9 +25,6 @@ func opencodeAdapter(stdin []byte, remote remoteResolver, now time.Time) ([]Tele
 	var err error
 	switch p.Type {
 	case "skill":
-		if p.Status != "" && p.Status != "completed" {
-			return nil, nil
-		}
 		event, err = newSkillEvent("opencode", p.SessionID, resolveRemote(remote, p.Directory), p.Directory, p.SkillID, now)
 	case "mcp":
 		if !validIdentifier(p.Server, mcpIdentifier) || (p.Outcome != mcpSucceeded && p.Outcome != mcpFailed) {

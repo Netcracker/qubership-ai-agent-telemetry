@@ -431,7 +431,11 @@ or backend delivery. Fully restart the OpenCode server if installation added the
 reload cannot refresh the server process environment.
 
 A versioned `.ai-agent-telemetry-opencode.json` sidecar next to the managed CLI records absolute installed plugin
-paths independently of OpenCode and XDG overrides. Status checks recorded locations; uninstall checks both the current
-root and recorded roots. Only an exact embedded template is removed. A modified recorded plugin or corrupt receipt
-blocks managed CLI removal and purge. Unrelated foreign files remain untouched. The first release has no supported
-older OpenCode templates to migrate. See [manual uninstall](manual-uninstall.md) for ownership conflicts.
+paths and each written file's SHA-256 independently of OpenCode and XDG overrides. Status checks recorded locations;
+uninstall checks both the current root and recorded roots. An exact current template or a regular file matching its
+recorded digest is managed. An unchanged previous template reports `outdated`; update replaces it and records the new
+digest. Uninstall removes either managed version. A receipt without digests can adopt only the exact current template.
+A modified recorded plugin or corrupt receipt blocks managed CLI removal and purge. Unrelated foreign files remain
+untouched. Errors identify the affected paths and link [manual uninstall](manual-uninstall.md) for repair.
+The receipt lock remains beside the managed CLI after purge: its stable inode coordinates concurrent lifecycle
+commands, so uninstall does not unlink it while another process might be waiting. It contains no telemetry or token.

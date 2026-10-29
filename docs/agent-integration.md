@@ -280,6 +280,9 @@ Each nested MCP invocation produces its own terminal event, including repeated c
 Individual durations are omitted; the first implementation also omits direct-call duration. Child sessions retain
 their own session ID and actual location. Global events are filtered by location before collection.
 
+Denied MCP attempts are included as `mcp_tool_executed` events with `outcome=failed`, even when execution never starts.
+Repeated Skill.IDs within one delivered inbox entry count once; separate deliveries remain separate executions.
+
 Events missed while the observer is disconnected or unloaded are lost. Reconnection resumes observation without
 historical backfill. Existing outbox delivery retries still apply to accepted events. A received attachment-delivery
 event uses cached Skill.IDs when enqueue was observed; ordinary prompts then require no conversation-history read.

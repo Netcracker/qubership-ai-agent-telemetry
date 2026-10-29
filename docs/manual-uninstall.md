@@ -119,6 +119,7 @@ Inspect `ai-agent-telemetry status --verbose` and the `.ai-agent-telemetry-openc
 If a recorded plugin was modified, preserve a copy of that file and review its custom changes. Remove the telemetry
 plugin from OpenCode's scanned `plugins/` directory only after separating any custom functionality you need. Do not
 replace a symbolic link with an ordinary file or delete its target. Rerun `hooks uninstall --target=opencode` after the
-recorded plugin paths are absent or contain only the exact managed template, then rerun lifecycle uninstall if needed.
+recorded plugin paths are absent, contain the exact current template, or match their recorded SHA-256, then rerun
+lifecycle uninstall if needed. Unmodified older managed copies do not require manual removal.
 A corrupt receipt must be repaired from known managed paths before cleanup; do not guess paths or purge telemetry
 state to bypass an ownership conflict. Reload OpenCode after removing its plugin.

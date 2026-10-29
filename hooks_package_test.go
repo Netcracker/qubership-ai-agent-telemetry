@@ -160,7 +160,7 @@ func TestHooksPackageConfigureSkillUpdateMigrationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(manifest), "version: 3.4.0") {
-		t.Fatalf("%s does not declare version 3.4.0", filepath.Join(packageDir, "apm.yml"))
+	if !strings.Contains(string(manifest), "version: 3.5.0") {
+		t.Fatalf("%s does not declare version 3.5.0", filepath.Join(packageDir, "apm.yml"))
 	}
 }
