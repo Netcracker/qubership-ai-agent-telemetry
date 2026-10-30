@@ -1,6 +1,6 @@
 # ai-agent-telemetry
 
-Records skill runs, command invocations, and MCP tool executions in Claude Code, Cline, Codex, and Cursor sessions.
+Records skill runs, command invocations, and MCP tool executions in Claude Code, Cline, Codex, Cursor, and OpenCode sessions.
 It sends the events to an OpenTelemetry collector. Collection is bounded by the installed hook and the machine
 collection policy. The default repository policy records repositories in the Netcracker GitHub organization and on
 hosts whose name contains `netcracker`; optional path rules can authorize additional local workspaces.
@@ -8,7 +8,7 @@ hosts whose name contains `netcracker`; optional path rules can authorize additi
 ## TL;DR
 
 Run the installer once. It installs the CLI, saves the collector settings, and configures hooks for Claude Code, Cline,
-Codex, and Cursor. Preflight prompts for missing collector settings.
+Codex, Cursor, and OpenCode. Preflight prompts for missing collector settings.
 
 macOS, Linux, and WSL:
 
@@ -181,21 +181,55 @@ Have the collector endpoint, an optional CA certificate, and an optional access 
 
 The bootstrap downloads and verifies the correct release, then runs `ai-agent-telemetry install`. The lifecycle
 installs the managed CLI in `~/.local/bin`, adds the directory to the user `PATH` when needed, saves the collector
-settings, and registers hooks for every supported harness.
+settings, and registers hooks for all five supported harnesses. No harness selection is needed.
+On the first installation, enter the collector endpoint and optional token when prompted; both are saved.
 
-macOS, Linux, and WSL:
-
-```sh
-curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
-```
-
-Native Windows PowerShell:
+#### Windows (PowerShell)
 
 ```powershell
 powershell.exe -NoProfile -Command "& ([scriptblock]::Create((Invoke-RestMethod 'https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.ps1')))"
 ```
 
-Select a harness subset with `--harnesses`. Omitting the option selects Claude Code, Cline, Codex, and Cursor:
+Either fully close and reopen the terminal, or refresh `PATH` in the current PowerShell session:
+
+```powershell
+$env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
+```
+
+Restart any running Windows agent hosts so they inherit the updated `PATH`, including OpenCode and OpenChamber.
+
+#### Windows + WSL (Bash)
+
+Run inside the same WSL distribution as the OpenCode server:
+
+```sh
+curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh | sh
+```
+
+Either fully close and reopen the terminal and re-enter WSL, or refresh `PATH` in the current shell:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Restart the OpenCode server inside WSL so it inherits the updated `PATH`. In the tested OpenChamber setup, its
+backend also runs in the same WSL distribution; the browser runs on Windows. Restart that backend after installation.
+The same shell installer and `PATH` refresh command also apply to macOS and Linux.
+
+#### Reuse the saved settings
+
+Subsequent `configure` commands reuse the saved endpoint; there is no need to repeat `--endpoint`.
+For example, to collect from all repositories instead of the default Netcracker scope:
+
+```sh
+ai-agent-telemetry configure --repo-allow '*'
+```
+
+`configure` asks for the token again. Press Enter to keep the saved token. It refreshes all supported hooks by default.
+Continue with [Verify registration and delivery](#2-verify-registration-and-delivery).
+
+For a custom harness subset, use `--harnesses`. Omitting the option selects Claude Code, Cline, Codex, Cursor,
+and OpenCode:
 
 ```sh
 curl -fsSL https://github.com/Netcracker/qubership-ai-agent-telemetry/releases/latest/download/install.sh \
