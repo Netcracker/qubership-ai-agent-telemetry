@@ -14,7 +14,6 @@ README.md
 native-otlp-onboarding.md
 docker-compose.yml
 otel-collector-config.yaml
-grafana/Dockerfile
 grafana/dashboards/ai-agent-telemetry-adoption.json
 grafana/dashboards/codex-native-metrics.json
 grafana/dashboards/native-agent-metrics-overview.json
