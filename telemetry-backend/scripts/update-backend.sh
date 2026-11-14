@@ -576,32 +576,30 @@ replace_latest() {
 }
 
 verify_running_image_ids() {
-  local release_dir=$1 transaction_file=$2 image_role=${3:-PREVIOUS} service container expected_id key
-  local -a services containers
+  local release_dir=$1 transaction_file=$2 image_role=${3:-PREVIOUS} service container expected_id key services_output
+  local -a services transaction_services
 
-  mapfile -t services < <(release_compose "$release_dir" config --services)
-  [ "${#services[@]}" -eq 5 ] || {
-    update_error 'restored Compose configuration must declare exactly five services'
+  services_output=$(release_backend_services release_compose "$release_dir") || {
+    update_error 'restored Compose configuration does not declare the backend services'
     return 1
   }
-  for service in caddy collector grafana victorialogs victoriametrics; do
-    [[ " ${services[*]} " == *" $service "* ]] || {
-      update_error "restored Compose configuration lacks required service: $service"
-      return 1
-    }
-    key=${image_role}_IMAGE_${service^^}
+  mapfile -t services <<<"$services_output"
+  mapfile -t transaction_services < <(transaction_image_services "$image_role")
+  [ "${services[*]}" = "${transaction_services[*]}" ] || {
+    update_error "restored Compose services differ from the transaction's $image_role image IDs"
+    return 1
+  }
+  for service in "${services[@]}"; do
+    key=${image_role}_IMAGE_$(service_key "$service")
     expected_id=$(read_transaction "$key" 2>/dev/null || true)
     [ -n "$expected_id" ] || {
       update_error "transaction lacks the previous image ID for service: $service"
       return 1
     }
-    mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
-      --filter "label=com.docker.compose.service=$service")
-    [ "${#containers[@]}" -eq 1 ] || {
+    container=$(service_identity_container "$service") || {
       update_error "restored service mapping is missing or ambiguous: $service"
       return 1
     }
-    container=${containers[0]}
     [ "$(docker inspect --format '{{.Image}}' "$container")" = "$expected_id" ] || {
       update_error "restored service uses an unexpected image ID: $service"
       return 1
@@ -1840,31 +1838,33 @@ stage_release() {
 }
 
 capture_previous_image_entries() {
-  local service container image_id
-  local -a containers
+  local release_dir=$1 service container image_id services_output
+  local -a services
 
-  for service in caddy collector grafana victorialogs victoriametrics; do
-    mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
-      --filter "label=com.docker.compose.service=$service")
-    [ "${#containers[@]}" -eq 1 ] || {
+  services_output=$(release_backend_services release_compose "$release_dir") || return 1
+  mapfile -t services <<<"$services_output"
+  for service in "${services[@]}"; do
+    container=$(service_identity_container "$service") || {
       update_error "active service mapping is missing or ambiguous: $service"
       return 1
     }
-    container=${containers[0]}
     image_id=$(docker inspect --format '{{.Image}}' "$container")
-    printf 'PREVIOUS_IMAGE_%s=%s\n' "${service^^}" "$image_id"
+    printf 'PREVIOUS_IMAGE_%s=%s\n' "$(service_key "$service")" "$image_id"
   done
 }
 
 capture_target_image_entries() {
-  local release_dir=$1 service record
+  local release_dir=$1 service record services_output
+  local -a services
 
-  for service in caddy collector grafana victorialogs victoriametrics; do
+  services_output=$(release_backend_services release_compose "$release_dir") || return 1
+  mapfile -t services <<<"$services_output"
+  for service in "${services[@]}"; do
     record=$(manifest_value "$release_dir/.deployment-manifest" "image.$service") || {
       update_error "target manifest lacks image identity for service: $service"
       return 1
     }
-    printf 'TARGET_IMAGE_%s=%s\n' "${service^^}" "${record#*|}"
+    printf 'TARGET_IMAGE_%s=%s\n' "$(service_key "$service")" "${record#*|}"
   done
 }
 
@@ -1951,9 +1951,10 @@ update_main() {
   transaction_id="update-$(date -u +%Y%m%d%H%M%S)-$$-$RANDOM"
   transaction_entries=("FORMAT_VERSION=1" "TRANSACTION_ID=$transaction_id" "OPERATION=update" \
     "PHASE=backup-offline" "PREVIOUS_RELEASE=$previous_id" "TARGET_RELEASE=$target_id" 'BACKUP_PATH=')
-  mapfile -t previous_image_entries < <(capture_previous_image_entries)
+  mapfile -t previous_image_entries < <(capture_previous_image_entries "$BACKEND_ROOT/$previous_id")
   mapfile -t target_image_entries < <(capture_target_image_entries "$target_dir")
-  [ "${#previous_image_entries[@]}" -eq 5 ] && [ "${#target_image_entries[@]}" -eq 5 ] || {
+  transaction_image_count_is_valid "${#previous_image_entries[@]}" &&
+    transaction_image_count_is_valid "${#target_image_entries[@]}" || {
     update_error 'cannot capture complete previous and target image identities'
     return 1
   }

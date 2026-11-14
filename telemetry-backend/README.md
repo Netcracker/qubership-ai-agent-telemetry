@@ -13,12 +13,15 @@ Agent ──OTLP/HTTPS──▸ Caddy ──▸ OTel Collector ─┬─▸ Vict
                         └──▸ /prometheus/* ──▸ VictoriaMetrics
 ```
 
-Grafana is outside the ingest path. Stopping it does not interrupt telemetry delivery.
+Grafana is outside the ingest path. Stopping it does not interrupt telemetry delivery. Grafana runs the upstream
+`grafana/grafana` image; the one-shot `grafana-plugins-init` service copies the VictoriaLogs datasource plugin into the
+`grafana-plugins` volume and exits before Grafana starts.
 
 ## Prerequisites
 
 - Docker Engine 24+ with Compose v2.
-- A machine with a public IP, or `localhost` for local testing with Caddy's internal CA.
+- A machine with a public IP, a host name with an existing certificate, such as one signed by a corporate CA, or
+  `localhost` for local testing with Caddy's internal CA.
 - Ports 80 and 443 open and unoccupied on a server. Local ports can be changed in `.env`.
 
 ## Setup
@@ -46,11 +49,13 @@ Set every value in `.env`:
 | Variable | Purpose |
 | --- | --- |
 | `SITE_ADDRESS` | Domain served by Caddy. Use `<ip-with-dashes>.sslip.io` on a VPS or `localhost` locally. |
-| `CADDY_TLS` | ACME email on a VPS or `internal` locally. |
+| `CADDY_TLS` | ACME email on a VPS, `internal` locally, or `<certificate-path> <key-path>` for an [existing certificate](#use-an-existing-tls-certificate). |
+| `CADDY_CERTS_DIR` | Host directory mounted read-only at `/etc/caddy/certs`. Defaults to `./certs`; only an existing certificate uses it. |
 | `INGEST_TOKEN` | Write-only bearer token used by telemetry clients. |
 | `DASHBOARD_AUTH_USER` | Shared read-only username in front of Grafana and VMUI. |
 | `DASHBOARD_AUTH_PASSWORD_HASH` | Caddy bcrypt hash, enclosed in single quotes to preserve dollar signs. |
 | `GRAFANA_ADMIN_PASSWORD` | Initial Grafana administrator password. |
+| `GRAFANA_PLUGINS_INIT_IMAGE` | Optional. Image that supplies the Grafana plugins; see [Grafana plugins](#grafana-plugins). |
 | `VL_RETENTION` | VictoriaLogs retention, such as `30d`. |
 | `VM_RETENTION` | VictoriaMetrics retention, such as `30d`. |
 | `VM_MAX_HOURLY_SERIES` | Maximum unique metric series accepted during one hour. |
@@ -65,7 +70,7 @@ volume; changing it later does not change an existing administrator account.
 ### 3. Start and verify the stack
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 docker compose ps
 ```
 
@@ -81,8 +86,69 @@ For Grafana administration, open
 `admin` and `GRAFANA_ADMIN_PASSWORD`. The Grafana administrator username is `admin`. The shared dashboard user receives
 the Viewer role under an isolated Grafana identity and cannot edit provisioned dashboards.
 
+`docker compose ps` lists the five long-running services. `grafana-plugins-init` appears only in
+`docker compose ps --all`, with `Exited (0)`.
+
 With `CADDY_TLS=internal`, trust the generated Caddy root certificate in the browser or accept the local certificate
 warning. Do not disable certificate verification for production clients.
+
+### Use an existing TLS certificate
+
+Caddy serves a certificate you supply instead of obtaining one when `CADDY_TLS` names a certificate file and a key file
+inside the Caddy container. Use this for a host name that a corporate or other internal CA signs.
+
+1. Put the PEM certificate and its unencrypted PEM private key in `CADDY_CERTS_DIR`, `./certs` by default. Start the
+   certificate file with the server certificate, followed by every intermediate CA certificate. The certificate must
+   cover `SITE_ADDRESS`.
+
+   ```sh
+   install -d -m 0700 certs
+   install -m 0644 <server-and-intermediates.pem> certs/tls.crt
+   install -m 0600 <private-key.pem> certs/tls.key
+   ```
+
+2. Set both paths in `.env`, separated by a space:
+
+   ```dotenv
+   CADDY_TLS="/etc/caddy/certs/tls.crt /etc/caddy/certs/tls.key"
+   CADDY_CERTS_DIR=./certs
+   ```
+
+3. Recreate Caddy and check that it serves the new certificate:
+
+   ```sh
+   docker compose up -d caddy
+   openssl s_client -connect <SITE_ADDRESS>:<HTTPS_PORT> -servername <SITE_ADDRESS> </dev/null 2>/dev/null |
+     openssl x509 -noout -subject -issuer -enddate
+   ```
+
+Caddy does not renew a supplied certificate. Replace both files before the certificate expires, then run
+`docker compose restart caddy`. Port 80 is used only for the HTTP-to-HTTPS redirect in this mode.
+
+Telemetry clients, browsers, and the backend host itself must trust the issuing CA. `update-backend.sh` checks ingest
+through `https://<SITE_ADDRESS>:<HTTPS_PORT>` with the host trust store, so an untrusted CA fails the update health gate
+and rolls the update back.
+
+On a host maintained by `update-backend.sh`, each update stages a new release directory and does not copy `./certs`.
+Keep the files outside the release directories and set an absolute path, such as
+`CADDY_CERTS_DIR=/etc/ai-agent-telemetry-backend/certs`; the updater carries `.env` to every new release.
+
+### Grafana plugins
+
+`grafana-plugins-init` runs the image in `GRAFANA_PLUGINS_INIT_IMAGE`, by default
+`ghcr.io/netcracker/qubership-grafana-plugins-init` pinned by tag and digest in `docker-compose.yml`. On every start, it
+replaces the contents of the `grafana-plugins` volume with the VictoriaLogs datasource plugin from that image. Grafana
+mounts the volume read-only and does not download plugins.
+
+When the host cannot reach `ghcr.io`, set `GRAFANA_PLUGINS_INIT_IMAGE` to a mirror of the same image in a registry it
+can reach. Pin the digest, so every update stages the same plugin:
+
+```dotenv
+GRAFANA_PLUGINS_INIT_IMAGE=<registry>/netcracker/qubership-grafana-plugins-init:<tag>@sha256:<digest>
+```
+
+The image must contain the plugin under `/etc/grafana/plugins/victoriametrics-logs-datasource`. If the copy fails,
+Grafana does not start and `docker compose logs grafana-plugins-init` shows the error.
 
 ## Upgrade an existing stack
 
@@ -107,7 +173,7 @@ other than `admin`, recreate only that volume before updating:
 docker compose down
 docker volume ls --filter label=com.docker.compose.volume=grafana-data
 docker volume rm <grafana-data-volume>
-docker compose up -d --build
+docker compose up -d
 ```
 
 Select the volume that belongs to this Compose project. Grafana restores provisioned dashboards and the datasource,
@@ -118,7 +184,7 @@ Validate and update the stack:
 
 ```sh
 docker compose config
-docker compose up -d --build
+docker compose up -d
 ```
 
 The administrator username is `admin`. `GRAFANA_ADMIN_PASSWORD` initializes only a new `grafana-data` volume. If the

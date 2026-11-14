@@ -347,6 +347,109 @@ cleanup_transaction_helpers() {
   assert_transaction_helpers_absent "$transaction_id"
 }
 
+# Services every release runs until it is stopped, in manifest order.
+readonly -a BACKEND_SERVICES=(caddy collector grafana victorialogs victoriametrics)
+# A release may also declare this service. It must exit with status 0 before Grafana starts, and its stopped
+# container keeps the image identity that maintenance verifies.
+readonly BACKEND_ONE_SHOT_SERVICE=grafana-plugins-init
+
+is_one_shot_service() {
+  [ "$1" = "$BACKEND_ONE_SHOT_SERVICE" ]
+}
+
+# Prints the transaction-file key suffix for a service name, such as GRAFANA_PLUGINS_INIT.
+service_key() {
+  local key=${1^^}
+
+  printf '%s\n' "${key//-/_}"
+}
+
+# Prints the declared services in manifest order: the long-running services, then the one-shot service when it is
+# declared. Fails when a long-running service is missing or an unknown service is declared.
+canonical_backend_services() {
+  local service one_shot=0
+  local -A declared=()
+
+  for service in "$@"; do
+    [ -n "$service" ] || continue
+    [ -z "${declared[$service]:-}" ] || {
+      maintenance_error "Compose declares a duplicate service: $service"
+      return 1
+    }
+    declared[$service]=1
+  done
+  for service in "${BACKEND_SERVICES[@]}"; do
+    [ -n "${declared[$service]:-}" ] || {
+      maintenance_error "required service is missing: $service"
+      return 1
+    }
+    unset "declared[$service]"
+  done
+  if [ -n "${declared[$BACKEND_ONE_SHOT_SERVICE]:-}" ]; then
+    one_shot=1
+    unset "declared[$BACKEND_ONE_SHOT_SERVICE]"
+  fi
+  [ "${#declared[@]}" -eq 0 ] || {
+    maintenance_error "Compose declares an unsupported service: ${!declared[*]}"
+    return 1
+  }
+  printf '%s\n' "${BACKEND_SERVICES[@]}"
+  [ "$one_shot" -eq 0 ] || printf '%s\n' "$BACKEND_ONE_SHOT_SERVICE"
+}
+
+# Prints the services a release declares, in manifest order. Pass the Compose wrapper the caller uses.
+release_backend_services() {
+  local compose_command=$1 release_dir=$2 output service
+  local -a listed=()
+
+  output=$("$compose_command" "$release_dir" config --services) || return 1
+  while IFS= read -r service; do
+    [ -z "$service" ] || listed+=("$service")
+  done <<<"$output"
+  canonical_backend_services "${listed[@]}"
+}
+
+# Prints the single container that holds a service's image identity. A long-running service counts only while it
+# runs; the one-shot service counts only after it exited with status 0.
+service_identity_container() {
+  local service=$1 container_output container state
+  local -a containers=()
+
+  if is_one_shot_service "$service"; then
+    container_output=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service") || return 1
+  else
+    container_output=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service") || return 1
+  fi
+  while IFS= read -r container; do
+    [ -z "$container" ] || containers+=("$container")
+  done <<<"$container_output"
+  [ "${#containers[@]}" -eq 1 ] || return 1
+  container=${containers[0]}
+  if is_one_shot_service "$service"; then
+    state=$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' "$container") || return 1
+    [ "$state" = 'exited 0' ] || return 1
+  fi
+  printf '%s\n' "$container"
+}
+
+# Prints "<state> <health>" for a service container. A one-shot service that exited with status 0 reports
+# "running none", the state of a healthy long-running service without a health check.
+service_health_state() {
+  local service=$1 container=$2 state_output
+
+  if is_one_shot_service "$service"; then
+    state_output=$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' "$container") || return 1
+    [ "$state_output" != 'exited 0' ] || state_output='running none'
+  else
+    state_output=$(docker inspect --format \
+      '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+      "$container") || return 1
+  fi
+  printf '%s\n' "$state_output"
+}
+
 derive_release_id() {
   local release_dir=$1 release_id
 
@@ -360,37 +463,35 @@ derive_release_id() {
 
 pin_active_images() {
   local release_dir=$1 generated_override_file
-  local -a declared_services=(caddy collector grafana victorialogs victoriametrics)
-  local -a configured_services containers
-  local -A configured_images=()
-  local service container running_image configured_image repository digest override_tmp release_id candidate
-  local match_count configured_services_output configured_images_output container_output digest_output
+  local -a declared_services
+  local -A configured_images=() configured_sources=()
+  local service container running_image configured_image configured_source repository digest override_tmp release_id
+  local candidate match_count declared_services_output configured_images_output digest_output
 
   generated_override_file=$release_dir/.maintenance-compose.yml
-  configured_services_output=$(compose "$release_dir" config --services) || return 1
-  configured_services=()
-  while IFS= read -r service; do
-    [ -z "$service" ] || configured_services+=("$service")
-  done <<<"$configured_services_output"
-  [ "${#configured_services[@]}" -eq "${#declared_services[@]}" ] || {
+  declared_services_output=$(release_backend_services compose "$release_dir") || {
     maintenance_error 'Compose service image configuration is incomplete'
     return 1
   }
+  mapfile -t declared_services <<<"$declared_services_output"
   docker image inspect "$JSON_IMAGE" >/dev/null 2>&1 || docker pull "$JSON_IMAGE" || return 1
   configured_images_output=$(
     compose "$release_dir" config --format json |
       docker run --rm -i "$JSON_IMAGE" -er '
-        ["caddy", "collector", "grafana", "victorialogs", "victoriametrics"][] as $service
-        | [$service, (.services[$service].image // error("missing image for " + $service))]
+        .services | to_entries[]
+        | [.key, (.value.image // error("missing image for " + .key)),
+          (if .value | has("build") then "build" else "registry" end)]
         | @tsv
       '
   ) || return 1
-  while IFS=$'\t' read -r service configured_image; do
-    [ -n "$service" ] && [ -n "$configured_image" ] && [ -z "${configured_images[$service]:-}" ] || {
+  while IFS=$'\t' read -r service configured_image configured_source; do
+    [ -n "$service" ] && [ -n "$configured_image" ] && [ -n "$configured_source" ] &&
+      [ -z "${configured_images[$service]:-}" ] || {
       maintenance_error 'Compose service image configuration is invalid'
       return 1
     }
     configured_images[$service]=$configured_image
+    configured_sources[$service]=$configured_source
   done <<<"$configured_images_output"
   [ "${#configured_images[@]}" -eq "${#declared_services[@]}" ] || {
     maintenance_error 'Compose service image configuration is incomplete'
@@ -405,27 +506,17 @@ pin_active_images() {
       return 1
     }
     for service in "${declared_services[@]}"; do
-      [[ " ${configured_services[*]} " == *" $service "* ]] || {
+      configured_image=${configured_images[$service]:-}
+      [ -n "$configured_image" ] || {
         maintenance_error "required service is missing: $service"
         rm -f -- "$override_tmp"
         return 1
       }
-      configured_image=${configured_images[$service]}
-      container_output=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
-        --filter "label=com.docker.compose.service=$service") || {
-        rm -f -- "$override_tmp"
-        return 1
-      }
-      containers=()
-      while IFS= read -r container; do
-        [ -z "$container" ] || containers+=("$container")
-      done <<<"$container_output"
-      [ "${#containers[@]}" -eq 1 ] || {
+      container=$(service_identity_container "$service") || {
         maintenance_error "running service mapping is missing or ambiguous: $service"
         rm -f -- "$override_tmp"
         return 1
       }
-      container=${containers[0]}
       running_image=$(docker inspect --format '{{.Image}}' "$container") || {
         maintenance_error "cannot inspect the running image for service: $service"
         rm -f -- "$override_tmp"
@@ -436,7 +527,7 @@ pin_active_images() {
         rm -f -- "$override_tmp"
         return 1
       }
-      if [ "$service" = grafana ]; then
+      if [ "$service" = grafana ] && [ "${configured_sources[$service]}" = build ]; then
         digest="${PROJECT_NAME}-grafana:${release_id}"
         docker tag "$running_image" "$digest" || {
           rm -f -- "$override_tmp"
@@ -679,21 +770,8 @@ strict_health_gate() {
       return 1
     }
   fi
-  expected_output=$(compose "$release_dir" config --services) || return 1
-  expected=()
-  while IFS= read -r service; do
-    [ -z "$service" ] || expected+=("$service")
-  done <<<"$expected_output"
-  [ "${#expected[@]}" -eq 5 ] || {
-    maintenance_error 'Compose configuration must declare exactly five services'
-    return 1
-  }
-  for service in caddy collector grafana victorialogs victoriametrics; do
-    [[ " ${expected[*]} " == *" $service "* ]] || {
-      maintenance_error "required service is missing: $service"
-      return 1
-    }
-  done
+  expected_output=$(release_backend_services compose "$release_dir") || return 1
+  mapfile -t expected <<<"$expected_output"
   deadline=$((SECONDS + max_attempts))
   while [ "$attempt" -lt "$max_attempts" ]; do
     healthy=1
@@ -715,9 +793,7 @@ strict_health_gate() {
         state=running
         health=unhealthy
       else
-        state_output=$(docker inspect --format \
-          '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-          "$container") || return 1
+        state_output=$(service_health_state "$service" "$container") || return 1
         read -r state health <<<"$state_output" || return 1
       fi
       if [ "$state" != running ] || { [ "$health" != none ] && [ "$health" != healthy ]; }; then
@@ -758,9 +834,7 @@ strict_health_gate() {
       maintenance_error "service mapping changed during stability interval: $service"
       return 1
     }
-    state_output=$(docker inspect --format \
-      '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-      "${containers[0]}") || return 1
+    state_output=$(service_health_state "$service" "${containers[0]}") || return 1
     read -r state health <<<"$state_output" || return 1
     if [ "$state" != running ] || { [ "$health" != none ] && [ "$health" != healthy ]; }; then
       maintenance_error "service became unhealthy during stability interval: $service"
@@ -815,11 +889,26 @@ validate_transaction_backup_path() {
   fi
 }
 
+# A transaction records one image ID per long-running service, plus one for the one-shot service when the release
+# declares it.
+transaction_image_count_is_valid() {
+  [ "$1" -eq "${#BACKEND_SERVICES[@]}" ] || [ "$1" -eq $((${#BACKEND_SERVICES[@]} + 1)) ]
+}
+
+# Prints the services whose image IDs the transaction records for an image role, such as PREVIOUS or TARGET.
+transaction_image_services() {
+  local image_role=$1
+
+  printf '%s\n' "${BACKEND_SERVICES[@]}"
+  [ -z "$(read_transaction "${image_role}_IMAGE_$(service_key "$BACKEND_ONE_SHOT_SERVICE")" 2>/dev/null || true)" ] ||
+    printf '%s\n' "$BACKEND_ONE_SHOT_SERVICE"
+}
+
 validate_transaction_state() {
   local key value record operation phase transaction_id previous_release target_release backup_path required service
   local previous_images=0 target_images=0
   local -A seen=()
-  local -a image_roles=(PREVIOUS) transaction_records
+  local -a image_roles=(PREVIOUS) transaction_records role_services
 
   [ -f "$TRANSACTION_FILE" ] && [ ! -L "$TRANSACTION_FILE" ] &&
     [ "$(stat -c '%a' "$TRANSACTION_FILE")" = 600 ] || {
@@ -865,11 +954,11 @@ validate_transaction_state() {
       FORMAT_VERSION|TRANSACTION_ID|OPERATION|PHASE|PREVIOUS_RELEASE|TARGET_RELEASE|BACKUP_PATH)
         ;;
       PREVIOUS_IMAGE_CADDY|PREVIOUS_IMAGE_COLLECTOR|PREVIOUS_IMAGE_GRAFANA|\
-        PREVIOUS_IMAGE_VICTORIALOGS|PREVIOUS_IMAGE_VICTORIAMETRICS)
+        PREVIOUS_IMAGE_VICTORIALOGS|PREVIOUS_IMAGE_VICTORIAMETRICS|PREVIOUS_IMAGE_GRAFANA_PLUGINS_INIT)
         previous_images=$((previous_images + 1))
         ;;
       TARGET_IMAGE_CADDY|TARGET_IMAGE_COLLECTOR|TARGET_IMAGE_GRAFANA|\
-        TARGET_IMAGE_VICTORIALOGS|TARGET_IMAGE_VICTORIAMETRICS)
+        TARGET_IMAGE_VICTORIALOGS|TARGET_IMAGE_VICTORIAMETRICS|TARGET_IMAGE_GRAFANA_PLUGINS_INIT)
         target_images=$((target_images + 1))
         ;;
       *)
@@ -905,7 +994,7 @@ validate_transaction_state() {
   case "$operation" in
     backup)
       [ "$phase" = backup-offline ] && [ -z "$target_release" ] &&
-        [ "$previous_images" -eq 5 ] && [ "$target_images" -eq 0 ] || {
+        transaction_image_count_is_valid "$previous_images" && [ "$target_images" -eq 0 ] || {
         maintenance_error 'backup transaction fields do not match its phase'
         return 1
       }
@@ -913,7 +1002,8 @@ validate_transaction_state() {
     update)
       validate_target_label "$target_release" >/dev/null 2>&1 &&
         transaction_release_dir "$target_release" >/dev/null &&
-        [ "$previous_images" -eq 5 ] && [ "$target_images" -eq 5 ] || {
+        transaction_image_count_is_valid "$previous_images" &&
+        transaction_image_count_is_valid "$target_images" || {
         maintenance_error 'update transaction has incomplete release or image identities'
         return 1
       }
@@ -925,7 +1015,9 @@ validate_transaction_state() {
   esac
   [ "$operation" != update ] || image_roles+=(TARGET)
   for required in "${image_roles[@]}"; do
-    for service in CADDY COLLECTOR GRAFANA VICTORIALOGS VICTORIAMETRICS; do
+    mapfile -t role_services < <(transaction_image_services "$required")
+    for service in "${role_services[@]}"; do
+      service=$(service_key "$service")
       value=$(read_transaction "${required}_IMAGE_${service}" 2>/dev/null || true)
       [[ $value =~ ^sha256:[0-9a-f]{64}$ ]] || {
         maintenance_error "maintenance transaction contains an invalid image ID: ${required}_IMAGE_${service}"
@@ -953,24 +1045,18 @@ replace_active_release() {
 }
 
 verify_transaction_image_ids() {
-  local image_role=$1 service container expected_id key container_output running_image
-  local -a containers
+  local image_role=$1 service container expected_id key running_image
+  local -a services
 
-  for service in caddy collector grafana victorialogs victoriametrics; do
-    key=${image_role}_IMAGE_${service^^}
+  mapfile -t services < <(transaction_image_services "$image_role")
+  for service in "${services[@]}"; do
+    key=${image_role}_IMAGE_$(service_key "$service")
     expected_id=$(read_transaction "$key" 2>/dev/null || true)
     [ -n "$expected_id" ] || {
       maintenance_error "transaction lacks the $image_role image ID for service: $service"
       return 1
     }
-    container_output=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
-      --filter "label=com.docker.compose.service=$service") || return 1
-    containers=()
-    while IFS= read -r container; do
-      [ -z "$container" ] || containers+=("$container")
-    done <<<"$container_output"
-    [ "${#containers[@]}" -eq 1 ] || return 1
-    container=${containers[0]}
+    container=$(service_identity_container "$service") || return 1
     running_image=$(docker inspect --format '{{.Image}}' "$container") || return 1
     [ "$running_image" = "$expected_id" ] || {
       maintenance_error "transaction image ID does not match the running service: $service"
@@ -979,9 +1065,19 @@ verify_transaction_image_ids() {
   done
 }
 
+# Prints the services whose image records a deployment manifest holds, in manifest order.
+manifest_image_services() {
+  local manifest=$1
+
+  printf '%s\n' "${BACKEND_SERVICES[@]}"
+  [ -z "$(metadata_value "$manifest" "image.$BACKEND_ONE_SHOT_SERVICE" 2>/dev/null || true)" ] ||
+    printf '%s\n' "$BACKEND_ONE_SHOT_SERVICE"
+}
+
 validate_deployment_marker() {
   local release_dir=$1 expected_transaction_id=${2:-} manifest marker manifest_checksum marker_transaction
   local key value service record reference image_id image_count=0
+  local -a services
 
   manifest=$release_dir/.deployment-manifest
   marker=$release_dir/.deployment-success
@@ -1000,7 +1096,8 @@ validate_deployment_marker() {
   done
   while IFS='=' read -r key value; do
     case "$key" in
-      image.caddy|image.collector|image.grafana|image.victorialogs|image.victoriametrics)
+      image.caddy|image.collector|image.grafana|image.victorialogs|image.victoriametrics|\
+        "image.$BACKEND_ONE_SHOT_SERVICE")
         image_count=$((image_count + 1))
         ;;
       image.*)
@@ -1010,8 +1107,9 @@ validate_deployment_marker() {
         ;;
     esac
   done <"$marker"
-  [ "$image_count" -eq 5 ] || return 1
-  for service in caddy collector grafana victorialogs victoriametrics; do
+  mapfile -t services < <(manifest_image_services "$manifest")
+  [ "$image_count" -eq "${#services[@]}" ] || return 1
+  for service in "${services[@]}"; do
     record=$(metadata_value "$manifest" "image.$service" 2>/dev/null || true)
     reference=${record%%|*}
     image_id=${record#*|}
@@ -1021,29 +1119,19 @@ validate_deployment_marker() {
 }
 
 verify_manifest_image_ids() {
-  local release_dir=$1 manifest service record expected_id container services_output container_output running_image
-  local -a services containers
+  local release_dir=$1 manifest service record expected_id container services_output running_image
+  local -a services manifest_services
 
   manifest=$release_dir/.deployment-manifest
-  services_output=$(compose "$release_dir" config --services) || return 1
-  services=()
-  while IFS= read -r service; do
-    [ -z "$service" ] || services+=("$service")
-  done <<<"$services_output"
-  [ "${#services[@]}" -eq 5 ] || return 1
-  for service in caddy collector grafana victorialogs victoriametrics; do
-    [[ " ${services[*]} " == *" $service "* ]] || return 1
+  services_output=$(release_backend_services compose "$release_dir") || return 1
+  mapfile -t services <<<"$services_output"
+  mapfile -t manifest_services < <(manifest_image_services "$manifest")
+  [ "${services[*]}" = "${manifest_services[*]}" ] || return 1
+  for service in "${services[@]}"; do
     record=$(metadata_value "$manifest" "image.$service" 2>/dev/null || true)
     expected_id=${record#*|}
     [ -n "$expected_id" ] && [ "$expected_id" != "$record" ] || return 1
-    container_output=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
-      --filter "label=com.docker.compose.service=$service") || return 1
-    containers=()
-    while IFS= read -r container; do
-      [ -z "$container" ] || containers+=("$container")
-    done <<<"$container_output"
-    [ "${#containers[@]}" -eq 1 ] || return 1
-    container=${containers[0]}
+    container=$(service_identity_container "$service") || return 1
     running_image=$(docker inspect --format '{{.Image}}' "$container") || return 1
     [ "$running_image" = "$expected_id" ] || return 1
   done
@@ -1051,16 +1139,21 @@ verify_manifest_image_ids() {
 
 validate_committed_release() {
   local release_dir=$1 expected_release=$2 expected_transaction_id=${3:-} service record manifest_id transaction_id
+  local -a manifest_services transaction_services
 
   [ -L "$BACKEND_ROOT/latest" ] && [ "$(readlink -- "$BACKEND_ROOT/latest")" = "$expected_release" ] || return 1
   validate_deployment_marker "$release_dir" "$expected_transaction_id" || return 1
   if [ -n "$expected_transaction_id" ]; then
     transaction_id=$(read_transaction TRANSACTION_ID 2>/dev/null || true)
     [ "$transaction_id" = "$expected_transaction_id" ] || return 1
-    for service in caddy collector grafana victorialogs victoriametrics; do
+    mapfile -t manifest_services < <(manifest_image_services "$release_dir/.deployment-manifest")
+    mapfile -t transaction_services < <(transaction_image_services TARGET)
+    [ "${manifest_services[*]}" = "${transaction_services[*]}" ] || return 1
+    for service in "${manifest_services[@]}"; do
       record=$(metadata_value "$release_dir/.deployment-manifest" "image.$service" 2>/dev/null || true)
       manifest_id=${record#*|}
-      [ "$(read_transaction "TARGET_IMAGE_${service^^}" 2>/dev/null || true)" = "$manifest_id" ] || return 1
+      [ "$(read_transaction "TARGET_IMAGE_$(service_key "$service")" 2>/dev/null || true)" = "$manifest_id" ] ||
+        return 1
     done
     verify_transaction_image_ids TARGET || return 1
   else
@@ -1348,40 +1441,35 @@ PROJECT_NAME=$(sed -n 's/^PROJECT_NAME=//p' manifest.txt)
   exit 1
 }
 
-declare -a expected_services=(caddy collector grafana victorialogs victoriametrics)
+# The long-running services come first, in this order. A release that installs Grafana plugins with a one-shot
+# service records it last. A release that built Grafana locally records a release-specific Grafana tag.
+declare -a manifest_order=(caddy collector grafana victorialogs victoriametrics grafana-plugins-init)
+declare -a expected_services=() registry_services=()
 declare -A image_references=() image_ids=() runtime_image_ids=()
+grafana_build=0
 image_count=0
 while IFS= read -r image_record; do
   IFS='|' read -r service reference image_id extra <<<"$image_record"
-  expected_service=${expected_services[image_count]:-}
+  expected_service=${manifest_order[image_count]:-}
   [ "$service" = "$expected_service" ] && [ -n "$reference" ] && [ -z "${extra:-}" ] && \
     [ -z "${image_references[$service]:-}" ] && [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]] || {
     restore_error 'manifest image records are invalid'
     exit 1
   }
-  case "$service" in
-    grafana)
-      [[ $reference =~ ^${PROJECT_NAME}-grafana:[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || {
-        restore_error 'manifest image records are invalid'
-        exit 1
-      }
-      ;;
-    caddy|collector|victorialogs|victoriametrics)
-      [[ $reference =~ ^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$ ]] || {
-        restore_error 'manifest image records are invalid'
-        exit 1
-      }
-      ;;
-    *)
-      restore_error 'manifest image records are invalid'
-      exit 1
-      ;;
-  esac
+  if [ "$service" = grafana ] && [[ $reference =~ ^${PROJECT_NAME}-grafana:[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+    grafana_build=1
+  elif [[ $reference =~ ^[a-zA-Z0-9._:/-]+@sha256:[0-9a-f]{64}$ ]]; then
+    registry_services+=("$service")
+  else
+    restore_error 'manifest image records are invalid'
+    exit 1
+  fi
+  expected_services+=("$service")
   image_references[$service]=$reference
   image_ids[$service]=$image_id
   image_count=$((image_count + 1))
 done < <(sed -n 's/^IMAGE=//p' manifest.txt)
-[ "$image_count" -eq 5 ] || {
+[ "$image_count" -eq 5 ] || [ "$image_count" -eq 6 ] || {
   restore_error 'manifest image records are invalid'
   exit 1
 }
@@ -1405,16 +1493,22 @@ chmod 600 "$override_tmp"
 mv -Tf -- "$override_tmp" "$RELEASE_DIR/.maintenance-compose.yml"
 sync -f "$RELEASE_DIR"
 restore_compose config --quiet
+[ "$(restore_compose config --services | sort)" = "$(printf '%s\n' "${expected_services[@]}" | sort)" ] || {
+  restore_error 'restored Compose services differ from the manifest image records'
+  exit 1
+}
 restore_compose pull --ignore-buildable
-restore_compose build --pull grafana
-for service in caddy collector victorialogs victoriametrics; do
+[ "$grafana_build" -eq 0 ] || restore_compose build --pull grafana
+for service in "${registry_services[@]}"; do
   runtime_image_ids[$service]=$(docker image inspect --format '{{.Id}}' "${image_references[$service]}") || exit 1
   [ "${runtime_image_ids[$service]}" = "${image_ids[$service]}" ] || {
     restore_error "registry image identity differs from the manifest: $service"
     exit 1
   }
 done
-runtime_image_ids[grafana]=$(docker image inspect --format '{{.Id}}' "${image_references[grafana]}") || exit 1
+if [ "$grafana_build" -eq 1 ]; then
+  runtime_image_ids[grafana]=$(docker image inspect --format '{{.Id}}' "${image_references[grafana]}") || exit 1
+fi
 docker image inspect "$RESTORE_HELPER_IMAGE" >/dev/null 2>&1 || docker pull "$RESTORE_HELPER_IMAGE"
 
 volume_count=0
@@ -1453,8 +1547,14 @@ mv -Tf -- "$temporary_link" "$BACKEND_ROOT/latest"
 sync -f "$BACKEND_ROOT"
 restore_compose up -d --no-build --pull never
 for service in "${expected_services[@]}"; do
-  mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
-    --filter "label=com.docker.compose.service=$service")
+  if [ "$service" = grafana-plugins-init ]; then
+    # The one-shot service has exited by the time Compose starts Grafana.
+    mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service")
+  else
+    mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=$service")
+  fi
   [ "${#containers[@]}" -eq 1 ] || {
     restore_error "restored service mapping is missing or ambiguous: $service"
     exit 1
@@ -1506,8 +1606,8 @@ Install Docker Engine and Docker Compose on the recovery host. Registry access i
 not stored in the backup. Set `BACKUP_DIR` to this backup directory and set `RELEASE_DIR` to a new immutable release
 directory. The checksums cover a separate copy of the maintenance library, so recovery does not depend on the archived
 release containing that script. The checked restore helper uses the manifest for every volume identity, requires the
-exact registry image IDs, rebuilds Grafana from the archived context, verifies the rebuilt image, starts the exact
-Compose project, and runs the same strict 120-second health gate as an update.
+exact registry image IDs, rebuilds Grafana from the archived context when the release built it locally, verifies the
+rebuilt image, starts the exact Compose project, and runs the same strict 120-second health gate as an update.
 
 ```bash
 BACKUP_DIR=/path/to/pre-backup
@@ -1575,9 +1675,12 @@ restart_original_stack() {
 }
 
 assert_backend_service_containers_absent() {
-  local service container_output
+  local release_dir=$1 service container_output services_output
+  local -a services
 
-  for service in caddy collector grafana victorialogs victoriametrics; do
+  services_output=$(release_backend_services compose "$release_dir") || return 1
+  mapfile -t services <<<"$services_output"
+  for service in "${services[@]}"; do
     container_output=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT_NAME" \
       --filter "label=com.docker.compose.service=$service") || {
       maintenance_error "cannot verify the stopped backend service: $service"
@@ -1614,34 +1717,38 @@ capture_running_image_entries() {
 }
 
 capture_backup_image_records() {
-  local release_dir=$1 service reference image_id container release_id container_output references_output
-  local -a containers
-  local -A references=()
+  local release_dir=$1 service reference source image_id container release_id references_output services_output
+  local -a services
+  local -A references=() sources=()
 
   release_id=$(derive_release_id "$release_dir") || return 1
+  services_output=$(release_backend_services compose "$release_dir") || return 1
+  mapfile -t services <<<"$services_output"
   references_output=$(
     compose "$release_dir" config --format json |
       docker run --rm -i "$JSON_IMAGE" -er '
-        ["caddy", "collector", "grafana", "victorialogs", "victoriametrics"][] as $service
-        | [$service, (.services[$service].image // error("missing image for " + $service))]
+        .services | to_entries[]
+        | [.key, (.value.image // error("missing image for " + .key)),
+          (if .value | has("build") then "build" else "registry" end)]
         | @tsv
       '
   ) || return 1
-  while IFS=$'\t' read -r service reference; do
-    [ -n "$service" ] && [ -n "$reference" ] && [ -z "${references[$service]:-}" ] || {
+  while IFS=$'\t' read -r service reference source; do
+    [ -n "$service" ] && [ -n "$reference" ] && [ -n "$source" ] && [ -z "${references[$service]:-}" ] || {
       maintenance_error 'effective Compose image mapping is invalid'
       return 1
     }
     references[$service]=$reference
+    sources[$service]=$source
   done <<<"$references_output"
-  [ "${#references[@]}" -eq 5 ] || {
+  [ "${#references[@]}" -eq "${#services[@]}" ] || {
     maintenance_error 'effective Compose image mapping is incomplete'
     return 1
   }
 
-  for service in caddy collector grafana victorialogs victoriametrics; do
+  for service in "${services[@]}"; do
     reference=${references[$service]:-}
-    if [ "$service" = grafana ]; then
+    if [ "$service" = grafana ] && [ "${sources[$service]}" = build ]; then
       [ "$reference" = "${PROJECT_NAME}-grafana:${release_id}" ] || {
         maintenance_error 'effective Grafana image reference is not release-specific'
         return 1
@@ -1652,17 +1759,11 @@ capture_backup_image_records() {
         return 1
       }
     fi
-    container_output=$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT_NAME" \
-      --filter "label=com.docker.compose.service=$service") || return 1
-    containers=()
-    while IFS= read -r container; do
-      [ -z "$container" ] || containers+=("$container")
-    done <<<"$container_output"
-    [ "${#containers[@]}" -eq 1 ] || {
+    container=$(service_identity_container "$service") || {
       maintenance_error "active service mapping is missing or ambiguous: $service"
       return 1
     }
-    image_id=$(docker inspect --format '{{.Image}}' "${containers[0]}") || return 1
+    image_id=$(docker inspect --format '{{.Image}}' "$container") || return 1
     [[ $image_id =~ ^sha256:[0-9a-f]{64}$ ]] || {
       maintenance_error "active service has a noncanonical image ID: $service"
       return 1
@@ -1818,7 +1919,7 @@ backup_main() {
   while IFS= read -r image_record; do
     [ -z "$image_record" ] || image_records+=("$image_record")
   done <<<"$image_output"
-  [ "${#image_records[@]}" -eq 5 ] || {
+  transaction_image_count_is_valid "${#image_records[@]}" || {
     maintenance_error 'cannot capture complete backup image identities'
     return 1
   }
@@ -1829,10 +1930,10 @@ backup_main() {
       return 1
     }
     printf 'IMAGE=%s\n' "$image_record" >>"$backup_work_dir/manifest.txt" || return 1
-    previous_image_entries+=("PREVIOUS_IMAGE_${service^^}=$image_id")
+    previous_image_entries+=("PREVIOUS_IMAGE_$(service_key "$service")=$image_id")
     record_test_event "IMAGE_MANIFEST=$service" || return 1
     if [ "$handoff" -eq 1 ] && \
-      [ "$(read_transaction "PREVIOUS_IMAGE_${service^^}" 2>/dev/null || true)" != "$image_id" ]; then
+      [ "$(read_transaction "PREVIOUS_IMAGE_$(service_key "$service")" 2>/dev/null || true)" != "$image_id" ]; then
       maintenance_error "updater image identity differs from the running service: $service"
       return 1
     fi
@@ -1856,7 +1957,7 @@ backup_main() {
   fi
   if ! compose "$release_dir" down; then
     failed=1
-  elif ! assert_backend_service_containers_absent; then
+  elif ! assert_backend_service_containers_absent "$release_dir"; then
     failed=1
   else
     record_test_event COMPOSE_STOPPED || failed=1

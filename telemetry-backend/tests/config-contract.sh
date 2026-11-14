@@ -16,7 +16,6 @@ adoption_dashboard=$backend_dir/grafana/dashboards/ai-agent-telemetry-adoption.j
 overview_dashboard=$backend_dir/grafana/dashboards/native-agent-metrics-overview.json
 codex_dashboard=$backend_dir/grafana/dashboards/codex-native-metrics.json
 collector_config=$backend_dir/otel-collector-config.yaml
-grafana_dockerfile=$backend_dir/grafana/Dockerfile
 fixture_stack=$backend_dir/tests/with-fixture-stack.sh
 repository_root=$(CDPATH='' cd -- "$backend_dir/.." && pwd)
 release_guide=$repository_root/docs/release.md
@@ -57,11 +56,9 @@ if grep -Fq '/opt/skills-telemetry-backups' "$release_guide"; then
   fail 'release guide must use the ordinary backend backup root'
 fi
 
-grep -Eq \
-  '^FROM grafana/grafana:[^@[:space:]]+@sha256:[0-9a-f]{64}$' \
-  "$grafana_dockerfile" || fail 'Grafana build must pin its base image by tag and digest'
+[ ! -e "$backend_dir/grafana/Dockerfile" ] || fail 'Grafana must run the upstream image, not a local build'
 
-for name in DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
+for name in CADDY_CERTS_DIR DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD VL_RETENTION VM_RETENTION \
   VM_MAX_HOURLY_SERIES VM_MAX_DAILY_SERIES VM_MIN_FREE_DISK_SPACE_BYTES VM_SELF_SCRAPE_INTERVAL; do
   grep -q "^$name=" "$env_file" || fail "$name is missing from .env.example"
 done
@@ -152,9 +149,35 @@ rendered=$(mktemp)
 legacy_env=$(mktemp)
 trap 'rm -f "$rendered" "$legacy_env"' EXIT HUP INT TERM
 docker compose --env-file "$env_file" -f "$compose_file" config --format json >"$rendered"
-jq -e '[.services.caddy.image, .services.collector.image, .services.victorialogs.image,
-  .services.victoriametrics.image] | all(test("@sha256:[0-9a-f]{64}$"))' "$rendered" >/dev/null ||
-  fail 'every registry-backed service must pin its image digest'
+jq -e '[.services[] | .image] | length == 6 and all(test(":[^/@]+@sha256:[0-9a-f]{64}$"))' "$rendered" \
+  >/dev/null || fail 'every service must pin its image by tag and digest'
+jq -e '[.services[] | select(has("build"))] | length == 0' "$rendered" >/dev/null ||
+  fail 'no service may build a local image'
+jq -e '.services.grafana.image | startswith("grafana/grafana:")' "$rendered" >/dev/null ||
+  fail 'Grafana must run the upstream grafana/grafana image'
+jq -e '.services["grafana-plugins-init"].image |
+  startswith("ghcr.io/netcracker/qubership-grafana-plugins-init:")' "$rendered" >/dev/null ||
+  fail 'the Grafana plugin image must default to the public qubership-grafana-plugins-init image'
+jq -e '.services.grafana.depends_on["grafana-plugins-init"].condition == "service_completed_successfully"' \
+  "$rendered" >/dev/null || fail 'Grafana must start only after its plugins are installed'
+jq -e '.services["grafana-plugins-init"].restart == "no"' "$rendered" >/dev/null ||
+  fail 'the Grafana plugin installer must run once per start'
+jq -e '.services["grafana-plugins-init"] | .network_mode == "none" and .read_only == true and
+  .cap_drop == ["ALL"]' "$rendered" >/dev/null ||
+  fail 'the Grafana plugin installer must run without network access, capabilities, or a writable root'
+jq -e '.services["grafana-plugins-init"].volumes[] | select(.source == "grafana-plugins") |
+  .target == "/plugins" and (.read_only // false) == false' "$rendered" >/dev/null ||
+  fail 'the Grafana plugin installer must write the grafana-plugins volume'
+jq -e '.services.grafana.environment.GF_PATHS_PLUGINS == "/var/lib/grafana-plugins"' "$rendered" >/dev/null ||
+  fail 'Grafana must load plugins from the grafana-plugins volume'
+jq -e 'any(.services.grafana.volumes[]; .source == "grafana-plugins" and
+  .target == "/var/lib/grafana-plugins" and .read_only == true)' "$rendered" >/dev/null ||
+  fail 'Grafana must mount the grafana-plugins volume read-only'
+jq -e '.services["grafana-plugins-init"].command | join(" ") | contains("victoriametrics-logs-datasource")' \
+  "$rendered" >/dev/null || fail 'the Grafana plugin installer must copy the VictoriaLogs datasource'
+jq -e 'any(.services.caddy.volumes[]; .type == "bind" and (.source | endswith("/certs")) and
+  .target == "/etc/caddy/certs" and .read_only == true)' "$rendered" >/dev/null ||
+  fail 'Caddy must mount CADDY_CERTS_DIR read-only at /etc/caddy/certs'
 jq -e '.services.caddy.ports | length == 2' "$rendered" >/dev/null || fail 'Caddy must publish two ports'
 jq -e '[.services.collector.ports, .services.victorialogs.ports] | all(. == null)' "$rendered" >/dev/null ||
   fail 'Collector and VictoriaLogs must not publish ports'
@@ -176,8 +199,6 @@ jq -e '.services.victoriametrics.command | index("-selfScrapeInterval=30s") != n
   fail 'VictoriaMetrics must self-scrape operational metrics every 30 seconds'
 grep -Fq "'VM_SELF_SCRAPE_INTERVAL=5s'" "$fixture_stack" ||
   fail 'backend fixture must use a five-second VictoriaMetrics self-scrape interval'
-jq -e '(.services.grafana.build.context // "") | endswith("/telemetry-backend/grafana")' "$rendered" >/dev/null ||
-  fail 'Grafana build context is missing'
 jq -e '.services.grafana.ports == null' "$rendered" >/dev/null || fail 'Grafana must not publish ports'
 jq -e '.services.grafana.environment.GF_AUTH_ANONYMOUS_ENABLED == "false"' "$rendered" >/dev/null ||
   fail 'Grafana anonymous access must be disabled'
@@ -201,7 +222,7 @@ grep -q '^    uid: victorialogs$' "$datasource_file" || fail 'VictoriaLogs datas
 grep -q '^    editable: true$' "$datasource_file" ||
   fail 'VictoriaLogs datasource must allow administrator edits'
 
-for text in /grafana/ DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD \
+for text in /grafana/ CADDY_CERTS_DIR GRAFANA_PLUGINS_INIT_IMAGE /etc/caddy/certs/tls.crt DASHBOARD_AUTH_USER DASHBOARD_AUTH_PASSWORD_HASH GRAFANA_ADMIN_PASSWORD \
   "administrator username is \`admin\`" 'Upgrade an existing stack' 'docker compose config' \
   'com.docker.compose.volume=grafana-data' "Do not run \`docker compose down -v\`" \
   'grafana cli admin reset-admin-password' 'Adoption overview' 'Telemetry health' \
