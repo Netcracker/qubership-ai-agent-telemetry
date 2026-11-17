@@ -40,10 +40,29 @@ services:
       - victoriametrics
     restart: unless-stopped
 
+  # Copies the Grafana plugins this backend needs from the plugin image into grafana-plugins, then exits.
+  grafana-plugins-init:
+    image: ${GRAFANA_PLUGINS_INIT_IMAGE:-ghcr.io/netcracker/qubership-grafana-plugins-init:0.22.0@sha256:3e9e0cdb02e2e7c0ef911950414b1c68f205ef9eafe9bcc1ada89a09fc4a3cfe}
+    # The image's default user cannot write to a new, root-owned volume. No capabilities are needed to write there as
+    # its owner.
+    user: "0:0"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    network_mode: none
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - |
+        find /plugins -mindepth 1 -delete
+        for plugin in victoriametrics-logs-datasource; do
+          cp -R "/etc/grafana/plugins/$$plugin" /plugins/
+        done
+    volumes:
+      - grafana-plugins:/plugins
+    restart: "no"
+
   grafana:
-    build:
-      context: ./grafana
-      dockerfile: Dockerfile
+    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
     environment:
       - GF_SERVER_ROOT_URL=https://${SITE_ADDRESS}:${HTTPS_PORT:-443}/grafana/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
@@ -56,6 +75,7 @@ services:
       - GF_USERS_AUTO_ASSIGN_ORG=true
       - GF_USERS_AUTO_ASSIGN_ORG_ROLE=Viewer
       - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_PATHS_PLUGINS=/var/lib/grafana-plugins
       - GF_PLUGINS_PREINSTALL_DISABLED=true
       - GF_PLUGINS_PLUGIN_ADMIN_ENABLED=false
       - GF_ANALYTICS_REPORTING_ENABLED=false
@@ -65,13 +85,18 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
     volumes:
       - grafana-data:/var/lib/grafana
+      - grafana-plugins:/var/lib/grafana-plugins:ro
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
       - backend
     depends_on:
-      - victorialogs
-      - victoriametrics
+      grafana-plugins-init:
+        condition: service_completed_successfully
+      victorialogs:
+        condition: service_started
+      victoriametrics:
+        condition: service_started
     restart: unless-stopped
 
   caddy:
@@ -87,6 +112,7 @@ services:
       - DASHBOARD_AUTH_PASSWORD_HASH=${DASHBOARD_AUTH_PASSWORD_HASH:?set DASHBOARD_AUTH_PASSWORD_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${CADDY_CERTS_DIR:-./certs}:/etc/caddy/certs:ro
       - caddy-data:/data
       - caddy-config:/config
     networks:
@@ -103,5 +129,6 @@ volumes:
   vlogs-data: {}
   vmetrics-data: {}
   grafana-data: {}
+  grafana-plugins: {}
   caddy-data: {}
   caddy-config: {}

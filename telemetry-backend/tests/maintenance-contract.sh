@@ -322,7 +322,99 @@ EOF
 
   cleanup_restore_portability_sandbox "$sandbox" "$project"
   trap - EXIT HUP INT TERM
+  run_restore_portability_one_shot_case
   printf '%s\n' 'PASS: maintenance cross-host restore portability contract'
+}
+
+# Restores a release that runs Grafana from a registry image and installs its plugins with the one-shot service.
+run_restore_portability_one_shot_case() {
+  local sandbox backup_dir source_dir release_dir project registry_reference registry_id logical volume_source
+  local running_id service state
+  local -a containers
+
+  sandbox=$(mktemp -d /tmp/telemetry-restore-one-shot.XXXXXX)
+  project="telemetry_restore_one_shot_$RANDOM$RANDOM"
+  trap 'cleanup_restore_portability_sandbox "${sandbox:-}" "${project:-}"' EXIT HUP INT TERM
+  backup_dir=$sandbox/backup
+  source_dir=$sandbox/source
+  release_dir=$sandbox/backend/restored
+  mkdir -p "$backup_dir/volumes" "$source_dir" "$sandbox/volume-source"
+  cp "$backend_dir/.env.example" "$backup_dir/backend.env"
+  cat >"$source_dir/docker-compose.yml" <<EOF
+services:
+  caddy: {image: alpine:3.20, command: ["sh", "-c", "while :; do sleep 3600; done"]}
+  collector: {image: alpine:3.20, command: ["sh", "-c", "while :; do sleep 3600; done"]}
+  grafana-plugins-init:
+    image: alpine:3.20
+    command: ["sh", "-c", "printf installed >/plugins/sentinel"]
+    restart: "no"
+    volumes: [grafana-plugins:/plugins]
+  grafana:
+    image: alpine:3.20
+    command: ["sh", "-c", "test -f /plugins/sentinel && while :; do sleep 3600; done"]
+    depends_on: {grafana-plugins-init: {condition: service_completed_successfully}}
+    volumes: [grafana-plugins:/plugins:ro]
+  victorialogs: {image: alpine:3.20, command: ["sh", "-c", "while :; do sleep 3600; done"]}
+  victoriametrics: {image: alpine:3.20, command: ["sh", "-c", "while :; do sleep 3600; done"]}
+volumes:
+  grafana-plugins: {}
+EOF
+  printf '%s\n' 'services: {}' >"$source_dir/.maintenance-compose.yml"
+  tar -C "$source_dir" -czf "$backup_dir/telemetry-backend-source.tar.gz" .
+
+  docker pull docker.io/library/alpine:3.20 >/dev/null
+  registry_reference=$(docker image inspect --format '{{index .RepoDigests 0}}' docker.io/library/alpine:3.20)
+  registry_id=$(docker image inspect --format '{{.Id}}' "$registry_reference")
+  {
+    printf 'PROJECT_NAME=%s\n' "$project"
+    for service in caddy collector grafana victorialogs victoriametrics grafana-plugins-init; do
+      printf 'IMAGE=%s|%s|%s\n' "$service" "$registry_reference" "$registry_id"
+    done
+    for logical in caddy-data grafana-plugins; do
+      printf 'VOLUME=%s|%s_%s|%s_%s.tar.gz\n' "$logical" "$project" "$logical" "$project" "$logical"
+    done
+  } >"$backup_dir/manifest.txt"
+  for logical in caddy-data grafana-plugins; do
+    volume_source=$sandbox/volume-source/$logical
+    mkdir -p "$volume_source"
+    tar -C "$volume_source" -czf "$backup_dir/volumes/${project}_${logical}.tar.gz" .
+  done
+  (
+    # shellcheck disable=SC1090,SC1091 # Exercise the generated helper from the production maintenance library.
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    write_restore_helper "$backup_dir"
+    write_restore_instructions "$backup_dir"
+    bundle_maintenance_library "$backup_dir"
+  )
+  (
+    cd "$backup_dir"
+    sha256sum backend.env backup-backend.sh telemetry-backend-source.tar.gz manifest.txt RESTORE.md restore-backend.sh \
+      volumes/*.tar.gz >SHA256SUMS
+  )
+
+  TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT="$sandbox/backend" \
+    TELEMETRY_TEST_BACKUP_ROOT="$sandbox" TELEMETRY_TEST_PROJECT_NAME="$project" \
+    TELEMETRY_TEST_SKIP_REMOTE_PROBES=1 TELEMETRY_TEST_HEALTH_ATTEMPTS=5 TELEMETRY_TEST_STABILITY_SECONDS=0 \
+    "$backup_dir/restore-backend.sh" "$backup_dir" "$release_dir" >/dev/null ||
+    fail 'portability restore of a one-shot plugin release failed'
+  for service in caddy collector grafana victorialogs victoriametrics; do
+    mapfile -t containers < <(docker ps -q --filter "label=com.docker.compose.project=$project" \
+      --filter "label=com.docker.compose.service=$service")
+    [ "${#containers[@]}" -eq 1 ] || fail "one-shot portability restore did not start one $service container"
+    running_id=$(docker inspect --format '{{.Image}}' "${containers[0]}")
+    [ "$running_id" = "$registry_id" ] || fail "one-shot portability restore changed registry image identity: $service"
+  done
+  mapfile -t containers < <(docker ps -aq --filter "label=com.docker.compose.project=$project" \
+    --filter 'label=com.docker.compose.service=grafana-plugins-init')
+  [ "${#containers[@]}" -eq 1 ] || fail 'one-shot portability restore did not run the plugin service once'
+  state=$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}} {{.Image}}' "${containers[0]}")
+  [ "$state" = "exited 0 $registry_id" ] || fail "one-shot plugin service did not complete with its image: $state"
+  if docker image inspect "${project}-grafana:restored" >/dev/null 2>&1; then
+    fail 'one-shot portability restore built a local Grafana image'
+  fi
+
+  cleanup_restore_portability_sandbox "$sandbox" "$project"
+  trap - EXIT HUP INT TERM
 }
 
 run_backup_suite() {
@@ -946,11 +1038,11 @@ run_cli_suite() {
       fi
       if [ "$1" = run ]; then
         printf '%s\n' \
-          $'caddy\tregistry.example/caddy:1' \
-          $'collector\tregistry.example/collector:1' \
-          $'grafana\tregistry.example/grafana:1' \
-          $'victorialogs\tregistry.example/victorialogs:1' \
-          $'victoriametrics\tregistry.example/victoriametrics:1'
+          $'caddy\tregistry.example/caddy:1\tregistry' \
+          $'collector\tregistry.example/collector:1\tregistry' \
+          $'grafana\tregistry.example/grafana:1\tbuild' \
+          $'victorialogs\tregistry.example/victorialogs:1\tregistry' \
+          $'victoriametrics\tregistry.example/victoriametrics:1\tregistry'
         return 0
       fi
       if [ "$1" = ps ]; then
@@ -984,6 +1076,132 @@ run_cli_suite() {
     grep -F '    image: ai-agent-telemetry-backend-grafana:ordered-release' \
       "$release_dir/.maintenance-compose.yml" >/dev/null || exit 1
   ) || fail 'image pinning associated Compose images by output position instead of service name'
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    [ "$(canonical_backend_services victoriametrics grafana-plugins-init grafana collector victorialogs caddy |
+      tr '\n' ' ')" = 'caddy collector grafana victorialogs victoriametrics grafana-plugins-init ' ] || exit 1
+    [ "$(canonical_backend_services caddy collector grafana victorialogs victoriametrics | tr '\n' ' ')" = \
+      'caddy collector grafana victorialogs victoriametrics ' ] || exit 1
+    run_fails canonical_backend_services caddy collector grafana victorialogs victoriametrics alertmanager
+    run_fails canonical_backend_services caddy collector victorialogs victoriametrics grafana-plugins-init
+    run_fails canonical_backend_services caddy caddy collector grafana victorialogs victoriametrics
+    [ "$(service_key grafana-plugins-init)" = GRAFANA_PLUGINS_INIT ] || exit 1
+  ) || fail 'backend service ordering accepted an unknown or missing service, or misordered the one-shot service'
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    # shellcheck disable=SC2329 # service_health_state reaches Docker through this test double.
+    docker() {
+      [ "$1" = inspect ] || return 1
+      case " $* " in
+        *'{{.State.ExitCode}}'*) printf '%s\n' "$TELEMETRY_TEST_ONE_SHOT_STATE" ;;
+        *) printf '%s\n' 'running healthy' ;;
+      esac
+    }
+    [ "$(TELEMETRY_TEST_ONE_SHOT_STATE='exited 0' service_health_state grafana-plugins-init container)" = \
+      'running none' ] || exit 1
+    [ "$(TELEMETRY_TEST_ONE_SHOT_STATE='exited 1' service_health_state grafana-plugins-init container)" = \
+      'exited 1' ] || exit 1
+    [ "$(TELEMETRY_TEST_ONE_SHOT_STATE='running 0' service_health_state grafana-plugins-init container)" = \
+      'running 0' ] || exit 1
+    [ "$(service_health_state grafana container)" = 'running healthy' ] || exit 1
+  ) || fail 'health gate accepted a one-shot service that failed or has not finished'
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT=$sandbox/backend
+    maintenance_init
+    release_dir=$sandbox/backend/one-shot-release
+    mkdir -p "$release_dir"
+    : >"$release_dir/docker-compose.yml"
+    : >"$release_dir/.env"
+    # shellcheck disable=SC2329 # pin_active_images reaches Compose and Docker through this test double.
+    docker() {
+      local argument service='' all=0
+
+      if [ "$1" = compose ]; then
+        case " $* " in
+          *' config --services '*)
+            printf '%s\n' grafana-plugins-init caddy collector grafana victorialogs victoriametrics
+            ;;
+          *' config --quiet '*) return 0 ;;
+        esac
+        return 0
+      fi
+      if [ "$1" = run ]; then
+        printf '%s\n' \
+          $'caddy\tregistry.example/caddy:1\tregistry' \
+          $'collector\tregistry.example/collector:1\tregistry' \
+          $'grafana\tregistry.example/grafana:1\tregistry' \
+          $'grafana-plugins-init\tregistry.example/grafana-plugins-init:1\tregistry' \
+          $'victorialogs\tregistry.example/victorialogs:1\tregistry' \
+          $'victoriametrics\tregistry.example/victoriametrics:1\tregistry'
+        return 0
+      fi
+      if [ "$1" = ps ]; then
+        for argument in "$@"; do
+          case "$argument" in
+            -aq) all=1 ;;
+            label=com.docker.compose.service=*) service=${argument##*=} ;;
+          esac
+        done
+        # A stopped one-shot container is visible only to docker ps -a.
+        [ "$service" != grafana-plugins-init ] || [ "$all" -eq 1 ] || return 0
+        printf 'container-%s\n' "$service"
+        return 0
+      fi
+      if [ "$1" = inspect ]; then
+        service=${!#}
+        case " $* " in
+          *'{{.State.ExitCode}}'*) printf '%s\n' 'exited 0' ;;
+          *) fixture_image_id one-shot-release "${service#container-}" ;;
+        esac
+        return 0
+      fi
+      if [ "$1" = image ] && [ "$2" = inspect ]; then
+        printf '%s\n' \
+          registry.example/caddy@sha256:caddy \
+          registry.example/collector@sha256:collector \
+          registry.example/grafana@sha256:grafana \
+          registry.example/grafana-plugins-init@sha256:grafana-plugins-init \
+          registry.example/victorialogs@sha256:victorialogs \
+          registry.example/victoriametrics@sha256:victoriametrics
+        return 0
+      fi
+      return 1
+    }
+    pin_active_images "$release_dir"
+    for service in caddy collector grafana grafana-plugins-init victorialogs victoriametrics; do
+      grep -Fx "    image: registry.example/$service@sha256:$service" \
+        "$release_dir/.maintenance-compose.yml" >/dev/null || exit 1
+    done
+    [ "$(grep -c '^  [a-z-]*:$' "$release_dir/.maintenance-compose.yml")" -eq 6 ] || exit 1
+  ) || fail 'image pinning did not pin a registry Grafana image and the stopped one-shot service by digest'
+
+  (
+    # shellcheck disable=SC1090,SC1091
+    TELEMETRY_SOURCE_ONLY=1 source "$backup_script"
+    export TELEMETRY_MAINTENANCE_TEST_MODE=1 TELEMETRY_TEST_BACKEND_ROOT=$sandbox/backend
+    maintenance_init
+    mkdir -p "$BACKEND_ROOT/previous"
+    entries=('FORMAT_VERSION=1' 'TRANSACTION_ID=one-shot-test' 'OPERATION=backup' 'PHASE=backup-offline' \
+      'PREVIOUS_RELEASE=previous' "BACKUP_PATH=$(dirname "$BACKEND_ROOT")/backups/pre-one-shot")
+    for service in caddy collector grafana victorialogs victoriametrics; do
+      entries+=("PREVIOUS_IMAGE_${service^^}=$(fixture_image_id previous "$service")")
+    done
+    write_transaction "${entries[@]}" "PREVIOUS_IMAGE_GRAFANA_PLUGINS_INIT=$(fixture_image_id previous init)"
+    validate_transaction_state
+    [ "$(transaction_image_services PREVIOUS | tail -n 1)" = grafana-plugins-init ] || exit 1
+    write_transaction "${entries[@]}" "PREVIOUS_IMAGE_ALERTMANAGER=$(fixture_image_id previous alertmanager)"
+    run_fails validate_transaction_state
+    write_transaction "${entries[@]}" 'PREVIOUS_IMAGE_GRAFANA_PLUGINS_INIT=sha256:abc'
+    run_fails validate_transaction_state
+    clear_transaction
+  ) || fail 'transaction parser rejected a one-shot image ID or accepted an unknown or noncanonical one'
 
   (
     # shellcheck disable=SC1090,SC1091
@@ -1230,18 +1448,18 @@ run_cli_suite() {
           printf '%s\n' "$json_count" >"$preoffline_root/json-count"
           if [ "$json_count" -eq 1 ]; then
             printf '%s\n' \
-              $'caddy\tregistry.example/caddy:1' \
-              $'collector\tregistry.example/collector:1' \
-              $'grafana\tregistry.example/grafana:1' \
-              $'victorialogs\tregistry.example/victorialogs:1' \
-              $'victoriametrics\tregistry.example/victoriametrics:1'
+              $'caddy\tregistry.example/caddy:1\tregistry' \
+              $'collector\tregistry.example/collector:1\tregistry' \
+              $'grafana\tregistry.example/grafana:1\tbuild' \
+              $'victorialogs\tregistry.example/victorialogs:1\tregistry' \
+              $'victoriametrics\tregistry.example/victoriametrics:1\tregistry'
           else
             printf '%s\n' \
-              "caddy"$'\t'"registry.example/caddy@$fixture_registry_digest" \
-              "collector"$'\t'"registry.example/collector@$fixture_registry_digest" \
-              $'grafana\tpreoffline_status_test-grafana:previous' \
-              "victorialogs"$'\t'"registry.example/victorialogs@$fixture_registry_digest" \
-              "victoriametrics"$'\t'"registry.example/victoriametrics@$fixture_registry_digest"
+              "caddy"$'\t'"registry.example/caddy@$fixture_registry_digest"$'\tregistry' \
+              "collector"$'\t'"registry.example/collector@$fixture_registry_digest"$'\tregistry' \
+              $'grafana\tpreoffline_status_test-grafana:previous\tbuild' \
+              "victorialogs"$'\t'"registry.example/victorialogs@$fixture_registry_digest"$'\tregistry' \
+              "victoriametrics"$'\t'"registry.example/victoriametrics@$fixture_registry_digest"$'\tregistry'
           fi
           return 0
         fi
@@ -1758,7 +1976,8 @@ if [ "$1" = pull ]; then
       caddy:2|otel/opentelemetry-collector-contrib:0.119.0|victoriametrics/victoria-logs:v1.16.0-victorialogs|\
       victoriametrics/victoria-metrics:v1.148.0|example/alertmanager:1.0|\
       "$TELEMETRY_TEST_CURRENT_CADDY_REFERENCE"|"$TELEMETRY_TEST_CURRENT_COLLECTOR_REFERENCE"|\
-      "$TELEMETRY_TEST_CURRENT_VLOGS_REFERENCE"|"$TELEMETRY_TEST_CURRENT_VMETRICS_REFERENCE")
+      "$TELEMETRY_TEST_CURRENT_VLOGS_REFERENCE"|"$TELEMETRY_TEST_CURRENT_VMETRICS_REFERENCE"|\
+      "$TELEMETRY_TEST_CURRENT_GRAFANA_REFERENCE"|"$TELEMETRY_TEST_CURRENT_PLUGINS_REFERENCE")
       exit 0
       ;;
     *)
@@ -1777,6 +1996,8 @@ if [ "$1" = image ] && [ "$2" = inspect ]; then
     "$TELEMETRY_TEST_CURRENT_COLLECTOR_REFERENCE") document="[{\"Id\":\"sha256:collector-local\",\"RepoDigests\":[\"$TELEMETRY_TEST_CURRENT_COLLECTOR_DIGEST_REFERENCE\"]}]" ;;
     "$TELEMETRY_TEST_CURRENT_VLOGS_REFERENCE") document="[{\"Id\":\"sha256:vlogs-local\",\"RepoDigests\":[\"$TELEMETRY_TEST_CURRENT_VLOGS_DIGEST_REFERENCE\"]}]" ;;
     "$TELEMETRY_TEST_CURRENT_VMETRICS_REFERENCE") document="[{\"Id\":\"sha256:vmetrics-local\",\"RepoDigests\":[\"$TELEMETRY_TEST_CURRENT_VMETRICS_DIGEST_REFERENCE\"]}]" ;;
+    "$TELEMETRY_TEST_CURRENT_GRAFANA_REFERENCE") document="[{\"Id\":\"sha256:grafana-registry-local\",\"RepoDigests\":[\"$TELEMETRY_TEST_CURRENT_GRAFANA_DIGEST_REFERENCE\"]}]" ;;
+    "$TELEMETRY_TEST_CURRENT_PLUGINS_REFERENCE") document="[{\"Id\":\"sha256:plugins-init-local\",\"RepoDigests\":[\"$TELEMETRY_TEST_CURRENT_PLUGINS_DIGEST_REFERENCE\"]}]" ;;
     caddy:2) document='[{"Id":"sha256:caddy-local","RepoDigests":["caddy@sha256:caddyfixture"]}]' ;;
     otel/opentelemetry-collector-contrib:0.119.0) document='[{"Id":"sha256:collector-local","RepoDigests":["otel/opentelemetry-collector-contrib@sha256:collectorfixture"]}]' ;;
     victoriametrics/victoria-logs:v1.16.0-victorialogs) document='[{"Id":"sha256:vlogs-local","RepoDigests":["victoriametrics/victoria-logs@sha256:vlogsfixture"]}]' ;;
@@ -1786,6 +2007,8 @@ if [ "$1" = image ] && [ "$2" = inspect ]; then
     "$TELEMETRY_TEST_CURRENT_COLLECTOR_DIGEST_REFERENCE") document='[{"Id":"sha256:collector-local","RepoDigests":[]}]' ;;
     "$TELEMETRY_TEST_CURRENT_VLOGS_DIGEST_REFERENCE") document='[{"Id":"sha256:vlogs-local","RepoDigests":[]}]' ;;
     "$TELEMETRY_TEST_CURRENT_VMETRICS_DIGEST_REFERENCE") document='[{"Id":"sha256:vmetrics-local","RepoDigests":[]}]' ;;
+    "$TELEMETRY_TEST_CURRENT_GRAFANA_DIGEST_REFERENCE") document='[{"Id":"sha256:grafana-registry-local","RepoDigests":[]}]' ;;
+    "$TELEMETRY_TEST_CURRENT_PLUGINS_DIGEST_REFERENCE") document='[{"Id":"sha256:plugins-init-local","RepoDigests":[]}]' ;;
     caddy@sha256:caddyfixture) document='[{"Id":"sha256:caddy-local","RepoDigests":[]}]' ;;
     otel/opentelemetry-collector-contrib@sha256:collectorfixture) document='[{"Id":"sha256:collector-local","RepoDigests":[]}]' ;;
     victoriametrics/victoria-logs@sha256:vlogsfixture) document='[{"Id":"sha256:vlogs-local","RepoDigests":[]}]' ;;
@@ -1926,7 +2149,8 @@ for compose_file in sys.argv[1:]:
             continue
         image = re.match(r"^    image: ([^\s]+)\s*$", line)
         if image:
-            services[current]["image"] = image.group(1)
+            # Compose resolves ${VARIABLE:-default} to the default when .env leaves the variable unset.
+            services[current]["image"] = re.sub(r"^\$\{[A-Z0-9_]+:-(.+)\}$", r"\1", image.group(1))
         if re.match(r"^    build:\s*$", line):
             services[current]["build"] = {"context": "./grafana"}
 print(json.dumps({"services": services}))
@@ -1944,7 +2168,7 @@ EOF
 run_resolution_suite() {
   local sandbox fixture_pid fixture_port fixture_log output docker_dir release_target requests implicit_identity explicit_identity
   local release_dist rendered_compose
-  local caddy_reference collector_reference vlogs_reference vmetrics_reference
+  local caddy_reference collector_reference vlogs_reference vmetrics_reference grafana_reference plugins_reference
 
   [ -x "$update_script" ] || fail 'update-backend.sh does not exist or is not executable'
   rendered_compose=$(docker compose --env-file "$backend_dir/.env.example" \
@@ -1953,7 +2177,10 @@ run_resolution_suite() {
   collector_reference=$(jq -r '.services.collector.image' <<<"$rendered_compose")
   vlogs_reference=$(jq -r '.services.victorialogs.image' <<<"$rendered_compose")
   vmetrics_reference=$(jq -r '.services.victoriametrics.image' <<<"$rendered_compose")
-  for reference in "$caddy_reference" "$collector_reference" "$vlogs_reference" "$vmetrics_reference"; do
+  grafana_reference=$(jq -r '.services.grafana.image' <<<"$rendered_compose")
+  plugins_reference=$(jq -r '.services["grafana-plugins-init"].image' <<<"$rendered_compose")
+  for reference in "$caddy_reference" "$collector_reference" "$vlogs_reference" "$vmetrics_reference" \
+    "$grafana_reference" "$plugins_reference"; do
     [[ $reference =~ @sha256:[0-9a-f]{64}$ ]] || fail "current backend image is not digest-pinned: $reference"
   done
   export TELEMETRY_TEST_CURRENT_CADDY_REFERENCE=$caddy_reference
@@ -1964,6 +2191,10 @@ run_resolution_suite() {
   export TELEMETRY_TEST_CURRENT_COLLECTOR_DIGEST_REFERENCE="otel/opentelemetry-collector-contrib@${collector_reference##*@}"
   export TELEMETRY_TEST_CURRENT_VLOGS_DIGEST_REFERENCE="victoriametrics/victoria-logs@${vlogs_reference##*@}"
   export TELEMETRY_TEST_CURRENT_VMETRICS_DIGEST_REFERENCE="victoriametrics/victoria-metrics@${vmetrics_reference##*@}"
+  export TELEMETRY_TEST_CURRENT_GRAFANA_REFERENCE=$grafana_reference
+  export TELEMETRY_TEST_CURRENT_PLUGINS_REFERENCE=$plugins_reference
+  export TELEMETRY_TEST_CURRENT_GRAFANA_DIGEST_REFERENCE="grafana/grafana@${grafana_reference##*@}"
+  export TELEMETRY_TEST_CURRENT_PLUGINS_DIGEST_REFERENCE="${plugins_reference%%:*}@${plugins_reference##*@}"
   export TELEMETRY_TEST_STAGE_ONLY=1
   sandbox=$(mktemp -d /tmp/telemetry-resolution.XXXXXX)
   trap 'kill "${fixture_pid:-}" >/dev/null 2>&1 || true; rm -rf "${sandbox:-}"' EXIT HUP INT TERM
@@ -2055,6 +2286,12 @@ run_resolution_suite() {
   release_target=release-$(printf '%s' v1.2.3 | sha256sum | cut -c1-20)
   grep -Fx 'resolved_identity=v1.2.3' "$sandbox/backend/$release_target/.deployment-manifest" >/dev/null ||
     fail 'release manifest lost its immutable tag identity'
+  grep -Fx "image.grafana=$TELEMETRY_TEST_CURRENT_GRAFANA_DIGEST_REFERENCE|sha256:grafana-registry-local" \
+    "$sandbox/backend/$release_target/.deployment-manifest" >/dev/null ||
+    fail 'release manifest does not pin the registry Grafana image'
+  grep -Fx "image.grafana-plugins-init=$TELEMETRY_TEST_CURRENT_PLUGINS_DIGEST_REFERENCE|sha256:plugins-init-local" \
+    "$sandbox/backend/$release_target/.deployment-manifest" >/dev/null ||
+    fail 'release manifest does not pin the Grafana plugin image'
   if output=$(run_update --ref latest 2>&1); then
     :
   else

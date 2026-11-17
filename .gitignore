@@ -21,6 +21,7 @@ local-deploy-otel/
 
 # Real .env with secrets (the .env.example template is tracked)
 telemetry-backend/.env
+telemetry-backend/certs/
 
 # Ready-made telemetry config for install testing (endpoint + token; never committed)
 /test-telemetry.env

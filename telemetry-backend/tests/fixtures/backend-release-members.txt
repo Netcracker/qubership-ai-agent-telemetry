@@ -2,7 +2,6 @@
 Caddyfile
 README.md
 docker-compose.yml
-grafana/Dockerfile
 grafana/dashboards/ai-agent-telemetry-adoption.json
 grafana/dashboards/codex-native-metrics.json
 grafana/dashboards/native-agent-metrics-overview.json

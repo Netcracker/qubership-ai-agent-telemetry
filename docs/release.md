@@ -72,7 +72,9 @@ update-backend.sh
 
 `SHA256SUMS` must include one entry for every asset above except itself. The workflow verifies this before upload.
 
-`ai-agent-telemetry-backend.tar.gz` contains the deployable backend files at the archive root, including Compose, Caddy, Collector, Grafana, dashboards, and maintenance scripts. It has no repository-name or `telemetry-backend/` wrapper directory.
+`ai-agent-telemetry-backend.tar.gz` contains the deployable backend files at the archive root, including Compose, Caddy,
+Collector, Grafana, dashboards, and maintenance scripts. It has no repository-name or `telemetry-backend/` wrapper
+directory.
 
 ## First backend installation
 
@@ -103,16 +105,21 @@ docker compose --project-name ai-agent-telemetry-backend \
   --project-directory "$release_dir" \
   --env-file "$release_dir/.env" \
   -f "$release_dir/docker-compose.yml" \
-  up -d --build
+  up -d
 docker compose --project-name ai-agent-telemetry-backend \
   --project-directory "$release_dir" \
   --env-file "$release_dir/.env" \
   -f "$release_dir/docker-compose.yml" \
-  ps
+  ps --all
 ```
 
-Confirm that all five services are running and verify the dashboard, log, and metric endpoints before using the
-standalone maintenance commands.
+Confirm that the five long-running services are running, that `grafana-plugins-init` exited with status 0, and that
+the dashboard, log, and metric endpoints respond before using the standalone maintenance commands.
+
+For an existing TLS certificate, keep the certificate files outside the release directories and set an absolute
+`CADDY_CERTS_DIR` in `.env`, as
+[Use an existing TLS certificate](../telemetry-backend/README.md#use-an-existing-tls-certificate) describes. Each
+update stages a new release directory and copies only `.env` into it.
 
 ## Backend updater bootstrap
 
@@ -129,7 +136,8 @@ chmod 0755 update-backend.sh backup-backend.sh
 ./update-backend.sh --ref latest
 ```
 
-Pass a release tag, branch name, or full commit SHA to `--ref` when you do not want the latest release. The updater resolves branch names and commit references through the GitHub API before downloading an immutable source archive:
+Pass a release tag, branch name, or full commit SHA to `--ref` when you do not want the latest release. The updater
+resolves branch names and commit references through the GitHub API before downloading an immutable source archive:
 
 ```bash
 ./update-backend.sh --ref v1.2.0
@@ -137,7 +145,9 @@ Pass a release tag, branch name, or full commit SHA to `--ref` when you do not w
 ./update-backend.sh --ref <full-commit-sha>
 ```
 
-The updater stages downloads and images before downtime, creates a self-contained backup under `/opt/ai-agent-telemetry-backups`, activates the target through the `latest` symlink, checks backend health, and restores the previous release if activation fails.
+The updater stages downloads and images before downtime, creates a self-contained backup under
+`/opt/ai-agent-telemetry-backups`, activates the target through the `latest` symlink, checks backend health, and
+restores the previous release if activation fails.
 
 After a successful health check, an interactive update offers to remove backups older than 14 days. The two newest
 backups are always retained. Noninteractive runs keep old backups unless you pass `--prune-backups`:
